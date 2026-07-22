@@ -8,6 +8,7 @@ Semantic-VAE 冒烟测试脚本
   5. 保存一条重建音频供人工聆听
 """
 
+import os
 import sys
 import glob
 import random
@@ -20,10 +21,11 @@ import librosa
 import numpy as np
 
 # ---------- 路径配置 ----------
-SVAE_REPO   = "/zjw524/projects/alignDiT_idea6/papers_codes/Semantic-VAE"
-SVAE_CKPT   = "/zjw524/projects/alignDiT_idea6/Semantic-VAE/semantic_vae_1000k"
-CELEBVDUB_WAV = "/zjw524/projects/data/CelebVDub/audio/train"
-OUTPUT_DIR  = "/zjw524/projects/alignDiT_idea6/papers_codes/alignDiT_baseline/AlignDiT_mmdit_base/scripts/smoke_vae_output"
+_RP = os.environ.get("ROOT_PREFIX", "")  # 路径前缀开关: ""(本机) 或 "/home"(另一台服务器)
+SVAE_REPO   = f"{_RP}/zjw524/projects/alignDiT_idea6/papers_codes/Semantic-VAE"
+SVAE_CKPT   = f"{_RP}/zjw524/projects/alignDiT_idea6/Semantic-VAE/semantic_vae_1000k"
+CELEBVDUB_WAV = f"{_RP}/zjw524/projects/data/CelebVDub/audio/train"
+OUTPUT_DIR  = str(Path(__file__).resolve().parent / "smoke_vae_output")
 N_TEST      = 10     # 抽测音频条数
 EXPECTED_SR = 16000
 EXPECTED_DIM = 64

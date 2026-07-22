@@ -79,7 +79,7 @@ def process_speaker(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Reorganize CelebV-Dub into LRS3-style layout.")
-    parser.add_argument("--src", type=str, default="/home/zjw524/datasets/CelebV-Dub")
+    parser.add_argument("--src", type=str, default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/datasets/CelebV-Dub")
     parser.add_argument(
         "--dst",
         type=str,

@@ -343,7 +343,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mean-face",
         type=str,
-        default="/home/zjw524/datasets/20words_mean_face.npy",
+        default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/datasets/20words_mean_face.npy",
         help="Path to 20words_mean_face.npy",
     )
     parser.add_argument("--nshard", type=int, default=1)

@@ -1,14 +1,19 @@
 #!/bin/bash
+# --- ROOT_PREFIX path switch (auto-load env.sh) ---
+__envdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+while [ "$__envdir" != "/" ] && [ ! -f "$__envdir/env.sh" ]; do __envdir="$(dirname "$__envdir")"; done
+[ -f "$__envdir/env.sh" ] && source "$__envdir/env.sh"
+# --------------------------------------------------
 # Extract AV-HuBERT features (audio+video) for AVSync evaluation on CelebV-Dub test set.
 # Usage: bash extract_avhubert_celebvdub_avsync.sh <GEN_WAV_DIR>
 
 GEN_WAV_DIR=${1:-"results/finetune_celebvdub_200000/celebvdub_test_s1/seed0_euler_nfe32_hifigan_16k_ss-1_cfgt5.0_cfgv2.0_gt-dur"}
 
-PYTHON=/home/zjw524/ENTER/envs/aligndit/bin/python
-FAIRSEQ_ROOT=/home/zjw524/projects/data/av_hubert/fairseq
+PYTHON=${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python
+FAIRSEQ_ROOT=${ROOT_PREFIX}/zjw524/projects/data/av_hubert/fairseq
 FILE=src/aligndit/script/misc/extract_avhubert.py
-CKPT=/home/zjw524/projects/data/large_vox_iter5.pt
-USER_DIR=/home/zjw524/projects/data/av_hubert/avhubert
+CKPT=${ROOT_PREFIX}/zjw524/projects/data/large_vox_iter5.pt
+USER_DIR=${ROOT_PREFIX}/zjw524/projects/data/av_hubert/avhubert
 
 V_INPUT_DIR=data/CelebVDub/video_mouth/test
 GT_A_INPUT_DIR=data/CelebVDub/audio/test

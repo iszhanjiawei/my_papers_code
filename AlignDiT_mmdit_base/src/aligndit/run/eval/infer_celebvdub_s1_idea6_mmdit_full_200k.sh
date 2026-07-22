@@ -1,8 +1,13 @@
 #!/bin/bash
+# --- ROOT_PREFIX path switch (auto-load env.sh) ---
+__envdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+while [ "$__envdir" != "/" ] && [ ! -f "$__envdir/env.sh" ]; do __envdir="$(dirname "$__envdir")"; done
+[ -f "$__envdir/env.sh" ] && source "$__envdir/env.sh"
+# --------------------------------------------------
 # Inference for idea6 MMDiT-full (18层全双流) model at 200k steps on CelebV-Dub Setting 1
-# CWD: /home/zjw524/projects/alignDiT_idea6/papers_codes/alignDiT_baseline/AlignDiT
+# CWD: ${ROOT_PREFIX}/zjw524/projects/alignDiT_idea6/papers_codes/alignDiT_baseline/AlignDiT
 
-CKPT_PATH=/home/zjw524/projects/data/ckpts/AlignDiT_MMDiT_full_finetune_hifigan_16k_CelebVDub_char/model_200000.pt
+CKPT_PATH=${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_full_finetune_hifigan_16k_CelebVDub_char/model_200000.pt
 CKPT_STEP=200000
 EXP_NAME=finetune_celebvdub_mm_full
 NFE=32
@@ -16,7 +21,7 @@ NCCL_P2P_DISABLE=1 \
 NCCL_SOCKET_IFNAME=ens5f0 \
 CUDA_VISIBLE_DEVICES=4,5,6,7 \
 PYTHONPATH=src \
-/home/zjw524/ENTER/envs/aligndit/bin/python -u -m accelerate.commands.launch \
+${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python -u -m accelerate.commands.launch \
     --mixed_precision bf16 \
     --num_processes 4 \
     --main_process_port 29594 \

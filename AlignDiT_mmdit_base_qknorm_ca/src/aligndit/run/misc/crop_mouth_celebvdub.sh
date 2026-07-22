@@ -1,4 +1,9 @@
 #!/bin/bash
+# --- ROOT_PREFIX path switch (auto-load env.sh) ---
+__envdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+while [ "$__envdir" != "/" ] && [ ! -f "$__envdir/env.sh" ]; do __envdir="$(dirname "$__envdir")"; done
+[ -f "$__envdir/env.sh" ] && source "$__envdir/env.sh"
+# --------------------------------------------------
 # Crop mouth ROI from CelebV-Dub full-face videos.
 # CPU-bound per video (~10s); we run multiple processes per GPU to use all CPU cores.
 # NOTE: GPU 2 is used by another user (xwt523) -> we only use GPUs 0 1 3.
@@ -8,11 +13,11 @@ GPUS=(0 1 3)              # GPUs to use (avoid GPU 2 = xwt523)
 PROCS_PER_GPU=${1:-8}     # processes per GPU; 8x3=24 total (server-friendly)
 SPLIT=${2:-train}
 
-PYTHON=/home/zjw524/anaconda3/envs/aligndit/bin/python
+PYTHON=${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python
 SCRIPT=src/aligndit/script/misc/crop_mouth_celebvdub.py
-INPUT_DIR=/home/zjw524/projects/data/CelebVDub/video/${SPLIT}
-OUTPUT_DIR=/home/zjw524/projects/data/CelebVDub/video_mouth/${SPLIT}
-MEAN_FACE=/home/zjw524/datasets/20words_mean_face.npy
+INPUT_DIR=${ROOT_PREFIX}/zjw524/projects/data/CelebVDub/video/${SPLIT}
+OUTPUT_DIR=${ROOT_PREFIX}/zjw524/projects/data/CelebVDub/video_mouth/${SPLIT}
+MEAN_FACE=${ROOT_PREFIX}/zjw524/datasets/20words_mean_face.npy
 
 NGPU=${#GPUS[@]}
 NSHARD=$((NGPU * PROCS_PER_GPU))
