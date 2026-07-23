@@ -10,9 +10,10 @@ d - dimension
 MM-DiT backbone for multimodal dubbing:
 - dual-stream (audio latent stream + video stream) joint attention in the first
   `n_mm_layers` blocks, with aligned RoPE across the two frame rates
-- text is injected via prompt-isolated cross-attention only in the first
-  `n_mm_layers` blocks (query: synthesized audio frames)
-- remaining `depth - n_mm_layers` blocks are text-free audio-only DiT blocks
+- text is injected via prompt-isolated cross-attention in the first
+  `n_text_layers` blocks (query: synthesized audio frames)
+- blocks after `n_mm_layers` stop video interaction; blocks after
+  `n_text_layers` are text-free audio-only DiT blocks
 - audio-stream parameter names are kept identical to DiTBlock so
   that the audio-only pretrained checkpoint loads directly by key matching
 """
@@ -28,6 +29,18 @@ from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
 from f5_tts.model.modules import AdaLayerNorm, AttnProcessor, Attention, DiTBlock, FeedForward
+
+
+def _validate_generation_mask(x, generation_mask):
+    if generation_mask is None:
+        raise ValueError("generation_mask is required for prompt-isolated text cross-attention")
+    if generation_mask.dtype != torch.bool:
+        raise TypeError(f"generation_mask must be bool, got {generation_mask.dtype}")
+    if generation_mask.shape != x.shape[:2]:
+        raise ValueError(
+            f"generation_mask must have shape {tuple(x.shape[:2])}, got {tuple(generation_mask.shape)}"
+        )
+
 
 # 音频流输入层
 class AudioInputEmbedding_MM(nn.Module):
@@ -97,6 +110,40 @@ class VideoInputEmbedding_MM(nn.Module):
             v, _ = self.vid_conformer(v, video_lens) # 这里不进行上采样，直接在原生25Hz上跑Conformer同样有上下文的建模能力,但序列短4倍
         v = self.conv_pos_embed(v) + v
         return v
+
+
+class AudioTextDiTBlock(DiTCrossBlock):
+    """Audio-only refinement block that keeps prompt-isolated text conditioning."""
+
+    def forward(
+        self,
+        x,
+        t,
+        mask=None,
+        rope=None,
+        text=None,
+        text_mask=None,
+        generation_mask=None,
+    ):
+        _validate_generation_mask(x, generation_mask)
+
+        norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.attn_norm(x, emb=t)
+        attn_output = self.attn(x=norm, mask=mask, rope=rope)
+        x = x + gate_msa.unsqueeze(1) * attn_output
+
+        ca_output, _ = self.cross_attn(
+            x,
+            text,
+            text,
+            key_padding_mask=~text_mask if text_mask is not None else None,
+            need_weights=False,
+        )
+        ca_output = ca_output.masked_fill(~generation_mask.unsqueeze(-1), 0.0)
+        x = x + ca_output
+
+        norm = self.ff_norm(x) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        x = x + gate_mlp.unsqueeze(1) * self.ff(norm)
+        return x
 
 
 class MMDiTBlock_VT(DiTCrossBlock):
@@ -243,14 +290,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         text_mask=None,
         generation_mask=None,
     ):
-        if generation_mask is None:
-            raise ValueError("generation_mask is required for prompt-isolated text cross-attention")
-        if generation_mask.dtype != torch.bool:
-            raise TypeError(f"generation_mask must be bool, got {generation_mask.dtype}")
-        if generation_mask.shape != x.shape[:2]:
-            raise ValueError(
-                f"generation_mask must have shape {tuple(x.shape[:2])}, got {tuple(generation_mask.shape)}"
-            )
+        _validate_generation_mask(x, generation_mask)
         # pre-norm & modulation for attention input (per stream) 1、各流独立的adaLN调制(用时间步t生成scale/shift/gate)
         norm_x, x_gate_msa, x_shift_mlp, x_scale_mlp, x_gate_mlp = self.attn_norm(x, emb=t)
         norm_v, v_gate_msa, v_shift_mlp, v_scale_mlp, v_gate_mlp = self.v_attn_norm(v, emb=t)
@@ -309,6 +349,7 @@ class DiT_VT_MMDiT(DiT):
         layer_indices_ctc=[6, 12],
         projector_dim=None,
         n_mm_layers=12,
+        n_text_layers=None,
         audio_video_ratio=4,
         video_dim=1024,
         video_rope_scaled=True,
@@ -335,7 +376,13 @@ class DiT_VT_MMDiT(DiT):
         )
         self.audio_video_ratio = audio_video_ratio
         self.video_rope_scaled = video_rope_scaled
-        self.n_mm_layers = min(n_mm_layers, depth)
+        self.n_mm_layers = n_mm_layers
+        self.n_text_layers = n_mm_layers if n_text_layers is None else n_text_layers
+        if not 0 <= self.n_mm_layers <= self.n_text_layers <= depth:
+            raise ValueError(
+                "expected 0 <= n_mm_layers <= n_text_layers <= depth, got "
+                f"n_mm_layers={self.n_mm_layers}, n_text_layers={self.n_text_layers}, depth={depth}"
+            )
 
         self.input_embed = AudioInputEmbedding_MM(mel_dim, dim)
         self.video_embed = VideoInputEmbedding_MM(video_dim, dim, use_conformer=use_conformer)
@@ -351,11 +398,13 @@ class DiT_VT_MMDiT(DiT):
             attn_backend=attn_backend,
             attn_mask_enabled=attn_mask_enabled,
         )
-        mm_block_kwargs = {**audio_block_kwargs, "text_dim": text_dim}
+        text_block_kwargs = {**audio_block_kwargs, "text_dim": text_dim}
         self.transformer_blocks = nn.ModuleList(
             [
-                MMDiTBlock_VT(**mm_block_kwargs)
+                MMDiTBlock_VT(**text_block_kwargs)
                 if i < self.n_mm_layers
+                else AudioTextDiTBlock(**text_block_kwargs)
+                if i < self.n_text_layers
                 else DiTBlock(**audio_block_kwargs)
                 for i in range(depth)
             ]
@@ -382,6 +431,12 @@ class DiT_VT_MMDiT(DiT):
             nn.init.constant_(block.cross_attn_ada.bias, 0)
             nn.init.constant_(block.v_attn_norm.linear.weight, 0)
             nn.init.constant_(block.v_attn_norm.linear.bias, 0)
+        for block in self.transformer_blocks[self.n_mm_layers : self.n_text_layers]:
+            # These tail text blocks have no extra output gate. Zeroing only
+            # cross_attn.out_proj preserves the pretrained audio path while
+            # still giving that projection a gradient on the first update.
+            nn.init.constant_(block.cross_attn.out_proj.weight, 0)
+            nn.init.constant_(block.cross_attn.out_proj.bias, 0)
 
     def get_input_embed(
         self,
@@ -555,6 +610,7 @@ class DiT_VT_MMDiT(DiT):
         intermediates_ctc = {}
         for layer_i, block in enumerate(self.transformer_blocks):
             is_mm = isinstance(block, MMDiTBlock_VT)
+            has_tail_text = isinstance(block, AudioTextDiTBlock)
             block_mask = None if self.training else mask  # memory issue
             block_v_mask = None if self.training else v_mask
             if self.checkpoint_activations:
@@ -569,6 +625,18 @@ class DiT_VT_MMDiT(DiT):
                         block_v_mask,
                         rope,
                         v_rope,
+                        text_embed,
+                        text_mask,
+                        generation_mask,
+                        use_reentrant=False,
+                    )
+                elif has_tail_text:
+                    x = torch.utils.checkpoint.checkpoint(
+                        self.ckpt_wrapper(block),
+                        x,
+                        t,
+                        block_mask,
+                        rope,
                         text_embed,
                         text_mask,
                         generation_mask,
@@ -593,6 +661,16 @@ class DiT_VT_MMDiT(DiT):
                         v_mask=block_v_mask,
                         rope=rope,
                         v_rope=v_rope,
+                        text=text_embed,
+                        text_mask=text_mask,
+                        generation_mask=generation_mask,
+                    )
+                elif has_tail_text:
+                    x = block(
+                        x,
+                        t,
+                        mask=block_mask,
+                        rope=rope,
                         text=text_embed,
                         text_mask=text_mask,
                         generation_mask=generation_mask,

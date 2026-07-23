@@ -11,7 +11,7 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../"))
 
 from aligndit.model import CFM_VT, DiT_VT_MMDiT  # noqa: E402
-from aligndit.model.backbone.dit_vt_mm import MMDiTBlock_VT  # noqa: E402
+from aligndit.model.backbone.dit_vt_mm import AudioTextDiTBlock, MMDiTBlock_VT  # noqa: E402
 from aligndit.model.modules import MelSpec_tacotron  # noqa: E402
 from f5_tts.model.modules import DiTBlock  # noqa: E402
 
@@ -33,6 +33,7 @@ ARCH = dict(
     use_conformer=True,
     layer_indices_ctc=[6, 12],
     n_mm_layers=12,
+    n_text_layers=12,
     audio_video_ratio=4,
     video_dim=1024,
     video_rope_scaled=True,
@@ -74,9 +75,9 @@ def test_text_free_audio_tail_structure(model):
     transformer = model.transformer
     blocks = transformer.transformer_blocks
     front = blocks[: transformer.n_mm_layers]
-    tail = blocks[transformer.n_mm_layers :]
+    tail = blocks[transformer.n_text_layers :]
 
-    assert len(tail) == ARCH["depth"] - ARCH["n_mm_layers"]
+    assert len(tail) == ARCH["depth"] - ARCH["n_text_layers"]
     assert all(isinstance(block, MMDiTBlock_VT) for block in front)
     assert all(type(block) is DiTBlock for block in tail)
     assert all(not hasattr(block, "cross_attn") for block in tail)
@@ -86,10 +87,10 @@ def test_text_free_audio_tail_structure(model):
         for name, _module in blocks.named_modules()
         if name.endswith(".cross_attn")
     }
-    assert cross_attn_layers == set(range(transformer.n_mm_layers)), cross_attn_layers
+    assert cross_attn_layers == set(range(transformer.n_text_layers)), cross_attn_layers
 
     state_keys = transformer.state_dict().keys()
-    for layer_i in range(transformer.n_mm_layers, ARCH["depth"]):
+    for layer_i in range(transformer.n_text_layers, ARCH["depth"]):
         prefix = f"transformer_blocks.{layer_i}."
         assert not any(key.startswith(prefix) and ".cross_attn" in key for key in state_keys)
 
@@ -100,6 +101,118 @@ def _assert_nonzero_finite_grad(name, grad):
     assert grad is not None, f"missing gradient for {name}"
     assert torch.isfinite(grad).all(), f"non-finite gradient for {name}"
     assert grad.abs().sum().item() > 0, f"zero gradient for {name}"
+
+
+def test_c1_prompt_isolated_tail_text_blocks():
+    """C1 keeps text in layers 12-17 without restoring prompt-frame text residuals."""
+    transformer = DiT_VT_MMDiT(
+        dim=64,
+        depth=4,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=True,
+        use_conformer=False,
+        layer_indices_ctc=[],
+        n_mm_layers=2,
+        n_text_layers=4,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    blocks = transformer.transformer_blocks
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:2])
+    assert all(type(block) is AudioTextDiTBlock for block in blocks[2:])
+    assert torch.count_nonzero(blocks[-1].cross_attn.out_proj.weight) == 0
+
+    # The audio path remains key/shape compatible with the native pretrained block.
+    native_block = DiTBlock(
+        dim=64,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        qk_norm="rms_norm",
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+    )
+    c1_audio_state = {k: v.shape for k, v in blocks[-1].state_dict().items() if not k.startswith("cross_attn.")}
+    native_state = {k: v.shape for k, v in native_block.state_dict().items()}
+    assert c1_audio_state == native_state
+
+    # Make text CA return exactly one and silence all gated audio branches.
+    isolated_block = copy.deepcopy(blocks[-1]).eval()
+    with torch.no_grad():
+        isolated_block.attn_norm.linear.weight.zero_()
+        isolated_block.attn_norm.linear.bias.zero_()
+        for parameter in isolated_block.cross_attn.parameters():
+            parameter.zero_()
+        isolated_block.cross_attn.out_proj.bias.fill_(1.0)
+
+    batch, audio_len, text_len = 2, 8, 5
+    x = torch.randn(batch, audio_len, 64)
+    t = torch.randn(batch, 64)
+    text = torch.randn(batch, text_len, 32)
+    audio_mask = torch.ones(batch, audio_len, dtype=torch.bool)
+    text_mask = torch.ones(batch, text_len, dtype=torch.bool)
+    generation_mask = torch.tensor(
+        [
+            [False, False, False, True, True, True, True, True],
+            [True, True, False, False, True, True, False, True],
+        ],
+        dtype=torch.bool,
+    )
+    x_out = isolated_block(
+        x,
+        t,
+        mask=audio_mask,
+        text=text,
+        text_mask=text_mask,
+        generation_mask=generation_mask,
+    )
+    expected_x = x + generation_mask.unsqueeze(-1).to(x.dtype)
+    torch.testing.assert_close(x_out, expected_x, rtol=0, atol=0)
+
+    # A zero output projection has no second zero factor, so it wakes immediately.
+    train_block = blocks[-1]
+    train_block.zero_grad(set_to_none=True)
+    train_out = train_block(
+        x,
+        t,
+        mask=audio_mask,
+        text=text,
+        text_mask=text_mask,
+        generation_mask=generation_mask,
+    )
+    (train_out * torch.randn_like(train_out)).mean().backward()
+    _assert_nonzero_finite_grad("C1 tail text cross-attention output", train_block.cross_attn.out_proj.weight.grad)
+
+    # Exercise the complete C1 activation-checkpoint routing, including tail text args.
+    transformer.train()
+    pred, intermediates = transformer(
+        x=torch.randn(1, 16, 8),
+        cond=torch.randn(1, 16, 8),
+        text=torch.randint(1, 32, (1, 8)),
+        video=torch.randn(1, 4, 16),
+        time=torch.rand(1),
+        mask=torch.ones(1, 16, dtype=torch.bool),
+        text_mask=torch.ones(1, 8, dtype=torch.bool),
+        video_mask=torch.ones(1, 4, dtype=torch.bool),
+        complementary_mask=torch.ones(1, 4, dtype=torch.bool),
+        generation_mask=torch.tensor([[False] * 8 + [True] * 8]),
+        cache=True,
+    )
+    assert pred.shape == (1, 16, 8)
+    assert intermediates == {}
+    pred.sum().backward()
+    print("[OK] C1 builds prompt-isolated tail text blocks with working checkpoint/gradient paths")
 
 
 def test_mm_gated_branches_wake_up(model):
@@ -482,6 +595,7 @@ def main():
     torch.set_num_threads(8)
     model = build_model()
     test_text_free_audio_tail_structure(model)
+    test_c1_prompt_isolated_tail_text_blocks()
     test_mm_gated_branches_wake_up(model)
     test_text_cross_attention_is_prompt_isolated(model)
     test_train_forward_backward(model)
