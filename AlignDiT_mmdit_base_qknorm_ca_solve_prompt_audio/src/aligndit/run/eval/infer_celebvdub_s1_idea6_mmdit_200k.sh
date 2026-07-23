@@ -7,7 +7,7 @@ while [ "$__envdir" != "/" ] && [ ! -f "$__envdir/env.sh" ]; do __envdir="$(dirn
 # Inference for idea6 MMDiT model at 50k steps on CelebV-Dub Setting 1
 # CWD: ${ROOT_PREFIX}/zjw524/projects/alignDiT_idea6/papers_codes/alignDiT_baseline/AlignDiT
 
-CKPT_PATH=${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_finetune_hifigan_16k_CelebVDub_char/model_200000.pt
+CKPT_PATH=${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_prompt_isolated_stagewise_finetune_hifigan_16k_CelebVDub_char/model_200000.pt
 CKPT_STEP=200000
 EXP_NAME=finetune_celebvdub_mm
 NFE=32

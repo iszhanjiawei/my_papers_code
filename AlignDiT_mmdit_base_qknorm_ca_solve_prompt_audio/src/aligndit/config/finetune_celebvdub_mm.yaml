@@ -19,7 +19,7 @@ optim:
   bnb_optimizer: False  # use bnb 8bit AdamW optimizer or not
 
 model:
-  name: AlignDiT_MMDiT_qknorm_ca_finetune
+  name: AlignDiT_MMDiT_qknorm_ca_prompt_isolated_stagewise_finetune
   tokenizer: char
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT_VT_MMDiT  # dual-stream MM-DiT (audio + video joint attention, text cross-attention)
@@ -38,7 +38,7 @@ model:
     checkpoint_activations: False  # recompute activations and save memory for extra compute
     use_conformer: True
     layer_indices_ctc: [6, 12]
-    n_mm_layers: 12  # first N blocks are dual-stream MM-DiT, the rest are audio-only single-stream
+    n_mm_layers: 12  # first N blocks align video and prompt-isolated text; the rest are text-free audio DiT refinement blocks
     audio_video_ratio: 4  # 100 Hz mel / 25 Hz video
     video_dim: 1024  # AV-HuBERT feature dim
     video_rope_scaled: True  # aligned RoPE: scale video positions by audio_video_ratio

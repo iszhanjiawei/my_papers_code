@@ -18,7 +18,7 @@ optim:
   bnb_optimizer: False  # use bnb 8bit AdamW optimizer or not
 
 model:
-  name: AlignDiT_MMDiT_full_finetune  # ablation: all layers dual-stream (n_mm_layers = depth)
+  name: AlignDiT_MMDiT_qknorm_ca_prompt_isolated_full_finetune  # ablation: prompt-isolated text/MM-DiT in all layers (n_mm_layers = depth)
   tokenizer: char
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT_VT_MMDiT  # dual-stream MM-DiT (audio + video joint attention, text cross-attention)
@@ -37,7 +37,7 @@ model:
     checkpoint_activations: False  # recompute activations and save memory for extra compute
     use_conformer: True
     layer_indices_ctc: [6, 12]
-    n_mm_layers: 18  # ABLATION: all 18 blocks are dual-stream MM-DiT (vs 12 in baseline mm config)
+    n_mm_layers: 18  # ABLATION: all 18 blocks inject prompt-isolated text (vs text-free final 6 in stagewise config)
     audio_video_ratio: 4  # 100 Hz mel / 25 Hz video
     video_dim: 1024  # AV-HuBERT feature dim
     video_rope_scaled: True  # aligned RoPE: scale video positions by audio_video_ratio

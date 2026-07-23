@@ -5,8 +5,8 @@ while [ "$__envdir" != "/" ] && [ ! -f "$__envdir/env.sh" ]; do __envdir="$(dirn
 # --------------------------------------------------
 # Slurm 提交专用：不设置 CUDA_VISIBLE_DEVICES（由 slurm 自动分配）
 # 提交命令（在项目根目录执行）：
-#   /share/slurm.pl --job-name=mmdit_qknorm_ca --nodelist=xju-aslp8 --gpu 4 --num-threads 64 \
-#       ./mmdit_qknorm_ca.log bash src/aligndit/run/train/finetune_celebvdub_mm_slurm.sh
+#   /share/slurm.pl --job-name=mmdit_prompt_stagewise --nodelist=xju-aslp8 --gpu 4 --num-threads 64 \
+#       ./mmdit_prompt_stagewise.log bash src/aligndit/run/train/finetune_celebvdub_mm_slurm.sh
 OMP_NUM_THREADS=1 \
 NCCL_TIMEOUT=1200 \
 NCCL_IB_DISABLE=1 \

@@ -10,10 +10,10 @@ d - dimension
 MM-DiT backbone for multimodal dubbing:
 - dual-stream (audio latent stream + video stream) joint attention in the first
   `n_mm_layers` blocks, with aligned RoPE across the two frame rates
-- text is injected via cross-attention (query: audio stream), identical to the
-  baseline DiT_VT_CrossAttn conditioning
-- remaining `depth - n_mm_layers` blocks are audio-only single-stream blocks
-- audio-stream parameter names are kept identical to DiTBlock/DiTCrossBlock so
+- text is injected via prompt-isolated cross-attention only in the first
+  `n_mm_layers` blocks (query: synthesized audio frames)
+- remaining `depth - n_mm_layers` blocks are text-free audio-only DiT blocks
+- audio-stream parameter names are kept identical to DiTBlock so
   that the audio-only pretrained checkpoint loads directly by key matching
 """
 
@@ -27,7 +27,7 @@ from x_transformers.x_transformers import apply_rotary_pos_emb
 from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
-from f5_tts.model.modules import AdaLayerNorm, AttnProcessor, Attention, FeedForward
+from f5_tts.model.modules import AdaLayerNorm, AttnProcessor, Attention, DiTBlock, FeedForward
 
 # 音频流输入层
 class AudioInputEmbedding_MM(nn.Module):
@@ -340,7 +340,7 @@ class DiT_VT_MMDiT(DiT):
         self.input_embed = AudioInputEmbedding_MM(mel_dim, dim)
         self.video_embed = VideoInputEmbedding_MM(video_dim, dim, use_conformer=use_conformer)
 
-        block_kwargs = dict(
+        audio_block_kwargs = dict(
             dim=dim,
             heads=heads,
             dim_head=dim_head,
@@ -350,11 +350,13 @@ class DiT_VT_MMDiT(DiT):
             pe_attn_head=pe_attn_head,
             attn_backend=attn_backend,
             attn_mask_enabled=attn_mask_enabled,
-            text_dim=text_dim,
-        )  # 前12层：双流    后6层：纯音频
+        )
+        mm_block_kwargs = {**audio_block_kwargs, "text_dim": text_dim}
         self.transformer_blocks = nn.ModuleList(
             [
-                MMDiTBlock_VT(**block_kwargs) if i < self.n_mm_layers else DiTCrossBlock(**block_kwargs)
+                MMDiTBlock_VT(**mm_block_kwargs)
+                if i < self.n_mm_layers
+                else DiTBlock(**audio_block_kwargs)
                 for i in range(depth)
             ]
         )
@@ -373,20 +375,13 @@ class DiT_VT_MMDiT(DiT):
         # initialized so that the gate receives a non-zero gradient on the first
         # update; otherwise both factors remain zero forever.
         self.initialize_weights()
-        for block in self.transformer_blocks:
-            if isinstance(block, MMDiTBlock_VT):
-                # Gated MM branches: zero only the modulation/gates. Keep
-                # cross_attn.out_proj and v_attn.to_out normally initialized.
-                nn.init.constant_(block.cross_attn_ada.weight, 0)
-                nn.init.constant_(block.cross_attn_ada.bias, 0)
-                nn.init.constant_(block.v_attn_norm.linear.weight, 0)
-                nn.init.constant_(block.v_attn_norm.linear.bias, 0)
-            else:
-                # Audio-only blocks add cross-attention directly without an
-                # additional gate, so a zero output projection is safe and
-                # preserves the pretrained audio path at initialization.
-                nn.init.constant_(block.cross_attn.out_proj.weight, 0)
-                nn.init.constant_(block.cross_attn.out_proj.bias, 0)
+        for block in self.transformer_blocks[: self.n_mm_layers]:
+            # Gated MM branches: zero only the modulation/gates. Keep
+            # cross_attn.out_proj and v_attn.to_out normally initialized.
+            nn.init.constant_(block.cross_attn_ada.weight, 0)
+            nn.init.constant_(block.cross_attn_ada.bias, 0)
+            nn.init.constant_(block.v_attn_norm.linear.weight, 0)
+            nn.init.constant_(block.v_attn_norm.linear.bias, 0)
 
     def get_input_embed(
         self,
@@ -586,8 +581,6 @@ class DiT_VT_MMDiT(DiT):
                         t,
                         block_mask,
                         rope,
-                        text_embed,
-                        text_mask,
                         use_reentrant=False,
                     )
             else:
@@ -610,8 +603,6 @@ class DiT_VT_MMDiT(DiT):
                         t,
                         mask=block_mask,
                         rope=rope,
-                        text=text_embed,
-                        text_mask=text_mask,
                     )
 
             if not cache and layer_i in self.layer_map_ctc:  # hack
