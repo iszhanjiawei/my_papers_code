@@ -27,11 +27,16 @@ def main(model_cfg):
     wandb_resume_id = None
 
     # set text tokenizer
-    if tokenizer != "custom":
+    data_dir = getattr(model_cfg.datasets, 'data_dir', None)
+    if data_dir and tokenizer not in ["custom", "byte"]:
+        tokenizer_path = os.path.join(data_dir, f"{model_cfg.datasets.name}_{tokenizer}", "vocab.txt")
+        vocab_char_map, vocab_size = get_tokenizer(tokenizer_path, "custom")
+    elif tokenizer != "custom":
         tokenizer_path = model_cfg.datasets.name
+        vocab_char_map, vocab_size = get_tokenizer(tokenizer_path, tokenizer)
     else:
         tokenizer_path = model_cfg.model.tokenizer_path
-    vocab_char_map, vocab_size = get_tokenizer(tokenizer_path, tokenizer)
+        vocab_char_map, vocab_size = get_tokenizer(tokenizer_path, tokenizer)
 
     # set model
     model = CFM_VT(
@@ -76,6 +81,7 @@ def main(model_cfg):
         mel_spec_module=MelSpec_tacotron(**model_cfg.model.mel_spec),
         mel_spec_kwargs={k: v for k, v in model_cfg.model.mel_spec.items() if k != "mel_spec_type"},  # hack
         dataset_type="CustomDataset_mel_video",
+        data_dir=data_dir,
     )
     trainer.finetune(
         model_cfg.ckpts.pretrained_path,

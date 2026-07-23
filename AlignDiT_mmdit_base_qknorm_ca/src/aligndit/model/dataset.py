@@ -34,8 +34,9 @@ def cut_or_pad(data, size, dim=0, mode="constant", value=None):
 
 
 class CustomDataset_mel(CustomDataset):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, data_dir=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.data_dir = data_dir  # if set, relative audio_path in arrow will be resolved to abs path
         self.data = self.data.filter(lambda example: 0.3 <= example["duration"] <= 30)
         self.durations = self.data["duration"]
 
@@ -50,6 +51,8 @@ class CustomDataset_mel(CustomDataset):
         row = self.data[index]
         audio_path = row["audio_path"]
         text = row["text"]
+        if self.data_dir and not os.path.isabs(audio_path):
+            audio_path = os.path.join(os.path.dirname(self.data_dir), audio_path)
         mel_path = os.path.splitext(audio_path.replace("/audio/", "/mel_tacotron/"))[0] + ".npy"
         mel_spec = torch.from_numpy(np.load(mel_path).T)
         return {
@@ -177,6 +180,7 @@ def load_dataset_mel(
     audio_type: str = "raw",
     mel_spec_module: nn.Module | None = None,
     mel_spec_kwargs: dict = dict(),
+    data_dir: str | None = None,
 ) -> CustomDataset | CustomDataset_mel | CustomDataset_mel_rep | CustomDataset_mel_video:
     """
     dataset_type    - "CustomDataset" if you want to use tokenizer name and default data path to load for train_dataset
@@ -186,7 +190,9 @@ def load_dataset_mel(
     print("Loading dataset ...")
 
     if dataset_type in ["CustomDataset", "CustomDataset_mel", "CustomDataset_mel_rep", "CustomDataset_mel_video"]:
-        if tokenizer:
+        if data_dir:
+            rel_data_path = os.path.join(data_dir, f"{dataset_name}_{tokenizer}") if tokenizer else os.path.join(data_dir, dataset_name)
+        elif tokenizer:
             rel_data_path = str(files("aligndit").joinpath(f"../../data/{dataset_name}_{tokenizer}"))
         else:
             rel_data_path = str(files("aligndit").joinpath(f"../../data/{dataset_name}"))
@@ -217,6 +223,7 @@ def load_dataset_mel(
             durations=durations,
             preprocessed_mel=preprocessed_mel,
             mel_spec_module=mel_spec_module,
+            data_dir=data_dir,
             **mel_spec_kwargs,
         )
 

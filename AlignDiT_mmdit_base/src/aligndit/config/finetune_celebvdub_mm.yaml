@@ -4,6 +4,7 @@ hydra:
 
 datasets:
   name: CelebVDub
+  data_dir: /home/zjw524/projects/data  # absolute path to data root; overrides relative data/ lookup
   batch_size_per_gpu: 9000 # 4 GPUs, 4 * 9000 = 36000 => ~4896 updates / epoch
   batch_size_type: frame  # frame | sample
   max_samples: 32  # max sequences per batch if use frame-wise batch_size. we set 32 for small models, 64 for base models
@@ -51,7 +52,7 @@ model:
 
   vocoder:
     is_local: True  # use local offline ckpt or not
-    local_path: ckpts/hifigan_16k_LRS3/g_01000000  # local vocoder path
+    local_path: /home/zjw524/projects/alignDiT_idea6/my_papers_code/hifigan_16k_LRS3/g_01000000
 
   ctc_lambda: 0.1
 
@@ -59,7 +60,7 @@ ema:
   beta: 0.999
 
 ckpts:
-  pretrained_path: ckpts/AlignDiT_pretrain_${model.mel_spec.mel_spec_type}_LibriSpeech_notext/model_500000.pt
+  pretrained_path: /home/zjw524/datasets/AlignDiT_pretrain_LibriSpeech_500000.pt
   logger: tensorboard  # wandb | tensorboard | null
   log_samples: True  # infer random sample per save checkpoint. wip, normal to fail with extra long samples
   save_per_updates: 50000  # save checkpoint per updates
