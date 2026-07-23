@@ -288,6 +288,66 @@ def test_c2_global_text_with_text_free_tail():
     print("[OK] C2 text CA updates prompt and generated frames while layers 2-3 remain text-free")
 
 
+def test_c0_global_text_with_tail_text_blocks():
+    """C0 keeps global text CA in both the MM front-end and audio-only tail."""
+    transformer = DiT_VT_MMDiT(
+        dim=64,
+        depth=4,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=False,
+        use_conformer=False,
+        layer_indices_ctc=[],
+        n_mm_layers=2,
+        n_text_layers=4,
+        prompt_isolated_ca=False,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    blocks = transformer.transformer_blocks
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:2])
+    assert all(type(block) is AudioTextDiTBlock for block in blocks[2:])
+    assert all(block.prompt_isolated_ca is False for block in blocks)
+
+    block = copy.deepcopy(blocks[-1]).eval()
+    with torch.no_grad():
+        block.attn_norm.linear.weight.zero_()
+        block.attn_norm.linear.bias.zero_()
+        for parameter in block.cross_attn.parameters():
+            parameter.zero_()
+        block.cross_attn.out_proj.bias.fill_(1.0)
+
+    batch, audio_len, text_len = 2, 8, 5
+    x = torch.randn(batch, audio_len, 64)
+    generation_mask = torch.tensor(
+        [
+            [False, False, False, True, True, True, True, True],
+            [True, True, False, False, True, True, False, True],
+        ],
+        dtype=torch.bool,
+    )
+    x_out = block(
+        x,
+        torch.randn(batch, 64),
+        mask=torch.ones(batch, audio_len, dtype=torch.bool),
+        text=torch.randn(batch, text_len, 32),
+        text_mask=torch.ones(batch, text_len, dtype=torch.bool),
+        generation_mask=generation_mask,
+    )
+    torch.testing.assert_close(x_out, x + torch.ones_like(x), rtol=0, atol=0)
+    print("[OK] C0 global text CA updates all frames in both MM and audio-only text stages")
+
+
 def test_mm_gated_branches_wake_up(model):
     """A zero gate must open first, then allow gradients into its attention branch."""
     block = copy.deepcopy(model.transformer.transformer_blocks[0]).eval()
@@ -670,6 +730,7 @@ def main():
     test_text_free_audio_tail_structure(model)
     test_c1_prompt_isolated_tail_text_blocks()
     test_c2_global_text_with_text_free_tail()
+    test_c0_global_text_with_tail_text_blocks()
     test_mm_gated_branches_wake_up(model)
     test_text_cross_attention_is_prompt_isolated(model)
     test_train_forward_backward(model)
