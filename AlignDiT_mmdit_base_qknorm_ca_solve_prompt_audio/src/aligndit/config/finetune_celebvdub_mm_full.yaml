@@ -39,6 +39,7 @@ model:
     layer_indices_ctc: [6, 12]
     n_mm_layers: 18  # ABLATION: all 18 blocks inject prompt-isolated text (vs text-free final 6 in stagewise config)
     n_text_layers: 18
+    prompt_isolated_ca: True
     audio_video_ratio: 4  # 100 Hz mel / 25 Hz video
     video_dim: 1024  # AV-HuBERT feature dim
     video_rope_scaled: True  # aligned RoPE: scale video positions by audio_video_ratio

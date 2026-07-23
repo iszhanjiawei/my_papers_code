@@ -40,6 +40,7 @@ model:
     layer_indices_ctc: [6, 12]
     n_mm_layers: 12  # first N blocks align video and prompt-isolated text; the rest are text-free audio DiT refinement blocks
     n_text_layers: 12  # C3: text CA stops with the MM alignment stage
+    prompt_isolated_ca: True  # C3: reference/prompt frames never receive the text CA residual
     audio_video_ratio: 4  # 100 Hz mel / 25 Hz video
     video_dim: 1024  # AV-HuBERT feature dim
     video_rope_scaled: True  # aligned RoPE: scale video positions by audio_video_ratio

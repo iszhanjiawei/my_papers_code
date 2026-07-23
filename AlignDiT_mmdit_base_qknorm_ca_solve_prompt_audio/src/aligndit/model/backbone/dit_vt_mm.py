@@ -10,8 +10,8 @@ d - dimension
 MM-DiT backbone for multimodal dubbing:
 - dual-stream (audio latent stream + video stream) joint attention in the first
   `n_mm_layers` blocks, with aligned RoPE across the two frame rates
-- text is injected via prompt-isolated cross-attention in the first
-  `n_text_layers` blocks (query: synthesized audio frames)
+- text is injected via cross-attention in the first `n_text_layers` blocks;
+  `prompt_isolated_ca` controls whether only synthesized frames receive it
 - blocks after `n_mm_layers` stop video interaction; blocks after
   `n_text_layers` are text-free audio-only DiT blocks
 - audio-stream parameter names are kept identical to DiTBlock so
@@ -113,7 +113,11 @@ class VideoInputEmbedding_MM(nn.Module):
 
 
 class AudioTextDiTBlock(DiTCrossBlock):
-    """Audio-only refinement block that keeps prompt-isolated text conditioning."""
+    """Audio-only refinement block that optionally isolates text from prompt frames."""
+
+    def __init__(self, *args, prompt_isolated_ca=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.prompt_isolated_ca = prompt_isolated_ca
 
     def forward(
         self,
@@ -125,7 +129,8 @@ class AudioTextDiTBlock(DiTCrossBlock):
         text_mask=None,
         generation_mask=None,
     ):
-        _validate_generation_mask(x, generation_mask)
+        if self.prompt_isolated_ca:
+            _validate_generation_mask(x, generation_mask)
 
         norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.attn_norm(x, emb=t)
         attn_output = self.attn(x=norm, mask=mask, rope=rope)
@@ -138,7 +143,8 @@ class AudioTextDiTBlock(DiTCrossBlock):
             key_padding_mask=~text_mask if text_mask is not None else None,
             need_weights=False,
         )
-        ca_output = ca_output.masked_fill(~generation_mask.unsqueeze(-1), 0.0)
+        if self.prompt_isolated_ca:
+            ca_output = ca_output.masked_fill(~generation_mask.unsqueeze(-1), 0.0)
         x = x + ca_output
 
         norm = self.ff_norm(x) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
@@ -166,6 +172,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         attn_backend="torch",  # "torch" or "flash_attn"
         attn_mask_enabled=True,
         text_dim=512,
+        prompt_isolated_ca=True,
     ):
         super().__init__(
             dim=dim,
@@ -184,6 +191,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
 
         self.pe_attn_head = pe_attn_head
         self.attn_mask_enabled = attn_mask_enabled
+        self.prompt_isolated_ca = prompt_isolated_ca
 
         # video stream 视频流独立参数
         self.v_attn_norm = AdaLayerNorm(dim)
@@ -290,7 +298,8 @@ class MMDiTBlock_VT(DiTCrossBlock):
         text_mask=None,
         generation_mask=None,
     ):
-        _validate_generation_mask(x, generation_mask)
+        if self.prompt_isolated_ca:
+            _validate_generation_mask(x, generation_mask)
         # pre-norm & modulation for attention input (per stream) 1、各流独立的adaLN调制(用时间步t生成scale/shift/gate)
         norm_x, x_gate_msa, x_shift_mlp, x_scale_mlp, x_gate_mlp = self.attn_norm(x, emb=t)
         norm_v, v_gate_msa, v_shift_mlp, v_scale_mlp, v_gate_mlp = self.v_attn_norm(v, emb=t)
@@ -309,9 +318,10 @@ class MMDiTBlock_VT(DiTCrossBlock):
         ca_output, _ = self.cross_attn(
             norm_ca, text, text, key_padding_mask=~text_mask if text_mask is not None else None, need_weights=False
         )
-        # 3.3 Only synthesized audio queries may receive the text residual.
-        # Prompt/reference frames remain acoustic context and never align to text directly.
-        ca_output = ca_output.masked_fill(~generation_mask.unsqueeze(-1), 0.0)
+        # 3.3 In the isolated variants, only synthesized audio queries receive
+        # the text residual; C2 deliberately leaves the residual global.
+        if self.prompt_isolated_ca:
+            ca_output = ca_output.masked_fill(~generation_mask.unsqueeze(-1), 0.0)
         x = x + ca_gate.unsqueeze(1) * ca_output
 
         # ff_norm是归一化的作用  x_scale_mlp / x_shift_mlp：在 FFN 之前，对归一化后的特征做仿射变换
@@ -350,6 +360,7 @@ class DiT_VT_MMDiT(DiT):
         projector_dim=None,
         n_mm_layers=12,
         n_text_layers=None,
+        prompt_isolated_ca=True,
         audio_video_ratio=4,
         video_dim=1024,
         video_rope_scaled=True,
@@ -376,6 +387,7 @@ class DiT_VT_MMDiT(DiT):
         )
         self.audio_video_ratio = audio_video_ratio
         self.video_rope_scaled = video_rope_scaled
+        self.prompt_isolated_ca = prompt_isolated_ca
         self.n_mm_layers = n_mm_layers
         self.n_text_layers = n_mm_layers if n_text_layers is None else n_text_layers
         if not 0 <= self.n_mm_layers <= self.n_text_layers <= depth:
@@ -398,7 +410,11 @@ class DiT_VT_MMDiT(DiT):
             attn_backend=attn_backend,
             attn_mask_enabled=attn_mask_enabled,
         )
-        text_block_kwargs = {**audio_block_kwargs, "text_dim": text_dim}
+        text_block_kwargs = {
+            **audio_block_kwargs,
+            "text_dim": text_dim,
+            "prompt_isolated_ca": prompt_isolated_ca,
+        }
         self.transformer_blocks = nn.ModuleList(
             [
                 MMDiTBlock_VT(**text_block_kwargs)

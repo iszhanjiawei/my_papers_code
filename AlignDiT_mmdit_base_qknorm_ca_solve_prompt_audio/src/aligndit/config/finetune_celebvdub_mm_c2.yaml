@@ -19,7 +19,7 @@ optim:
   bnb_optimizer: False
 
 model:
-  name: AlignDiT_MMDiT_qknorm_ca_c1_prompt_isolated_tail_text_finetune
+  name: AlignDiT_MMDiT_qknorm_ca_c2_global_text_stagewise_finetune
   tokenizer: char
   tokenizer_path: null
   backbone: DiT_VT_MMDiT
@@ -38,9 +38,9 @@ model:
     checkpoint_activations: False
     use_conformer: True
     layer_indices_ctc: [6, 12]
-    n_mm_layers: 12  # video interaction stops after layer 11
-    n_text_layers: 18  # C1: all layers keep text CA, isolated to generated audio frames
-    prompt_isolated_ca: True
+    n_mm_layers: 12
+    n_text_layers: 12  # C2: final six layers are native text-free audio DiTBlocks
+    prompt_isolated_ca: False  # text CA in layers 0-11 also writes into reference/prompt frames
     audio_video_ratio: 4
     video_dim: 1024
     video_rope_scaled: True
