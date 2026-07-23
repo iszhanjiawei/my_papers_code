@@ -344,21 +344,27 @@ class DiT_VT_MMDiT(DiT):
             [DownsampleLayer([2, 1], self.dim, projector_dim, z_dim) for _ in self.layer_map_ctc]
         )
 
-        # zero-out adaLN / output layers for the (re-created) blocks
+        # Initialize the re-created blocks without double-zeroing a gated branch.
+        #
+        # For an AdaLN-Zero residual y = x + gate * branch(x), only the gate is
+        # initialized to zero. The branch output projection must stay normally
+        # initialized so that the gate receives a non-zero gradient on the first
+        # update; otherwise both factors remain zero forever.
         self.initialize_weights()
         for block in self.transformer_blocks:
-            # zero init text cross attn
-            nn.init.constant_(block.cross_attn.out_proj.weight, 0)
-            nn.init.constant_(block.cross_attn.out_proj.bias, 0)
-            if isinstance(block, MMDiTBlock_VT): # 零初始化:视频流adaLN线性层+attention输出投影
-                # zero init cross-attn AdaLN (shift=scale=gate=0 at start, AdaLN-zero)
-                nn.init.constant_(block.cross_attn_ada.weight, 0) # cross-attn 调制层零初始化：训练起点 gate=0，cross-attn 静默
-                nn.init.constant_(block.cross_attn_ada.bias, 0)   # 与预训练纯音频状态一致，稳定起步
-                # zero init video stream adaLN and its attention output
-                nn.init.constant_(block.v_attn_norm.linear.weight, 0) # 训练开始时 v_attn_norm 输出全零（adaLN 输出 scale=0, shift=0, gate=0），视频流的 attention 输出也被 gate 乘零归零
-                nn.init.constant_(block.v_attn_norm.linear.bias, 0) # 整个视频流在第 0 步完全静默，模型等价于纯音频预训练状态，训练从一个稳定的起点开始，视频信息逐渐被学习注入。
-                nn.init.constant_(block.v_attn.to_out[0].weight, 0) # 视频流 attention 输出被 gate 乘零归零
-                nn.init.constant_(block.v_attn.to_out[0].bias, 0) # 视频流 attention 输出被 gate 乘零归零
+            if isinstance(block, MMDiTBlock_VT):
+                # Gated MM branches: zero only the modulation/gates. Keep
+                # cross_attn.out_proj and v_attn.to_out normally initialized.
+                nn.init.constant_(block.cross_attn_ada.weight, 0)
+                nn.init.constant_(block.cross_attn_ada.bias, 0)
+                nn.init.constant_(block.v_attn_norm.linear.weight, 0)
+                nn.init.constant_(block.v_attn_norm.linear.bias, 0)
+            else:
+                # Audio-only blocks add cross-attention directly without an
+                # additional gate, so a zero output projection is safe and
+                # preserves the pretrained audio path at initialization.
+                nn.init.constant_(block.cross_attn.out_proj.weight, 0)
+                nn.init.constant_(block.cross_attn.out_proj.bias, 0)
 
     def get_input_embed(
         self,

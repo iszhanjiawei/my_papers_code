@@ -2,6 +2,7 @@
 # Run: ~/ENTER/envs/aligndit/bin/python -u src/aligndit/script/misc/smoke_test_mmdit.py
 # All tests run on CPU to avoid touching GPUs in use.
 
+import copy
 import os
 import sys
 
@@ -67,6 +68,71 @@ def build_model():
         ctc_lambda=0.1,
     )
     return model
+
+
+def _assert_nonzero_finite_grad(name, grad):
+    assert grad is not None, f"missing gradient for {name}"
+    assert torch.isfinite(grad).all(), f"non-finite gradient for {name}"
+    assert grad.abs().sum().item() > 0, f"zero gradient for {name}"
+
+
+def test_mm_gated_branches_wake_up(model):
+    """A zero gate must open first, then allow gradients into its attention branch."""
+    block = copy.deepcopy(model.transformer.transformer_blocks[0]).eval()
+    dim = ARCH["dim"]
+    text_dim = ARCH["text_dim"]
+
+    assert torch.count_nonzero(block.cross_attn_ada.weight) == 0
+    assert torch.count_nonzero(block.v_attn_norm.linear.weight) == 0
+    assert torch.count_nonzero(block.cross_attn.out_proj.weight) > 0
+    assert torch.count_nonzero(block.v_attn.to_out[0].weight) > 0
+
+    batch, audio_len, video_len, text_len = 2, 24, 6, 10
+    x = torch.randn(batch, audio_len, dim)
+    v = torch.randn(batch, video_len, dim)
+    t = torch.randn(batch, dim)
+    text = torch.randn(batch, text_len, text_dim)
+    audio_mask = torch.ones(batch, audio_len, dtype=torch.bool)
+    video_mask = torch.ones(batch, video_len, dtype=torch.bool)
+    text_mask = torch.ones(batch, text_len, dtype=torch.bool)
+    x_probe = torch.randn_like(x)
+    v_probe = torch.randn_like(v)
+
+    def branch_loss():
+        x_out, v_out = block(
+            x,
+            v,
+            t,
+            mask=audio_mask,
+            v_mask=video_mask,
+            text=text,
+            text_mask=text_mask,
+        )
+        return (x_out * x_probe).mean() + (v_out * v_probe).mean()
+
+    optimizer = torch.optim.SGD(block.parameters(), lr=0.1)
+
+    # Update 1: normally initialized branch outputs provide gradients to the zero gates.
+    optimizer.zero_grad(set_to_none=True)
+    branch_loss().backward()
+    _assert_nonzero_finite_grad(
+        "MM text cross-attention gate",
+        block.cross_attn_ada.weight.grad[2 * dim : 3 * dim],
+    )
+    _assert_nonzero_finite_grad(
+        "MM video-attention gate",
+        block.v_attn_norm.linear.weight.grad[2 * dim : 3 * dim],
+    )
+    optimizer.step()
+
+    # Update 2: opened gates propagate gradients into the complete attention branches.
+    optimizer.zero_grad(set_to_none=True)
+    branch_loss().backward()
+    _assert_nonzero_finite_grad("MM text cross-attention output", block.cross_attn.out_proj.weight.grad)
+    _assert_nonzero_finite_grad("MM text cross-attention query", block.cross_attn.q_proj_weight.grad)
+    _assert_nonzero_finite_grad("MM video-attention output", block.v_attn.to_out[0].weight.grad)
+    _assert_nonzero_finite_grad("MM video-attention query", block.v_attn.to_q.weight.grad)
+    print("[OK] gated MM text/video attention branches wake up and receive non-zero gradients")
 
 
 def test_train_forward_backward(model):
@@ -251,6 +317,7 @@ def test_pretrained_ckpt_compat(model):
 def main():
     torch.set_num_threads(8)
     model = build_model()
+    test_mm_gated_branches_wake_up(model)
     test_train_forward_backward(model)
     test_modality_drop(model)
     test_pretrained_ckpt_compat(model)
