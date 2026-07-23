@@ -16,4 +16,4 @@
 #   - yaml 配置用 ${oc.env:ROOT_PREFIX,''} 读取(Hydra/OmegaConf);
 #   - python 用 os.environ.get("ROOT_PREFIX", "") 读取.
 # =====================================================================
-export ROOT_PREFIX="${ROOT_PREFIX:-/home}"
+export ROOT_PREFIX="${ROOT_PREFIX:-}"
