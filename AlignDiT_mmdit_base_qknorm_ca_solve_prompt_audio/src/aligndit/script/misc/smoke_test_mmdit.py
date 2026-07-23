@@ -141,6 +141,57 @@ def test_mm_gated_branches_wake_up(model):
     print("[OK] gated MM text/video attention branches wake up and receive non-zero gradients")
 
 
+def test_text_cross_attention_is_prompt_isolated(model):
+    """Text cross-attention may update generated frames, never reference prompt frames."""
+    block = copy.deepcopy(model.transformer.transformer_blocks[0]).eval()
+    dim = ARCH["dim"]
+    text_dim = ARCH["text_dim"]
+
+    with torch.no_grad():
+        # Silence every residual branch except text cross-attention.
+        block.attn_norm.linear.weight.zero_()
+        block.attn_norm.linear.bias.zero_()
+        block.v_attn_norm.linear.weight.zero_()
+        block.v_attn_norm.linear.bias.zero_()
+        block.cross_attn_ada.weight.zero_()
+        block.cross_attn_ada.bias.zero_()
+        block.cross_attn_ada.bias[2 * dim :].fill_(1.0)
+        for parameter in block.cross_attn.parameters():
+            parameter.zero_()
+        block.cross_attn.out_proj.bias.fill_(1.0)
+
+    batch, audio_len, video_len, text_len = 2, 8, 2, 5
+    x = torch.randn(batch, audio_len, dim)
+    v = torch.randn(batch, video_len, dim)
+    t = torch.randn(batch, dim)
+    text = torch.randn(batch, text_len, text_dim)
+    audio_mask = torch.ones(batch, audio_len, dtype=torch.bool)
+    video_mask = torch.ones(batch, video_len, dtype=torch.bool)
+    text_mask = torch.ones(batch, text_len, dtype=torch.bool)
+    generation_mask = torch.tensor(
+        [
+            [False, False, False, True, True, True, True, True],
+            [True, True, False, False, True, True, False, True],
+        ],
+        dtype=torch.bool,
+    )
+
+    x_out, v_out = block(
+        x,
+        v,
+        t,
+        mask=audio_mask,
+        v_mask=video_mask,
+        text=text,
+        text_mask=text_mask,
+        generation_mask=generation_mask,
+    )
+    expected_x = x + generation_mask.unsqueeze(-1).to(x.dtype)
+    torch.testing.assert_close(x_out, expected_x, rtol=0, atol=0)
+    torch.testing.assert_close(v_out, v, rtol=0, atol=0)
+    print("[OK] text cross-attention residual updates generated frames only; prompt frames are unchanged")
+
+
 def test_train_forward_backward(model):
     model.train()
     b, n, nv, nt = 2, 200, 50, 20
@@ -362,6 +413,7 @@ def main():
     torch.set_num_threads(8)
     model = build_model()
     test_mm_gated_branches_wake_up(model)
+    test_text_cross_attention_is_prompt_isolated(model)
     test_train_forward_backward(model)
     test_modality_drop(model)
     test_pretrained_ckpt_compat(model)

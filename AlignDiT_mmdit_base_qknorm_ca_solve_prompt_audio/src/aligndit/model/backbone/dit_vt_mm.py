@@ -243,6 +243,14 @@ class MMDiTBlock_VT(DiTCrossBlock):
         text_mask=None,
         generation_mask=None,
     ):
+        if generation_mask is None:
+            raise ValueError("generation_mask is required for prompt-isolated text cross-attention")
+        if generation_mask.dtype != torch.bool:
+            raise TypeError(f"generation_mask must be bool, got {generation_mask.dtype}")
+        if generation_mask.shape != x.shape[:2]:
+            raise ValueError(
+                f"generation_mask must have shape {tuple(x.shape[:2])}, got {tuple(generation_mask.shape)}"
+            )
         # pre-norm & modulation for attention input (per stream) 1、各流独立的adaLN调制(用时间步t生成scale/shift/gate)
         norm_x, x_gate_msa, x_shift_mlp, x_scale_mlp, x_gate_mlp = self.attn_norm(x, emb=t)
         norm_v, v_gate_msa, v_shift_mlp, v_scale_mlp, v_gate_mlp = self.v_attn_norm(v, emb=t)
@@ -261,7 +269,9 @@ class MMDiTBlock_VT(DiTCrossBlock):
         ca_output, _ = self.cross_attn(
             norm_ca, text, text, key_padding_mask=~text_mask if text_mask is not None else None, need_weights=False
         )
-        # 3.3 门控控制 cross-attn 输出加回残差流的比例
+        # 3.3 Only synthesized audio queries may receive the text residual.
+        # Prompt/reference frames remain acoustic context and never align to text directly.
+        ca_output = ca_output.masked_fill(~generation_mask.unsqueeze(-1), 0.0)
         x = x + ca_gate.unsqueeze(1) * ca_output
 
         # ff_norm是归一化的作用  x_scale_mlp / x_shift_mlp：在 FFN 之前，对归一化后的特征做仿射变换
