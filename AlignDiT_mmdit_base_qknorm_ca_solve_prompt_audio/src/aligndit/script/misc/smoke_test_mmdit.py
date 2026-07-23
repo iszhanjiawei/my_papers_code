@@ -95,18 +95,24 @@ def test_mm_gated_branches_wake_up(model):
     audio_mask = torch.ones(batch, audio_len, dtype=torch.bool)
     video_mask = torch.ones(batch, video_len, dtype=torch.bool)
     text_mask = torch.ones(batch, text_len, dtype=torch.bool)
+    generation_mask = torch.ones(batch, audio_len, dtype=torch.bool)
     x_probe = torch.randn_like(x)
     v_probe = torch.randn_like(v)
 
     def branch_loss():
-        x_out, v_out = block(
+        x_out, v_out = torch.utils.checkpoint.checkpoint(
+            model.transformer.ckpt_wrapper(block),
             x,
             v,
             t,
-            mask=audio_mask,
-            v_mask=video_mask,
-            text=text,
-            text_mask=text_mask,
+            audio_mask,
+            video_mask,
+            None,
+            None,
+            text,
+            text_mask,
+            generation_mask,
+            use_reentrant=False,
         )
         return (x_out * x_probe).mean() + (v_out * v_probe).mean()
 
@@ -145,9 +151,25 @@ def test_train_forward_backward(model):
     text_lens = torch.tensor([nt, nt - 5])
     video_lens = torch.tensor([nv, (n - 40) // 4])
 
-    loss, component_losses, cond, pred = model(
-        mel, text, video, lens=lens, text_lens=text_lens, video_lens=video_lens
+    captured_generation_masks = []
+
+    def capture_generation_mask(_module, _args, kwargs):
+        captured_generation_masks.append(kwargs["generation_mask"].detach().clone())
+
+    hook = model.transformer.transformer_blocks[0].register_forward_pre_hook(
+        capture_generation_mask, with_kwargs=True
     )
+    try:
+        loss, component_losses, cond, pred = model(
+            mel, text, video, lens=lens, text_lens=text_lens, video_lens=video_lens
+        )
+    finally:
+        hook.remove()
+
+    expected_generation_mask = torch.all(cond == 0, dim=-1)
+    assert len(captured_generation_masks) == 1
+    assert torch.equal(captured_generation_masks[0], expected_generation_mask)
+    assert torch.all(captured_generation_masks[0].sum(dim=-1) > 0)
     assert torch.isfinite(loss), f"loss is not finite: {loss}"
     assert pred.shape == mel.shape, (pred.shape, mel.shape)
     loss.backward()
@@ -167,6 +189,7 @@ def test_train_forward_backward(model):
     for name, p in checks.items():
         assert p.grad is not None and torch.isfinite(p.grad).all(), f"no/invalid grad for {name}"
     print(f"[OK] train forward/backward: loss={loss.item():.4f}, components={component_losses}")
+    print("[OK] training rand_span_mask reaches MM-DiT as the explicit generation_mask")
     model.zero_grad(set_to_none=True)
 
 
@@ -185,6 +208,7 @@ def test_modality_drop(model):
     text_mask = torch.ones(b, nt, dtype=torch.bool)
     video_mask = torch.ones(b, nv, dtype=torch.bool)
     complementary_mask = torch.ones(b, nv, dtype=torch.bool)
+    generation_mask = torch.ones(b, n, dtype=torch.bool)
     for drop_text, drop_video, drop_audio_cond in [
         (False, False, False),
         (True, False, False),
@@ -201,6 +225,7 @@ def test_modality_drop(model):
             text_mask=text_mask,
             video_mask=video_mask,
             complementary_mask=complementary_mask,
+            generation_mask=generation_mask,
             drop_audio_cond=drop_audio_cond,
             drop_text=drop_text,
             drop_video=drop_video,
@@ -217,19 +242,38 @@ def test_sample(model):
     model.eval()
     n_prompt, dur, nv = 100, 200, 50
     cond = torch.randn(1, n_prompt, MEL["n_mel_channels"])
+    cond[:, :8] = 0  # real prompt silence must remain outside the generated region
     video = torch.randn(1, nv, ARCH["video_dim"])
     text = torch.randint(1, VOCAB_SIZE, (1, 24))
-    with torch.no_grad():
-        out, trajectory = model.sample(
-            cond=cond,
-            text=text,
-            duration=dur,
-            video=video,
-            steps=2,
-            cfg_strength=2.0,
-            cfg_strength_v=2.0,
-            use_epss=False,
-        )
+    captured_generation_masks = []
+
+    def capture_generation_mask(_module, _args, kwargs):
+        captured_generation_masks.append(kwargs["generation_mask"].detach().clone())
+
+    hook = model.transformer.transformer_blocks[0].register_forward_pre_hook(
+        capture_generation_mask, with_kwargs=True
+    )
+    try:
+        with torch.no_grad():
+            out, trajectory = model.sample(
+                cond=cond,
+                text=text,
+                duration=dur,
+                video=video,
+                steps=2,
+                cfg_strength=2.0,
+                cfg_strength_v=2.0,
+                use_epss=False,
+            )
+    finally:
+        hook.remove()
+
+    expected_generation_mask = torch.zeros(dur, dtype=torch.bool)
+    expected_generation_mask[n_prompt:] = True
+    assert len(captured_generation_masks) > 0
+    for generation_mask in captured_generation_masks:
+        assert generation_mask.shape == (3, dur)
+        assert torch.equal(generation_mask, expected_generation_mask.expand_as(generation_mask))
     assert out.shape[0] == 1 and out.shape[2] == MEL["n_mel_channels"], out.shape
     assert torch.isfinite(out).all()
     print(f"[OK] sample (multimodal CFG, 3-branch): out shape={tuple(out.shape)}")

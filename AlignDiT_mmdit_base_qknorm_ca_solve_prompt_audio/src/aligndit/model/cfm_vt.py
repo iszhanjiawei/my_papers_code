@@ -113,6 +113,7 @@ class CFM_VT(CFM):
         )  # duration at least text/audio prompt length plus one token, so something is generated
         duration = duration.clamp(max=max_duration)
         max_duration = duration.amax()
+        duration_mask = lens_to_mask(duration, length=max_duration)
 
         # Clip video to match clamped duration to avoid length mismatch in complementary_mask
         if video is not None:
@@ -128,13 +129,17 @@ class CFM_VT(CFM):
             cond = torch.zeros_like(cond)
 
         cond_mask = F.pad(cond_mask, (0, max_duration - cond_mask.shape[-1]), value=False)
+        # Explicitly identify the region synthesized by flow matching. Keep
+        # this separate from `cond` values: a real silent prompt frame may also
+        # be all zeros and must not be mistaken for a generated frame.
+        generation_mask = duration_mask & ~cond_mask
         cond_mask = cond_mask.unsqueeze(-1)
         step_cond = torch.where(
             cond_mask, cond, torch.zeros_like(cond)
         )  # allow direct control (cut cond audio) with lens passed in
 
         if batch > 1:
-            mask = lens_to_mask(duration)
+            mask = duration_mask
             video_mask = mask.repeat_interleave(self.audio_video_ratio, dim=-1)
         else:  # save memory and speed up, as single inference need no mask currently
             mask = None
@@ -165,6 +170,7 @@ class CFM_VT(CFM):
                     video_mask=video_mask,
                     complementary_mask=complementary_mask,
                     drop_text=ignore_modality == "text",
+                    generation_mask=generation_mask,
                     drop_video=ignore_modality == "video",
                     cache=True,
                 )
@@ -182,6 +188,7 @@ class CFM_VT(CFM):
                 video_mask=video_mask,
                 complementary_mask=complementary_mask,
                 drop_text=ignore_modality == "text",
+                generation_mask=generation_mask,
                 drop_video=ignore_modality == "video",
                 cfg_infer=True,
                 cache=True,
@@ -350,6 +357,7 @@ class CFM_VT(CFM):
             text_mask=text_mask,
             video_mask=video_mask,
             complementary_mask=complementary_mask,
+            generation_mask=rand_span_mask,
         )
 
         # flow matching loss

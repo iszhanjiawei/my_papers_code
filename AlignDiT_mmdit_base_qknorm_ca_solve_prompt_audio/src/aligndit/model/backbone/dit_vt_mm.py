@@ -230,7 +230,19 @@ class MMDiTBlock_VT(DiTCrossBlock):
 
         return out_a, out_v
 
-    def forward(self, x, v, t, mask=None, v_mask=None, rope=None, v_rope=None, text=None, text_mask=None):
+    def forward(
+        self,
+        x,
+        v,
+        t,
+        mask=None,
+        v_mask=None,
+        rope=None,
+        v_rope=None,
+        text=None,
+        text_mask=None,
+        generation_mask=None,
+    ):
         # pre-norm & modulation for attention input (per stream) 1、各流独立的adaLN调制(用时间步t生成scale/shift/gate)
         norm_x, x_gate_msa, x_shift_mlp, x_scale_mlp, x_gate_mlp = self.attn_norm(x, emb=t)
         norm_v, v_gate_msa, v_shift_mlp, v_scale_mlp, v_gate_mlp = self.v_attn_norm(v, emb=t)
@@ -415,6 +427,7 @@ class DiT_VT_MMDiT(DiT):
         text_mask: bool["b nt"] | None = None,  # noqa: F722
         video_mask: bool["b nv"] | None = None,  # noqa: F722
         complementary_mask: bool["b nv"] | None = None,  # noqa: F722
+        generation_mask: bool["b n"] | None = None,  # explicit synthesized audio region  # noqa: F722
         drop_audio_cond: bool = False,  # cfg for cond audio
         drop_text: bool = False,  # cfg for text
         drop_video: bool = False,  # cfg for video
@@ -423,6 +436,16 @@ class DiT_VT_MMDiT(DiT):
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
+        if generation_mask is None:
+            raise ValueError("generation_mask is required to separate prompt and synthesized audio regions")
+        if generation_mask.dtype != torch.bool:
+            raise TypeError(f"generation_mask must be bool, got {generation_mask.dtype}")
+        if generation_mask.shape != (batch, seq_len):
+            raise ValueError(
+                f"generation_mask must have shape {(batch, seq_len)}, got {tuple(generation_mask.shape)}"
+            )
+        if generation_mask.device != x.device:
+            raise ValueError(f"generation_mask must be on {x.device}, got {generation_mask.device}")
         if time.ndim == 0:
             time = time.repeat(batch)
 
@@ -487,6 +510,7 @@ class DiT_VT_MMDiT(DiT):
                 video_mask,
                 complementary_mask,
             ) = [m.repeat_interleave(rep_n, dim=0) if m is not None else None for m in masks_to_repeat]
+            generation_mask = generation_mask.repeat(rep_n, 1) if generation_mask is not None else None
 
         else:
             x, text_embed, v = self.get_input_embed(
@@ -542,6 +566,7 @@ class DiT_VT_MMDiT(DiT):
                         v_rope,
                         text_embed,
                         text_mask,
+                        generation_mask,
                         use_reentrant=False,
                     )
                 else:
@@ -567,6 +592,7 @@ class DiT_VT_MMDiT(DiT):
                         v_rope=v_rope,
                         text=text_embed,
                         text_mask=text_mask,
+                        generation_mask=generation_mask,
                     )
                 else:
                     x = block(
