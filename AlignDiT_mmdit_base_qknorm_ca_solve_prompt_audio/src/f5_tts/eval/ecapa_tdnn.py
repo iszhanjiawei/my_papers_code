@@ -173,6 +173,7 @@ class ECAPA_TDNN(nn.Module):
         feature_selection="hidden_states",
         update_extract=False,
         config_path=None,
+        wavlm_ckpt_path=None,
     ):
         super().__init__()
 
@@ -181,12 +182,24 @@ class ECAPA_TDNN(nn.Module):
         self.update_extract = update_extract
         self.sr = sr
 
-        torch.hub._validate_not_a_forked_repo = lambda a, b, c: True
-        try:
-            local_s3prl_path = os.path.expanduser("~/.cache/torch/hub/s3prl_s3prl_main")
-            self.feature_extract = torch.hub.load(local_s3prl_path, feat_type, source="local", config_path=config_path)
-        except:  # noqa: E722
-            self.feature_extract = torch.hub.load("s3prl/s3prl", feat_type)
+        if feat_type == "wavlm_large":
+            if not wavlm_ckpt_path or not os.path.isfile(wavlm_ckpt_path):
+                raise FileNotFoundError(f"Local S3PRL WavLM-Large checkpoint not found: {wavlm_ckpt_path}")
+            from s3prl.upstream.wavlm.expert import UpstreamExpert
+
+            self.feature_extract = UpstreamExpert(wavlm_ckpt_path)
+        else:
+            torch.hub._validate_not_a_forked_repo = lambda a, b, c: True
+            try:
+                local_s3prl_path = os.path.expanduser("~/.cache/torch/hub/s3prl_s3prl_main")
+                self.feature_extract = torch.hub.load(
+                    local_s3prl_path,
+                    feat_type,
+                    source="local",
+                    config_path=config_path,
+                )
+            except Exception:
+                self.feature_extract = torch.hub.load("s3prl/s3prl", feat_type)
 
         if len(self.feature_extract.model.encoder.layers) == 24 and hasattr(
             self.feature_extract.model.encoder.layers[23].self_attn, "fp32_attention"
@@ -318,6 +331,7 @@ def ECAPA_TDNN_SMALL(
     feature_selection="hidden_states",
     update_extract=False,
     config_path=None,
+    wavlm_ckpt_path=None,
 ):
     return ECAPA_TDNN(
         feat_dim=feat_dim,
@@ -328,4 +342,5 @@ def ECAPA_TDNN_SMALL(
         feature_selection=feature_selection,
         update_extract=update_extract,
         config_path=config_path,
+        wavlm_ckpt_path=wavlm_ckpt_path,
     )

@@ -378,12 +378,30 @@ def run_asr_wer(args):
 
 
 def run_sim(args):
-    rank, test_set, ckpt_dir = args
+    if len(args) == 3:
+        rank, test_set, ckpt_dir = args
+        wavlm_base_ckpt = (
+            os.environ.get("ROOT_PREFIX", "") + "/zjw524/alignDiT_pretrain_models/wavlm_large_s3prl.pt"
+        )
+    else:
+        rank, test_set, ckpt_dir, wavlm_base_ckpt = args
     device = f"cuda:{rank}"
 
-    model = ECAPA_TDNN_SMALL(feat_dim=1024, feat_type="wavlm_large", config_path=None)
+    model = ECAPA_TDNN_SMALL(
+        feat_dim=1024,
+        feat_type="wavlm_large",
+        config_path=None,
+        wavlm_ckpt_path=wavlm_base_ckpt,
+    )
     state_dict = torch.load(ckpt_dir, weights_only=True, map_location=lambda storage, loc: storage)
-    model.load_state_dict(state_dict["model"], strict=False)
+    model_state = state_dict["model"].copy()
+    training_only_keys = {"loss_calculator.projection.weight"}
+    unexpected_training_keys = training_only_keys - model_state.keys()
+    if unexpected_training_keys:
+        raise KeyError(f"Expected training-only SPKSIM keys are missing: {sorted(unexpected_training_keys)}")
+    for key in training_only_keys:
+        model_state.pop(key)
+    model.load_state_dict(model_state, strict=True)
 
     use_gpu = True if torch.cuda.is_available() else False
     if use_gpu:

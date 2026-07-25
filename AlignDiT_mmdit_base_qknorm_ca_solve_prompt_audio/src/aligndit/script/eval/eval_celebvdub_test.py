@@ -27,7 +27,16 @@ def get_args():
     parser.add_argument("-l", "--lang", type=str, default="en")
     parser.add_argument("-g", "--gen_wav_dir", type=str, required=True)
     parser.add_argument("-n", "--gpu_nums", type=int, default=8, help="Number of GPUs to use")
-    parser.add_argument("--wavlm_ckpt", type=str, default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/alignDiT_pretrain_models/wavlm_large_finetune.pth")
+    parser.add_argument(
+        "--wavlm_ckpt",
+        type=str,
+        default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/alignDiT_pretrain_models/wavlm_large_finetune.pth",
+    )
+    parser.add_argument(
+        "--wavlm_base_ckpt",
+        type=str,
+        default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/alignDiT_pretrain_models/wavlm_large_s3prl.pt",
+    )
     parser.add_argument("--asr_ckpt", type=str, default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/alignDiT_pretrain_models/large-v3.pt")
     parser.add_argument("--emo_ckpt", type=str, default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/projects/data/emotion2vec_plus_large")
     parser.add_argument("--gt_av_feat", type=str, default="data/CelebVDub/avhubert_feat")
@@ -70,7 +79,10 @@ def main():
 
     elif eval_task == "sim":
         with mp.Pool(processes=len(gpus)) as pool:
-            pool_args = [(rank, sub_test_set, args.wavlm_ckpt) for (rank, sub_test_set) in test_set]
+            pool_args = [
+                (rank, sub_test_set, args.wavlm_ckpt, args.wavlm_base_ckpt)
+                for (rank, sub_test_set) in test_set
+            ]
             results = pool.map(run_sim, pool_args)
             for r in results:
                 full_results.extend(r)
