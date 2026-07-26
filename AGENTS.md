@@ -132,6 +132,8 @@ AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/
 |---|---|
 | `finetune_celebvdub_mm_d0_6mm12audio_ctc12.yaml` | `finetune_celebvdub_mm_d0_6mm12audio_ctc12_4x4090.sh` |
 
+D0 显式设置顶层 `seed: 666`。训练入口在模型构造前用该 seed 固定新增参数初始化，再在 Accelerate 初始化后使用 `seed + process_index` 生成各 DDP rank 的训练随机流；动态 batch sampler 继续使用原始实验 seed。没有顶层 `seed` 的历史 C0-C3 配置保持原有行为，避免改变已完成实验的语义。
+
 训练日志位于该快照的 `logs/`，checkpoint 位于 `/zjw524/projects/data/ckpts/` 下以各配置 `model.name` 命名的目录。日志和 checkpoint 由多台服务器通过共享文件系统写入；检查远端训练状态时，应同时确认：
 
 1. 日志大小和 mtime 持续变化；

@@ -2,6 +2,8 @@ hydra:
   run:
     dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${datasets.name}_${model.tokenizer}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
+seed: 666
+
 datasets:
   name: CelebVDub
   data_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data

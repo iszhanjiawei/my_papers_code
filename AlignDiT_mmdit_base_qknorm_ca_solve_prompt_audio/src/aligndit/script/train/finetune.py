@@ -4,6 +4,7 @@ import os
 from importlib.resources import files
 
 import hydra
+from accelerate.utils import set_seed
 from omegaconf import OmegaConf
 
 from aligndit.model.cfm_vt import CFM_VT
@@ -18,6 +19,14 @@ os.chdir(str(files("aligndit").joinpath("../..")))  # change working directory t
 
 @hydra.main(version_base="1.3", config_path=str(files("aligndit").joinpath("config")), config_name=None)
 def main(model_cfg):
+    experiment_seed = getattr(model_cfg, "seed", None)
+    if experiment_seed is not None:
+        experiment_seed = int(experiment_seed)
+        # All ranks construct identical newly initialized parameters before DDP
+        # synchronization. A rank-specific stream is selected after Trainer has
+        # initialized Accelerate.
+        set_seed(experiment_seed)
+
     model_cls = hydra.utils.get_class(f"aligndit.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
     tokenizer = model_cfg.model.tokenizer
@@ -74,6 +83,14 @@ def main(model_cfg):
         model_cfg_dict=OmegaConf.to_container(model_cfg, resolve=True),
         ema_kwargs=model_cfg.ema,
     )
+    if experiment_seed is not None:
+        rank_seed = experiment_seed + trainer.accelerator.process_index
+        set_seed(rank_seed)
+        if trainer.accelerator.is_main_process:
+            print(
+                f"Global experiment seed={experiment_seed}; "
+                "training RNG uses seed + process_index on each rank"
+            )
 
     train_dataset = load_dataset_mel(
         model_cfg.datasets.name,
@@ -87,7 +104,9 @@ def main(model_cfg):
         model_cfg.ckpts.pretrained_path,
         train_dataset,
         num_workers=model_cfg.datasets.num_workers,
-        resumable_with_seed=666,  # seed for shuffling dataset
+        # Preserve historical C0-C3 ordering when no explicit global seed is
+        # configured. D0 records and reuses its experiment seed here.
+        resumable_with_seed=experiment_seed if experiment_seed is not None else 666,
     )
 
 
