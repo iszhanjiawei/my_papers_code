@@ -118,6 +118,20 @@ AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/
 
 注意 C3 使用主配置 `finetune_celebvdub_mm.yaml`，不存在必须另建的 `finetune_celebvdub_mm_c3.yaml`。四个 `4x4090` 启动脚本均绑定 GPU 0-3，使用不同端口，并保持 `OMP_NUM_THREADS=1`。曾测试 C3 使用 `OMP_NUM_THREADS=4`，200 updates 仅从 2:18 缩短至 2:15，差异接近运行波动，已恢复为 1。
 
+### D0：6+12 层比例与单层 CTC
+
+在 C0-C3 完成后，新增 D0 用于验证参考论文常用的约 1:2 多模态/单模态层比例。D0 不覆盖或改写任何 C0-C3 配置：
+
+| 实验 | `n_mm_layers` | `n_text_layers` | `prompt_isolated_ca` | `layer_indices_ctc` | 语义 |
+|---|---:|---:|---|---|---|
+| D0 | 6 | 6 | `False` | `[11]` | 前 6 层为全局文本 CA 的 MM-DiT；后 12 层为无视频、无文本 CA 的原生音频 DiT；唯一 CTC 头接在第 12 个 block 后 |
+
+注意 `layer_indices_ctc` 使用零基索引，因此 `[11]` 表示第 12 个 block 执行完成后。D0 的入口固定为：
+
+| Hydra 配置 | 单机 4×RTX 4090 启动脚本 |
+|---|---|
+| `finetune_celebvdub_mm_d0_6mm12audio_ctc12.yaml` | `finetune_celebvdub_mm_d0_6mm12audio_ctc12_4x4090.sh` |
+
 训练日志位于该快照的 `logs/`，checkpoint 位于 `/zjw524/projects/data/ckpts/` 下以各配置 `model.name` 命名的目录。日志和 checkpoint 由多台服务器通过共享文件系统写入；检查远端训练状态时，应同时确认：
 
 1. 日志大小和 mtime 持续变化；

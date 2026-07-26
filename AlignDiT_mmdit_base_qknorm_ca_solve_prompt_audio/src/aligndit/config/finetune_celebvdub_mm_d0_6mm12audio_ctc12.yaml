@@ -1,0 +1,73 @@
+hydra:
+  run:
+    dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${datasets.name}_${model.tokenizer}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+datasets:
+  name: CelebVDub
+  data_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data
+  batch_size_per_gpu: 9000
+  batch_size_type: frame
+  max_samples: 32
+  num_workers: 16
+
+optim:
+  epochs: 200
+  learning_rate: 5e-5
+  num_warmup_updates: 20000
+  grad_accumulation_steps: 1
+  max_grad_norm: 1.0
+  bnb_optimizer: False
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_d0_6mm_12audio_single_ctc12_finetune
+  tokenizer: char
+  tokenizer_path: null
+  backbone: DiT_VT_MMDiT
+
+  arch:
+    dim: 768
+    depth: 18
+    heads: 12
+    ff_mult: 2
+    text_dim: 512
+    text_mask_padding: False
+    qk_norm: rms_norm
+    conv_layers: 4
+    pe_attn_head: 1
+    attn_mask_enabled: True
+    checkpoint_activations: False
+    use_conformer: True
+    # Zero-based index 11: attach the only CTC head after the 12th block.
+    layer_indices_ctc: [11]
+    n_mm_layers: 6  # Blocks 0-5: audio-video MM-DiT with text cross-attention.
+    n_text_layers: 6  # Blocks 6-17: native text-free audio DiT refinement.
+    prompt_isolated_ca: False  # Keep the C2-style global text residual in the six MM blocks.
+    audio_video_ratio: 4
+    video_dim: 1024
+    video_rope_scaled: True
+
+  mel_spec:
+    target_sample_rate: 16000
+    n_mel_channels: 80
+    hop_length: 160
+    win_length: 640
+    n_fft: 640
+    mel_spec_type: hifigan_16k
+
+  vocoder:
+    is_local: True
+    local_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/alignDiT_idea6/my_papers_code/hifigan_16k_LRS3/g_01000000
+
+  ctc_lambda: 0.1
+
+ema:
+  beta: 0.999
+
+ckpts:
+  pretrained_path: ${oc.env:ROOT_PREFIX,''}/zjw524/datasets/AlignDiT_pretrain_LibriSpeech_500000.pt
+  logger: tensorboard
+  log_samples: True
+  save_per_updates: 50000
+  keep_last_n_checkpoints: -1
+  last_per_updates: 5000
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${datasets.name}_${model.tokenizer}
