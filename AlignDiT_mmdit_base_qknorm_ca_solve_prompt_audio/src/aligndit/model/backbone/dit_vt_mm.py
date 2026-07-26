@@ -395,6 +395,21 @@ class DiT_VT_MMDiT(DiT):
                 "expected 0 <= n_mm_layers <= n_text_layers <= depth, got "
                 f"n_mm_layers={self.n_mm_layers}, n_text_layers={self.n_text_layers}, depth={depth}"
             )
+        try:
+            ctc_layer_indices = tuple(layer_indices_ctc)
+        except TypeError as error:
+            raise TypeError("layer_indices_ctc must be an iterable of zero-based integer layer indices") from error
+        if any(type(layer_i) is not int for layer_i in ctc_layer_indices):
+            raise TypeError(f"layer_indices_ctc must contain only integers, got {ctc_layer_indices}")
+        if any(current >= following for current, following in zip(ctc_layer_indices, ctc_layer_indices[1:])):
+            raise ValueError(
+                f"layer_indices_ctc must be unique and strictly increasing, got {ctc_layer_indices}"
+            )
+        if any(not 0 <= layer_i < depth for layer_i in ctc_layer_indices):
+            raise ValueError(
+                f"layer_indices_ctc must use zero-based indices in [0, {depth}), got {ctc_layer_indices}"
+            )
+        self.layer_indices_ctc = ctc_layer_indices
 
         self.input_embed = AudioInputEmbedding_MM(mel_dim, dim)
         self.video_embed = VideoInputEmbedding_MM(video_dim, dim, use_conformer=use_conformer)
@@ -428,7 +443,7 @@ class DiT_VT_MMDiT(DiT):
 
         projector_dim = self.dim if projector_dim is None else projector_dim
         z_dim = self.text_embed.text_embed.num_embeddings + 1
-        self.layer_map_ctc = {v: i for i, v in enumerate(layer_indices_ctc)}
+        self.layer_map_ctc = {v: i for i, v in enumerate(self.layer_indices_ctc)}
         self.projectors_ctc = nn.ModuleList(
             [DownsampleLayer([2, 1], self.dim, projector_dim, z_dim) for _ in self.layer_map_ctc]
         )

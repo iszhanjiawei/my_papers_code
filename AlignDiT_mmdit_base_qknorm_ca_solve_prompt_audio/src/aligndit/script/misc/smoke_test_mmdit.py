@@ -48,7 +48,10 @@ MEL = dict(
     mel_spec_type="hifigan_16k",
 )
 VOCAB_SIZE = 100
-CKPT_PATH = os.path.join(os.path.dirname(__file__), "../../../../ckpts/AlignDiT_pretrain_hifigan_16k_LibriSpeech_notext/model_500000.pt")
+CKPT_PATH = os.path.join(
+    f"{os.environ.get('ROOT_PREFIX', '')}/zjw524",
+    "datasets/AlignDiT_pretrain_LibriSpeech_500000.pt",
+)
 
 
 def build_model():
@@ -96,6 +99,106 @@ def test_text_free_audio_tail_structure(model):
         assert not any(key.startswith(prefix) and ".cross_attn" in key for key in state_keys)
 
     print("[OK] layers 12-17 are native text-free DiTBlocks with no cross-attention parameters")
+
+
+def test_d0_6mm_12audio_single_ctc12():
+    """D0 has six MM blocks, twelve text-free audio blocks, and CTC after block 12."""
+    d0_arch = dict(
+        dim=64,
+        depth=18,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=False,
+        use_conformer=False,
+        layer_indices_ctc=[11],
+        n_mm_layers=6,
+        n_text_layers=6,
+        prompt_isolated_ca=False,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    transformer = DiT_VT_MMDiT(**d0_arch)
+    blocks = transformer.transformer_blocks
+
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:6])
+    assert all(type(block) is DiTBlock for block in blocks[6:])
+    assert not any(type(block) is AudioTextDiTBlock for block in blocks)
+    assert transformer.layer_indices_ctc == (11,)
+    assert transformer.layer_map_ctc == {11: 0}
+    assert len(transformer.projectors_ctc) == 1
+
+    cross_attn_layers = {
+        int(name.split(".", 1)[0])
+        for name, _module in blocks.named_modules()
+        if name.endswith(".cross_attn")
+    }
+    assert cross_attn_layers == set(range(6)), cross_attn_layers
+
+    events = []
+    hooks = [
+        blocks[11].register_forward_hook(lambda *_args: events.append("block11")),
+        transformer.projectors_ctc[0].register_forward_hook(lambda *_args: events.append("ctc0")),
+        blocks[12].register_forward_hook(lambda *_args: events.append("block12")),
+    ]
+    try:
+        pred, intermediates = transformer(
+            x=torch.randn(1, 16, 8),
+            cond=torch.randn(1, 16, 8),
+            text=torch.randint(1, 32, (1, 8)),
+            video=torch.randn(1, 4, 16),
+            time=torch.rand(1),
+            mask=torch.ones(1, 16, dtype=torch.bool),
+            text_mask=torch.ones(1, 8, dtype=torch.bool),
+            video_mask=torch.ones(1, 4, dtype=torch.bool),
+            complementary_mask=torch.ones(1, 4, dtype=torch.bool),
+            generation_mask=torch.ones(1, 16, dtype=torch.bool),
+            cache=False,
+        )
+    finally:
+        for hook in hooks:
+            hook.remove()
+
+    assert pred.shape == (1, 16, 8)
+    assert list(intermediates) == [11]
+    assert events == ["block11", "ctc0", "block12"], events
+
+    # A CTC-only probe must backpropagate through blocks 0-11, but blocks
+    # 12-17 occur after the tap and therefore receive no direct CTC gradient.
+    transformer.zero_grad(set_to_none=True)
+    intermediates[11]["z_tilde"].square().mean().backward()
+    for layer_i in [0, 5, 6, 11]:
+        _assert_nonzero_finite_grad(
+            f"D0 CTC path block {layer_i} AdaLN",
+            blocks[layer_i].attn_norm.linear.weight.grad,
+        )
+    for layer_i in [12, 17]:
+        assert blocks[layer_i].attn_norm.linear.weight.grad is None
+    _assert_nonzero_finite_grad(
+        "D0 single CTC projector",
+        transformer.projectors_ctc[0].model[0].weight.grad,
+    )
+
+    invalid_ctc_indices = ([-1], [18], [11, 11], [12, 11], [11.0])
+    for invalid in invalid_ctc_indices:
+        invalid_arch = {**d0_arch, "layer_indices_ctc": invalid}
+        try:
+            DiT_VT_MMDiT(**invalid_arch)
+        except (TypeError, ValueError):
+            pass
+        else:
+            raise AssertionError(f"invalid layer_indices_ctc accepted: {invalid}")
+
+    print("[OK] D0 builds 6 MM + 12 text-free audio blocks with one CTC tap after block 12")
 
 
 def _assert_nonzero_finite_grad(name, grad):
@@ -667,7 +770,7 @@ def test_pretrained_ckpt_compat(model):
     if not os.path.exists(CKPT_PATH):
         print(f"[SKIP] pretrained ckpt not found: {CKPT_PATH}")
         return
-    checkpoint = torch.load(CKPT_PATH, weights_only=True, map_location="cpu")
+    checkpoint = torch.load(CKPT_PATH, weights_only=True, map_location="cpu", mmap=True)
     ckpt_sd = {
         k.replace("ema_model.", ""): v
         for k, v in checkpoint["ema_model_state_dict"].items()
@@ -716,7 +819,13 @@ def test_pretrained_ckpt_compat(model):
     for k in missing:
         assert k.startswith(allowed_new_prefixes), f"unexpected new param: {k}"
         if k.startswith("transformer.transformer_blocks."):
-            assert (".v_attn" in k or ".v_ff" in k or ".cross_attn" in k), f"unexpected new block param: {k}"
+            assert (
+                ".v_attn" in k
+                or ".v_ff" in k
+                or ".cross_attn" in k
+                or ".attn.q_norm" in k
+                or ".attn.k_norm" in k
+            ), f"unexpected new block param: {k}"
 
     # simulate the _safe_merge load and verify it works end to end
     merged = {k: (ckpt_sd[k] if k in matched_set else model_sd[k]) for k in model_sd}
@@ -728,6 +837,7 @@ def main():
     torch.set_num_threads(8)
     model = build_model()
     test_text_free_audio_tail_structure(model)
+    test_d0_6mm_12audio_single_ctc12()
     test_c1_prompt_isolated_tail_text_blocks()
     test_c2_global_text_with_text_free_tail()
     test_c0_global_text_with_tail_text_blocks()

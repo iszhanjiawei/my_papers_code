@@ -368,6 +368,11 @@ class CFM_VT(CFM):
 
         # ctc loss
         if self.ctc_lambda > 0:
+            if not intermediates_ctc:
+                raise RuntimeError(
+                    "ctc_lambda is positive but the transformer returned no CTC intermediates; "
+                    "check layer_indices_ctc"
+                )
             ctc_loss = torch.tensor(0.0, device=loss.device, dtype=loss.dtype)
             for intermediate in intermediates_ctc.values():
                 z_tilde = intermediate["z_tilde"]
