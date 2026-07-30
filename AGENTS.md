@@ -134,6 +134,24 @@ AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/
 
 D0 显式设置顶层 `seed: 666`。训练入口在模型构造前用该 seed 固定新增参数初始化，再在 Accelerate 初始化后使用 `seed + process_index` 生成各 DDP rank 的训练随机流；动态 batch sampler 继续使用原始实验 seed。没有顶层 `seed` 的历史 C0-C3 配置保持原有行为，避免改变已完成实验的语义。
 
+### D1-D2：双层 CTC 与分阶段文本注入
+
+D1-D2 用于拆分 D0 的高 WER 是来自 CTC 深监督不足，还是来自第 6 层后过早停止文本注入。两组都保持 D0 的深度、前 6 层 MM-DiT、全局文本残差、随机种子和 `ctc_lambda: 0.1`；多个 CTC loss 在应用 `ctc_lambda` 前取平均，因此不会扩大总辅助损失权重。
+
+| 实验 | Blocks 0-5 | Blocks 6-11 | Blocks 12-17 | `layer_indices_ctc` | 主要对照 |
+|---|---|---|---|---|---|
+| D1 | MM-DiT + 文本 CA | 原生音频 DiT | 原生音频 DiT | `[5, 11]` | 相对 D0 增加 MM 阶段出口的 CTC 深监督 |
+| D2 | MM-DiT + 文本 CA | `AudioTextDiTBlock` + 文本 CA | 原生音频 DiT | `[5, 11]` | 相对 D1 只增加中间 6 层文本 CA |
+
+`layer_indices_ctc` 是全局零基 block 索引，CTC 头在对应 block 执行完成后读取隐藏状态。因此 `[5, 11]` 严格表示第 6、12 个 block 后，分别监督 D2 的 MM 阶段出口和文本阶段出口。已有 C2 使用 `[6, 12]`，即第 7、13 个 block 后；比较 D2 与 C2 时不能把全部差异仅归因于 MM-DiT 层数。
+
+| 实验 | Hydra 配置 | 单机 4×RTX 4090 启动脚本 |
+|---|---|---|
+| D1 | `finetune_celebvdub_mm_d1_6mm12audio_dual_ctc6_12.yaml` | `finetune_celebvdub_mm_d1_6mm12audio_dual_ctc6_12_4x4090.sh` |
+| D2 | `finetune_celebvdub_mm_d2_6mm6text6audio_dual_ctc6_12.yaml` | `finetune_celebvdub_mm_d2_6mm6text6audio_dual_ctc6_12_4x4090.sh` |
+
+D1 与 D2 必须各自从相同的 LibriSpeech 预训练权重开始训练，不能从 D0 或彼此的中途 checkpoint 续训。D1/D2 启动脚本分别使用端口 `29565`/`29566`；若在同一服务器并行启动，仍需为每个实验分配互不重叠的 GPU。
+
 训练日志位于该快照的 `logs/`，checkpoint 位于 `/zjw524/projects/data/ckpts/` 下以各配置 `model.name` 命名的目录。日志和 checkpoint 由多台服务器通过共享文件系统写入；检查远端训练状态时，应同时确认：
 
 1. 日志大小和 mtime 持续变化；
