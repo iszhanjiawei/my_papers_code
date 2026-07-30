@@ -10,7 +10,7 @@ PYTHON="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
 DATA_ROOT="${ROOT_PREFIX}/zjw524/projects/data"
 OUTPUT_ROOT="${1:-${DATA_ROOT}/codec_ceiling_celebvdub}"
 FAIRSEQ_ROOT="${DATA_ROOT}/av_hubert/fairseq/fairseq"
-AVHUBERT_USER_DIR="${DATA_ROOT}/av_hubert/avhubert"
+AVHUBERT_USER_DIR="${DATA_ROOT}/av_hubert/avhubert/avhubert"
 AVHUBERT_CKPT="${ROOT_PREFIX}/zjw524/alignDiT_pretrain_models/large_vox_iter5.pt"
 VIDEO_ROOT="${DATA_ROOT}/CelebVDub/video_mouth/test"
 GT_AV_FEAT="${DATA_ROOT}/CelebVDub/gt_eval/avhubert_feat"
@@ -30,27 +30,33 @@ env PYTHONPATH=src "${PYTHON}" -u \
 for codec_dir in "${CODEC_DIRS[@]}"; do
   gen_dir="${OUTPUT_ROOT}/${codec_dir}"
 
-  env PYTHONPATH=src "${PYTHON}" -u \
-    src/aligndit/script/eval/eval_celebvdub_test.py \
-    --eval_task sim \
-    --gen_wav_dir "${gen_dir}" \
-    --gpu_nums 1 \
-    --wavlm_ckpt "${DATA_ROOT}/wavlm_large_finetune.pth" \
-    --wavlm_base_ckpt "${DATA_ROOT}/wavlm_large_s3prl.pt"
+  if [[ ! -f "${gen_dir}/_sim_results.jsonl" ]]; then
+    env PYTHONPATH=src "${PYTHON}" -u \
+      src/aligndit/script/eval/eval_celebvdub_test.py \
+      --eval_task sim \
+      --gen_wav_dir "${gen_dir}" \
+      --gpu_nums 1 \
+      --wavlm_ckpt "${DATA_ROOT}/wavlm_large_finetune.pth" \
+      --wavlm_base_ckpt "${DATA_ROOT}/wavlm_large_s3prl.pt"
+  fi
 
-  env PYTHONPATH=src "${PYTHON}" -u \
-    src/aligndit/script/eval/eval_celebvdub_test.py \
-    --eval_task wer \
-    --gen_wav_dir "${gen_dir}" \
-    --gpu_nums 1 \
-    --asr_ckpt "${DATA_ROOT}/faster-whisper-large-v3"
+  if [[ ! -f "${gen_dir}/_wer_results.jsonl" ]]; then
+    env PYTHONPATH=src "${PYTHON}" -u \
+      src/aligndit/script/eval/eval_celebvdub_test.py \
+      --eval_task wer \
+      --gen_wav_dir "${gen_dir}" \
+      --gpu_nums 1 \
+      --asr_ckpt "${DATA_ROOT}/faster-whisper-large-v3"
+  fi
 
-  env PYTHONPATH=src "${PYTHON}" -u \
-    src/aligndit/script/eval/eval_celebvdub_test.py \
-    --eval_task emosim \
-    --gen_wav_dir "${gen_dir}" \
-    --gpu_nums 1 \
-    --emo_ckpt "${DATA_ROOT}/emotion2vec_plus_large"
+  if [[ ! -f "${gen_dir}/_emosim_results.jsonl" ]]; then
+    env PYTHONPATH=src "${PYTHON}" -u \
+      src/aligndit/script/eval/eval_celebvdub_test.py \
+      --eval_task emosim \
+      --gen_wav_dir "${gen_dir}" \
+      --gpu_nums 1 \
+      --emo_ckpt "${DATA_ROOT}/emotion2vec_plus_large"
+  fi
 
   env PYTHONPATH="${FAIRSEQ_ROOT}:src" "${PYTHON}" -u \
     src/aligndit/script/misc/extract_avhubert.py \
@@ -62,12 +68,14 @@ for codec_dir in "${CODEC_DIRS[@]}"; do
     --ckpt-path "${AVHUBERT_CKPT}" \
     --user_dir "${AVHUBERT_USER_DIR}"
 
-  env PYTHONPATH=src "${PYTHON}" -u \
-    src/aligndit/script/eval/eval_celebvdub_test.py \
-    --eval_task avsync \
-    --gen_wav_dir "${gen_dir}" \
-    --gpu_nums 1 \
-    --gt_av_feat "${GT_AV_FEAT}"
+  if [[ ! -f "${gen_dir}/_avsync_results.jsonl" ]]; then
+    env PYTHONPATH=src "${PYTHON}" -u \
+      src/aligndit/script/eval/eval_celebvdub_test.py \
+      --eval_task avsync \
+      --gen_wav_dir "${gen_dir}" \
+      --gpu_nums 1 \
+      --gt_av_feat "${GT_AV_FEAT}"
+  fi
 done
 
 env PYTHONPATH=src "${PYTHON}" -u \
