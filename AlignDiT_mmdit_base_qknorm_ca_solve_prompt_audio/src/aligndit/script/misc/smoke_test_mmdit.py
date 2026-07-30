@@ -270,6 +270,83 @@ def test_d1_6mm_12audio_dual_ctc6_12():
     print("[OK] D1 builds 6 MM + 12 text-free audio blocks with CTC taps after blocks 6 and 12")
 
 
+def test_d2_6mm_6text_6audio_dual_ctc6_12():
+    """D2 keeps text CA through block 12 while video fusion stops after block 6."""
+    transformer = DiT_VT_MMDiT(
+        dim=64,
+        depth=18,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=False,
+        use_conformer=False,
+        layer_indices_ctc=[5, 11],
+        n_mm_layers=6,
+        n_text_layers=12,
+        prompt_isolated_ca=False,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    blocks = transformer.transformer_blocks
+
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:6])
+    assert all(type(block) is AudioTextDiTBlock for block in blocks[6:12])
+    assert all(type(block) is DiTBlock for block in blocks[12:])
+    assert transformer.layer_indices_ctc == (5, 11)
+    assert transformer.layer_map_ctc == {5: 0, 11: 1}
+    assert len(transformer.projectors_ctc) == 2
+
+    cross_attn_layers = {
+        int(name.split(".", 1)[0])
+        for name, _module in blocks.named_modules()
+        if name.endswith(".cross_attn")
+    }
+    assert cross_attn_layers == set(range(12)), cross_attn_layers
+
+    pred, intermediates = transformer(
+        x=torch.randn(1, 16, 8),
+        cond=torch.randn(1, 16, 8),
+        text=torch.randint(1, 32, (1, 8)),
+        video=torch.randn(1, 4, 16),
+        time=torch.rand(1),
+        mask=torch.ones(1, 16, dtype=torch.bool),
+        text_mask=torch.ones(1, 8, dtype=torch.bool),
+        video_mask=torch.ones(1, 4, dtype=torch.bool),
+        complementary_mask=torch.ones(1, 4, dtype=torch.bool),
+        generation_mask=torch.ones(1, 16, dtype=torch.bool),
+        cache=False,
+    )
+    assert pred.shape == (1, 16, 8)
+    assert list(intermediates) == [5, 11]
+
+    transformer.zero_grad(set_to_none=True)
+    ctc_probe = sum(intermediate["z_tilde"].square().mean() for intermediate in intermediates.values())
+    ctc_probe.backward()
+    for projector_i in range(2):
+        _assert_nonzero_finite_grad(
+            f"D2 CTC projector {projector_i}",
+            transformer.projectors_ctc[projector_i].model[0].weight.grad,
+        )
+    for layer_i in [0, 5, 6, 11]:
+        _assert_nonzero_finite_grad(
+            f"D2 CTC path block {layer_i} AdaLN",
+            blocks[layer_i].attn_norm.linear.weight.grad,
+        )
+    for layer_i in [12, 17]:
+        assert blocks[layer_i].attn_norm.linear.weight.grad is None
+
+    print("[OK] D2 builds 6 MM + 6 audio/text + 6 audio blocks with stage-boundary CTC taps")
+
+
 def _assert_nonzero_finite_grad(name, grad):
     assert grad is not None, f"missing gradient for {name}"
     assert torch.isfinite(grad).all(), f"non-finite gradient for {name}"
@@ -908,6 +985,7 @@ def main():
     test_text_free_audio_tail_structure(model)
     test_d0_6mm_12audio_single_ctc12()
     test_d1_6mm_12audio_dual_ctc6_12()
+    test_d2_6mm_6text_6audio_dual_ctc6_12()
     test_c1_prompt_isolated_tail_text_blocks()
     test_c2_global_text_with_text_free_tail()
     test_c0_global_text_with_tail_text_blocks()
