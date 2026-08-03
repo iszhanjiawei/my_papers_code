@@ -10,6 +10,7 @@ GPU_IDS=${GPU_IDS:-2,3,4,5,6,7}
 NUM_PROCESSES=${NUM_PROCESSES:-6}
 MAIN_PROCESS_PORT=${MAIN_PROCESS_PORT:-29620}
 FRAME_BUDGET_PER_GPU=${FRAME_BUDGET_PER_GPU:-13500}
+MAX_SAMPLES=${MAX_SAMPLES:-32}
 
 if [[ ! "${NUM_PROCESSES}" =~ ^[1-9][0-9]*$ ]]; then
     echo "NUM_PROCESSES must be a positive integer, got: ${NUM_PROCESSES}" >&2
@@ -17,6 +18,10 @@ if [[ ! "${NUM_PROCESSES}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if [[ ! "${FRAME_BUDGET_PER_GPU}" =~ ^[1-9][0-9]*$ ]]; then
     echo "FRAME_BUDGET_PER_GPU must be a positive integer, got: ${FRAME_BUDGET_PER_GPU}" >&2
+    exit 1
+fi
+if [[ ! "${MAX_SAMPLES}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "MAX_SAMPLES must be a positive integer, got: ${MAX_SAMPLES}" >&2
     exit 1
 fi
 IFS=',' read -r -a GPU_ARRAY <<< "${GPU_IDS}"
@@ -45,4 +50,5 @@ exec "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/accelerate" launch \
     --main_process_port "${MAIN_PROCESS_PORT}" \
     src/aligndit/script/train/pretrain_semantic_vae.py \
     --config-name pretrain_semantic_vae \
-    datasets.batch_size_per_gpu="${FRAME_BUDGET_PER_GPU}"
+    datasets.batch_size_per_gpu="${FRAME_BUDGET_PER_GPU}" \
+    datasets.max_samples="${MAX_SAMPLES}"
