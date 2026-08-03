@@ -5,6 +5,7 @@ import os
 
 import torch
 import torchaudio
+from accelerate.utils import set_seed
 from torch.optim.lr_scheduler import LinearLR, SequentialLR
 from torch.utils.data import DataLoader, Dataset, SequentialSampler
 from tqdm import tqdm
@@ -16,7 +17,20 @@ from f5_tts.model.utils import exists
 
 # trainer
 class Trainer_notext(Trainer):
-    def train(self, train_dataset: Dataset, num_workers=16, resumable_with_seed: int = None):
+    def train(
+        self,
+        train_dataset: Dataset,
+        num_workers=16,
+        resumable_with_seed: int = None,
+        max_updates: int | None = None,
+        deterministic_update_seed: bool = False,
+    ):
+        if max_updates is not None and (not isinstance(max_updates, int) or max_updates <= 0):
+            raise ValueError(f"max_updates must be a positive integer, got {max_updates!r}")
+        if deterministic_update_seed and not exists(resumable_with_seed):
+            raise ValueError("deterministic_update_seed requires resumable_with_seed")
+        if deterministic_update_seed and self.grad_accumulation_steps != 1:
+            raise ValueError("deterministic_update_seed currently requires grad_accumulation_steps=1")
         if self.log_samples:
             from aligndit.script.eval.utils import load_vocoder
             from f5_tts.infer.utils_infer import cfg_strength, nfe_step, sway_sampling_coef
@@ -75,7 +89,15 @@ class Trainer_notext(Trainer):
             self.num_warmup_updates * self.accelerator.num_processes
         )  # consider a fixed warmup steps while using accelerate multi-gpu ddp
         # otherwise by default with split_batches=False, warmup steps change with num_processes
-        total_updates = math.ceil(len(train_dataloader) / self.grad_accumulation_steps) * self.epochs
+        if max_updates is None:
+            total_updates = math.ceil(len(train_dataloader) / self.grad_accumulation_steps) * self.epochs
+        else:
+            # AcceleratedScheduler advances the wrapped scheduler once per process
+            # when split_batches=False. Keep the user-facing limit in global optimizer
+            # updates while sizing the underlying scheduler in per-process steps.
+            total_updates = max_updates * self.accelerator.num_processes
+        if total_updates <= warmup_updates:
+            raise ValueError(f"Training horizon ({total_updates}) must exceed scheduler warmup ({warmup_updates})")
         decay_updates = total_updates - warmup_updates
         warmup_scheduler = LinearLR(self.optimizer, start_factor=1e-8, end_factor=1.0, total_iters=warmup_updates)
         decay_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=1e-8, total_iters=decay_updates)
@@ -87,6 +109,8 @@ class Trainer_notext(Trainer):
         )  # actual multi_gpu updates = single_gpu updates / gpu nums
         start_update = self.load_checkpoint()
         global_update = start_update
+        if max_updates is not None and start_update > max_updates:
+            raise RuntimeError(f"Checkpoint update {start_update} exceeds configured max_updates={max_updates}")
 
         if exists(resumable_with_seed):
             orig_epoch_step = len(train_dataloader)
@@ -97,7 +121,12 @@ class Trainer_notext(Trainer):
         else:
             skipped_epoch = 0
 
-        for epoch in range(skipped_epoch, self.epochs):
+        updates_per_epoch = math.ceil(len(train_dataloader) / self.grad_accumulation_steps)
+        training_epochs = self.epochs if max_updates is None else math.ceil(max_updates / updates_per_epoch)
+        stop_at_update_limit = max_updates is not None and global_update == max_updates
+        for epoch in range(skipped_epoch, training_epochs):
+            if stop_at_update_limit:
+                break
             self.model.train()
             if exists(resumable_with_seed) and epoch == skipped_epoch:
                 progress_bar_initial = math.ceil(skipped_batch / self.grad_accumulation_steps)
@@ -118,13 +147,22 @@ class Trainer_notext(Trainer):
 
             progress_bar = tqdm(
                 range(math.ceil(len(train_dataloader) / self.grad_accumulation_steps)),
-                desc=f"Epoch {epoch + 1}/{self.epochs}",
+                desc=f"Epoch {epoch + 1}/{training_epochs}",
                 unit="update",
                 disable=not self.accelerator.is_local_main_process,
                 initial=progress_bar_initial,
             )
 
             for batch in current_dataloader:
+                if deterministic_update_seed:
+                    # Derive every stochastic training step from immutable state so a
+                    # resumed run continues the same rank-local noise/mask/dropout stream.
+                    update_seed = (
+                        resumable_with_seed * 1_000_003
+                        + global_update * self.accelerator.num_processes
+                        + self.accelerator.process_index
+                    )
+                    set_seed(update_seed)
                 with self.accelerator.accumulate(self.model):
                     mel_spec = batch["mel"].permute(0, 2, 1)
                     mel_lengths = batch["mel_lengths"]
@@ -197,6 +235,17 @@ class Trainer_notext(Trainer):
                             f"{log_samples_path}/update_{global_update}_ref.wav", ref_audio, target_sample_rate
                         )
                         self.model.train()
+
+                if max_updates is not None and global_update >= max_updates:
+                    stop_at_update_limit = True
+                    break
+
+            progress_bar.close()
+            if stop_at_update_limit:
+                break
+
+        if max_updates is not None and global_update != max_updates:
+            raise RuntimeError(f"Training stopped at update {global_update}, expected exactly {max_updates}")
 
         self.save_checkpoint(global_update, last=True)
 

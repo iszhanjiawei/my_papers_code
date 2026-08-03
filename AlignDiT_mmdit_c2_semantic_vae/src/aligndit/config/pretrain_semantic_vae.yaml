@@ -1,0 +1,66 @@
+hydra:
+  run:
+    dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_${model.audio_representation.name}_${datasets.name}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+seed: 666
+
+datasets:
+  name: LibriSpeech_svae40
+  cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32
+  manifest_path: ${datasets.cache_root}/manifests/train.jsonl
+  normalization_path: ${datasets.cache_root}/state/latents/train_normalization.json
+  # Start from the original A40-tested token budget; benchmark upward only after
+  # a full forward/backward/optimizer step confirms peak reserved memory.
+  batch_size_per_gpu: 13500
+  batch_size_type: frame
+  max_samples: 32
+  num_workers: 8
+
+optim:
+  epochs: 200
+  max_updates: 500000
+  learning_rate: 7.5e-5
+  num_warmup_updates: 20000
+  grad_accumulation_steps: 1
+  deterministic_update_seed: true
+  max_grad_norm: 1.0
+  bnb_optimizer: False
+
+model:
+  name: AlignDiT_SemanticVAE_pretrain
+  backbone: DiT_noText
+  arch:
+    dim: 768
+    depth: 18
+    heads: 12
+    ff_mult: 2
+    pe_attn_head: 1
+    attn_mask_enabled: True
+    mask_during_training: True
+    checkpoint_activations: False
+    layer_indices: [12]
+    projector_dim: 2048
+    z_dim: 1024
+    projector_strides: [1, 1]
+    padding_safe_projector: true
+  audio_representation:
+    name: semantic_vae_40hz
+    channels: 64
+    frame_rate: 40
+    sample_rate: 16000
+    hop_length: 400
+  vocoder:
+    is_local: False
+    local_path: ""
+  proj_lambda: 1.0
+
+ema:
+  beta: 0.9999
+
+ckpts:
+  logger: tensorboard
+  log_samples: False
+  save_per_updates: 50000
+  keep_last_n_checkpoints: -1
+  last_per_updates: 5000
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_${model.audio_representation.name}_${datasets.name}

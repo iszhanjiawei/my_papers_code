@@ -1,6 +1,7 @@
 import json
 import os
 from importlib.resources import files
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -8,8 +9,29 @@ import torch.nn.functional as F
 from datasets import Dataset as Dataset_
 from datasets import load_from_disk
 from torch import nn
+from torch.utils.data import Dataset
 
+from aligndit.script.misc.svae_cache_utils import (
+    HUBERT_HIDDEN_DIM,
+    SEMANTIC_VAE_LATENT_DIM,
+    read_jsonl,
+    safe_join,
+    sha256_file,
+)
 from f5_tts.model.dataset import CustomDataset
+
+
+HUBERT_40HZ_FEATURE = "hubert_large_ll60k_last_hidden_40hz_linear_v1"
+
+
+def _load_regular_json(path: Path) -> dict:
+    if not path.is_file() or path.is_symlink():
+        raise FileNotFoundError(f"Expected a regular JSON file: {path}")
+    with path.open(encoding="utf-8") as file:
+        value = json.load(file)
+    if not isinstance(value, dict):
+        raise TypeError(f"Expected a JSON object: {path}")
+    return value
 
 
 def cut_or_pad(data, size, dim=0, mode="constant", value=None):
@@ -170,6 +192,157 @@ class CustomDataset_mel_video(CustomDataset_mel):
         return ret
 
 
+class SemanticVaePretrainDataset(Dataset):
+    """Manifest-backed, exactly aligned Semantic-VAE/HuBERT training pairs."""
+
+    def __init__(self, manifest_path: str, cache_root: str, normalization_path: str):
+        self.manifest_path = Path(manifest_path).resolve(strict=True)
+        if not self.manifest_path.is_file() or self.manifest_path.is_symlink():
+            raise FileNotFoundError(f"Training manifest must be a regular file: {self.manifest_path}")
+        self.cache_root = Path(cache_root).resolve(strict=True)
+        inventory_meta = _load_regular_json(self.manifest_path.parent / "inventory_meta.json")
+        manifests = inventory_meta.get("manifests")
+        if not isinstance(manifests, dict):
+            raise TypeError("Inventory metadata does not contain a manifests mapping")
+        train_manifest_entry = manifests.get(self.manifest_path.name)
+        inventory_entry = manifests.get("inventory.jsonl")
+        if not isinstance(train_manifest_entry, dict) or not isinstance(inventory_entry, dict):
+            raise TypeError("Inventory metadata is missing the train/full manifest entries")
+        train_manifest_sha256 = sha256_file(self.manifest_path)
+        if train_manifest_entry.get("sha256") != train_manifest_sha256:
+            raise RuntimeError("Training manifest differs from its immutable inventory metadata")
+        inventory_count = int(inventory_entry["count"])
+        inventory_sha256 = inventory_entry.get("sha256")
+
+        latent_complete_path = safe_join(self.cache_root, "state/latents/complete.json")
+        hubert_complete_path = safe_join(self.cache_root, "state/hubert_40hz/complete.json")
+        latent_complete = _load_regular_json(latent_complete_path)
+        hubert_complete = _load_regular_json(hubert_complete_path)
+        if (
+            latent_complete.get("cache_schema_version") != 1
+            or latent_complete.get("feature") != "semantic_vae_posterior_sample_v1"
+            or latent_complete.get("selection") != {"mode": "full"}
+            or latent_complete.get("count") != inventory_count
+            or latent_complete.get("manifest_sha256") != inventory_sha256
+        ):
+            raise RuntimeError("Semantic-VAE completion marker is not the authoritative full inventory cache")
+        if (
+            hubert_complete.get("cache_schema_version") != 1
+            or hubert_complete.get("feature") != HUBERT_40HZ_FEATURE
+            or hubert_complete.get("selection") != {"mode": "full"}
+            or hubert_complete.get("count") != inventory_count
+            or hubert_complete.get("manifest_sha256") != inventory_sha256
+            or hubert_complete.get("total_target_frames") != latent_complete.get("total_latent_frames")
+        ):
+            raise RuntimeError("HuBERT completion marker is not the authoritative full 40 Hz inventory cache")
+        for name, completion in (("latents", latent_complete), ("hubert_40hz", hubert_complete)):
+            index = completion.get("consolidated_index")
+            if (
+                not isinstance(index, dict)
+                or index.get("count") != inventory_count
+                or index.get("sha256") != completion.get("ordered_index_sha256")
+            ):
+                raise RuntimeError(f"Invalid {name} consolidated-index contract")
+            index_path = safe_join(self.cache_root, index["path"])
+            if (
+                not index_path.is_file()
+                or index_path.is_symlink()
+                or index_path.stat().st_size != index.get("size_bytes")
+                or sha256_file(index_path) != index["sha256"]
+            ):
+                raise RuntimeError(f"{name} consolidated index differs from its completion marker")
+        normalization_path = Path(normalization_path).resolve(strict=True)
+        if not normalization_path.is_file() or normalization_path.is_symlink():
+            raise FileNotFoundError(f"Normalization statistics must be a regular file: {normalization_path}")
+        normalization = _load_regular_json(normalization_path)
+        required = {
+            "cache_schema_version",
+            "channel_count",
+            "count",
+            "feature",
+            "frame_count",
+            "latent_complete_sha256",
+            "mean",
+            "method",
+            "scope",
+            "std",
+            "train_manifest_sha256",
+        }
+        if set(normalization) != required:
+            raise ValueError(f"Unexpected normalization-statistics keys: {sorted(normalization)}")
+        if (
+            normalization["cache_schema_version"] != 1
+            or normalization["channel_count"] != SEMANTIC_VAE_LATENT_DIM
+            or normalization["feature"] != "semantic_vae_posterior_sample_v1"
+            or normalization["method"] != "per_channel_population_mean_std_float64_welford_v1"
+            or normalization["scope"] != "train"
+            or normalization["train_manifest_sha256"] != train_manifest_sha256
+            or normalization["latent_complete_sha256"] != sha256_file(latent_complete_path)
+        ):
+            raise ValueError("Normalization statistics do not match the immutable train/latent cache contract")
+        mean = np.asarray(normalization["mean"], dtype=np.float64)
+        std = np.asarray(normalization["std"], dtype=np.float64)
+        if (
+            mean.shape != (SEMANTIC_VAE_LATENT_DIM,)
+            or std.shape != (SEMANTIC_VAE_LATENT_DIM,)
+            or not np.isfinite(mean).all()
+            or not np.isfinite(std).all()
+            or (std <= 0).any()
+        ):
+            raise ValueError("Invalid per-channel Semantic-VAE normalization statistics")
+        self.normalization_path = normalization_path
+        self.normalization_sha256 = sha256_file(normalization_path)
+        self.latent_mean = mean.astype(np.float32)
+        self.latent_std = std.astype(np.float32)
+        self.records = list(read_jsonl(self.manifest_path))
+        if not self.records:
+            raise ValueError(f"Empty Semantic-VAE pretraining manifest: {self.manifest_path}")
+        seen = set()
+        for record in self.records:
+            key = record["utterance_key"]
+            if record["split"] != "train" or key in seen:
+                raise ValueError(f"Invalid/duplicate training record: {key}")
+            seen.add(key)
+        if len(self.records) != normalization["count"]:
+            raise ValueError("Normalization record count differs from the training manifest")
+        if sum(int(record["latent_frames"]) for record in self.records) != normalization["frame_count"]:
+            raise ValueError("Normalization frame count differs from the training manifest")
+
+    def __len__(self):
+        return len(self.records)
+
+    def get_frame_len(self, index):
+        return int(self.records[index]["latent_frames"])
+
+    def __getitem__(self, index):
+        record = self.records[index]
+        latent_path = safe_join(self.cache_root, record["latent_relative_path"])
+        feature_path = safe_join(self.cache_root, f"hubert_40hz/{record['utterance_key']}.npy")
+        latent = np.load(latent_path, allow_pickle=False)
+        feature = np.load(feature_path, allow_pickle=False)
+        frames = int(record["latent_frames"])
+        if latent.shape != (frames, SEMANTIC_VAE_LATENT_DIM) or latent.dtype != np.float32:
+            raise ValueError(
+                f"Invalid Semantic-VAE latent for {record['utterance_key']}: {latent.shape}/{latent.dtype}"
+            )
+        if feature.shape != (frames, HUBERT_HIDDEN_DIM) or feature.dtype != np.float32:
+            raise ValueError(f"Invalid HuBERT feature for {record['utterance_key']}: {feature.shape}/{feature.dtype}")
+        if not np.isfinite(feature).all():
+            raise FloatingPointError(f"Non-finite HuBERT feature for {record['utterance_key']}")
+        latent = (latent - self.latent_mean) / self.latent_std
+        if not np.isfinite(latent).all():
+            raise FloatingPointError(f"Non-finite normalized latent for {record['utterance_key']}")
+        return {"mel_spec": torch.from_numpy(latent).transpose(0, 1), "rep": torch.from_numpy(feature.copy())}
+
+    @staticmethod
+    def collate_fn(batch):
+        lengths = torch.tensor([item["rep"].shape[0] for item in batch], dtype=torch.long)
+        max_length = int(lengths.max())
+        latent = torch.stack([F.pad(item["mel_spec"], (0, max_length - item["mel_spec"].shape[1])) for item in batch])
+        feature = torch.stack([F.pad(item["rep"], (0, 0, 0, max_length - item["rep"].shape[0])) for item in batch])
+        return {"mel": latent, "mel_lengths": lengths, "rep": feature, "rep_lengths": lengths.clone()}
+
+
 # Load dataset
 
 
@@ -191,7 +364,11 @@ def load_dataset_mel(
 
     if dataset_type in ["CustomDataset", "CustomDataset_mel", "CustomDataset_mel_rep", "CustomDataset_mel_video"]:
         if data_dir:
-            rel_data_path = os.path.join(data_dir, f"{dataset_name}_{tokenizer}") if tokenizer else os.path.join(data_dir, dataset_name)
+            rel_data_path = (
+                os.path.join(data_dir, f"{dataset_name}_{tokenizer}")
+                if tokenizer
+                else os.path.join(data_dir, dataset_name)
+            )
         elif tokenizer:
             rel_data_path = str(files("aligndit").joinpath(f"../../data/{dataset_name}_{tokenizer}"))
         else:
