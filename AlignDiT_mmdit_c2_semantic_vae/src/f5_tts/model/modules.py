@@ -180,15 +180,27 @@ class ConvPositionEmbedding(nn.Module):
 
     def forward(self, x: float["b n d"], mask: bool["b n"] | None = None):
         if mask is not None:
-            mask = mask[..., None]
-            x = x.masked_fill(~mask, 0.0)
+            token_mask = mask[..., None]
+            x = x.masked_fill(~token_mask, 0.0)
 
         x = x.permute(0, 2, 1)
-        x = self.conv1d(x)
+        if mask is None:
+            x = self.conv1d(x)
+        else:
+            # A mask only before and after the complete two-convolution stack is
+            # insufficient: the first convolution can populate padded positions,
+            # and the second convolution can leak them back into valid boundary
+            # frames. Re-zero padding after every sub-layer so a short sample has
+            # the same valid output whether it is processed alone or padded in a
+            # batch with a longer sample.
+            channel_mask = token_mask.permute(0, 2, 1)
+            for layer in self.conv1d:
+                x = layer(x)
+                x = x.masked_fill(~channel_mask, 0.0)
         out = x.permute(0, 2, 1)
 
         if mask is not None:
-            out = out.masked_fill(~mask, 0.0)
+            out = out.masked_fill(~token_mask, 0.0)
 
         return out
 
