@@ -44,3 +44,90 @@ than baking `/home` into portable configuration or launch scripts.
 
 Generated manifests, features, decoded audio, logs, and checkpoints live
 outside this Git repository and must never be committed.
+
+## Frozen LibriSpeech inventory
+
+The authoritative manifest is stored outside Git at:
+
+```text
+/home/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32/manifests
+```
+
+It contains 281,241 training records and 5,551 development records. All three
+training subsets are retained. Sixteen development utterances longer than 30
+seconds are recorded in `rejected.jsonl`. The authoritative inventory SHA256
+is:
+
+```text
+65c1332f9852bb84ddba8cfef8359cf5f2c7195a593d4e24087eb6c60d1dabe5
+```
+
+## Semantic-VAE latent extraction
+
+The extractor uses only the exact 145 checkpoint tensors needed by
+`encoder`, `pre_block`, `fc_mu`, and `fc_var`. It does not move the BigVGAN
+decoder or distillation projector to each GPU. Every output is FP32 with shape
+`[ceil(num_samples / 400), 64]`.
+
+Correctness safeguards include:
+
+- exact `records[rank::world_size]` ownership without sampler padding;
+- a stable per-utterance CUDA generator seed from the manifest;
+- a discarded 400-sample CUDA warm-up before any real posterior statistics;
+- a built-in golden test whose raw latent SHA256 is
+  `e3de5ff47682f97e063c6aaeaee9cec195ebdb34e1bce964c4a10d2912114f3f`;
+- same-directory NPY temp files, file `fsync`, and hard-link no-clobber
+  publication on NFS;
+- immutable per-attempt/rank progress logs, a consolidated manifest-order
+  index, and a final completion marker;
+- CPU-only read validation and explicit offline repair that quarantines rather
+  than deletes damaged or orphaned files.
+
+The golden utterance is `train-clean-100/103/1240/103-1240-0015`. Its stored
+NPY SHA256 must be:
+
+```text
+95774c4fb6dce29c18740bc5d1bc6630f4ba9a8dbde50460f7eb8c527d431b84
+```
+
+Use the isolated Semantic-VAE environment. It intentionally differs from the
+main AlignDiT environment, which does not contain `audiotools`:
+
+```bash
+cd /home/zjw524/projects/alignDiT_idea6/my_papers_code/AlignDiT_mmdit_c2_semantic_vae
+
+setsid env ROOT_PREFIX=/home NPROC_PER_NODE=8 PYTHONUNBUFFERED=1 \
+  bash src/aligndit/run/misc/extract_librispeech_svae_latents.sh \
+  > logs/extract_librispeech_svae_latents.log 2>&1 &
+```
+
+The launcher calls the environment's Python module directly:
+
+```text
+/home/zjw524/ENTER/venvs/semantic-vae/bin/python -m torch.distributed.run
+```
+
+Do not substitute the main environment's `torchrun`. A writing launch creates
+`state/latents/WRITE_ACTIVE.json`. If a process was killed, first verify that
+no extractor is alive, then resume with a new attempt ID and explicitly name
+the stale attempt:
+
+```bash
+ROOT_PREFIX=/home SVAECACHE_ATTEMPT_ID=<new-id> \
+  bash src/aligndit/run/misc/extract_librispeech_svae_latents.sh \
+  --acknowledge-stale-write-attempt <old-id>
+```
+
+Read-only validation does not require CUDA and never writes the cache:
+
+```bash
+ROOT_PREFIX=/home CUDA_VISIBLE_DEVICES= PYTHONPATH=src \
+  /home/zjw524/ENTER/venvs/semantic-vae/bin/python -u \
+  src/aligndit/script/misc/extract_librispeech_svae_latents.py \
+  --validate-only
+```
+
+`--repair` is deliberately restricted to a full-manifest, single-GPU,
+offline run. It invalidates the completion marker while working, quarantines
+corrupt outputs, stale temp files and unexpected files, regenerates exact
+posterior samples, and republishes completion only after a full audit.
