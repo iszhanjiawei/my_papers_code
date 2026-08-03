@@ -2,10 +2,20 @@
 .vscode/
 tests/
 runs/
+logs/
+outputs/
+multirun/
+cache/
 data/
 ckpts/
+checkpoints/
 wandb/
 results/
+*.arrow
+*.npy
+*.npz
+*.pt
+*.pth
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
