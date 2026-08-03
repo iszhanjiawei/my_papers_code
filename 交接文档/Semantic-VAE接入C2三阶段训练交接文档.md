@@ -125,7 +125,7 @@ frames 和 573,475,406,848 bytes。最终发布前发现的 3 个旧原子临时
 正式训练固定使用：
 
 ```text
-Git HEAD:       aac4e590a947142148f072f7543c4fc8ec3c56be
+训练源码基线:    aac4e590a947142148f072f7543c4fc8ec3c56be
 GPU:            physical 2,3,4,5,6,7；一张卡一个 rank
 world size:     6
 precision:      BF16
@@ -135,6 +135,9 @@ max updates:    500000
 warmup:         20000 updates
 learning rate:  7.5e-5
 ```
+
+这里的 `aac4e59` 是正式启动前最后一个改变 contract-bound 源码/launcher 的 commit；后续只修改
+`AGENTS.md` 或本文档的提交不会改变训练源码哈希，也不会破坏同一 contract 的恢复。
 
 正式日志：
 
