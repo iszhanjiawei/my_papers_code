@@ -1,16 +1,169 @@
-# Semantic-VAE 接入 C2 三阶段训练交接文档
+# Semantic-VAE 接入 C2 与 500k 从头音频预训练交接文档
 
-> 更新日期：2026-08-02
+> 更新日期：2026-08-04
 > 工作区：`/zjw524/projects/alignDiT_idea6`
 > Git 仓库：`/zjw524/projects/alignDiT_idea6/my_papers_code`
 > 远程：`https://github.com/iszhanjiawei/my_papers_code.git`
 > 当前主分支：`main`
 
+## 0. 2026-08-04 当前权威路线
+
+当前主线不再采用 mel 500k checkpoint 的 S1/S2 分阶段 warm-start，而是在独立快照：
+
+```text
+AlignDiT_mmdit_c2_semantic_vae/
+```
+
+中使用 LibriSpeech 960h 从头训练一个 `64 维、40 Hz` Semantic-VAE latent 音频模型，预算固定为
+`500000 optimizer updates`。训练目标为：
+
+```text
+normalized Semantic-VAE latent flow matching
++
+同长度 40 Hz HuBERT representation alignment
+```
+
+该音频预训练权重完成后，再用于初始化 C2 多模态模型的 audio path。下文原有的 mel warm-start
+三阶段方案仅保留为设计演进记录和后续消融，不是当前正式执行路线。
+
+### 0.1 当前状态
+
+| 项目 | 状态 | 完成判据 |
+|---|---|---|
+| LibriSpeech immutable inventory | 已完成 | train 281,241，dev 5,551，总计 286,792 |
+| Semantic-VAE raw latent cache | 已完成 | 286,792 个 FP32 `[T,64]` fixed posterior sample；full completion/index 已发布并通过只读全量验证 |
+| HuBERT exact-40-Hz cache | 已完成并独立审计 | 286,792 个 FP32 `[T,1024]` 文件；139,999,682 个目标帧；complete/index/资源 SHA、全 inventory 顺序和 68 个确定性抽样全部通过 |
+| train-only normalization | 已完成 | 281,241 条 train、138,504,846 帧、64 通道 float64 Welford population mean/std 已原子发布并校验 |
+| 500k 音频预训练代码 | 已实现并推送 | 基础实现 `ea7b304`；padding 修复 `282dad8`；A40 launcher 参数 `aac4e59` |
+| 正式 6×A40 训练 | 已启动并通过启动验收 | 6 rank contract 正确；30,000 frames/GPU、max 64；连续超过 20 个真实 update，loss 有限，无 OOM、NCCL、长度错配或数据错误 |
+| CelebVDub/C2 latent 微调 | 后续工作 | 不属于本轮 LibriSpeech 纯音频预训练任务 |
+
+缓存根目录：
+
+```text
+/home/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32
+```
+
+### 0.2 当前已实现代码
+
+- `src/aligndit/config/pretrain_semantic_vae.yaml`
+  - 从头初始化 18 层 `DiT_noText`；
+  - 64D、40 Hz、16 kHz、hop 400；
+  - HuBERT projector stride `[1,1]`，不再把 40 Hz 下采样到 20 Hz；
+  - `max_updates: 500000`、LR `7.5e-5`、warmup 20k、BF16、seed 666、`proj_lambda: 1.0`；
+  - 正式实测配置为 30,000 frames/GPU、`max_samples=64`；不得在同一 contract 下改动。
+- `SemanticVaePretrainDataset`
+  - 强制 latent/HuBERT 都是 full completion；
+  - 校验 inventory、consolidated index、SHA、shape、dtype、finite 和逐条等长；
+  - 只接受 train-only mean/std，并在归一化之后把 padding 填为 0。
+- `PrecomputedAudioRepresentation`
+  - 跳过 mel frontend，同时向上游 CFM 提供 64 通道、16 kHz、hop 400 元数据。
+- `DiT_noText`
+  - 支持 Hydra `ListConfig` 的可配置 projector stride；
+  - 训练时严格使用有效帧 attention mask；
+  - 每层重新清零 padding；
+  - projector 按单条真实长度计算，避免 GroupNorm 受同 batch padding 比例影响。
+- `ConvPositionEmbedding`
+  - mask 模式在每个卷积栈子层后重新清零 padding；
+  - 修复第一层卷积在 padding 区生成值、第二层再把它卷回有效边界帧的问题；
+  - standalone-vs-padded CPU 回归差异从旧行为约 `0.131` 降到 `2.24e-08`。
+- `Trainer_notext`
+  - 精确停在 500k optimizer updates；
+  - scheduler/warmup 按 Accelerate world size 正确换算；
+  - 以 global update + rank 派生随机流，使同一 contract 的 resume 不重复 noise/time/span/dropout；
+  - 当前确定性 resume 模式明确要求 `grad_accumulation_steps=1`。
+- `pretrain_semantic_vae.py`
+  - update 0 前发布 immutable `training_contract.json`；
+  - contract 绑定 resolved config、world size、BF16/runtime、缓存 completion SHA、normalization SHA 和关键源码 SHA；
+  - checkpoint 存在但 contract 缺失时 fail closed，并拒绝外来 pretrained checkpoint 混入。
+
+旧入口 `src/aligndit/script/train/pretrain.py` 保持原有 mel 语义，没有被改写。
+
+### 0.3 正式训练前强制门禁
+
+1. latent 与 HuBERT 都必须有 full completion marker，并通过 index/hash/count/frame 校验。
+2. 运行 `compute_librispeech_svae_train_stats.sh`，验证 64 个 mean/std 全部 finite、`std > 0`，记录文件 SHA。
+3. 构造完整 `SemanticVaePretrainDataset`，抽查首尾和固定随机样本，确认 latent/HuBERT 严格同长度。
+4. 用真实模型和真实最坏动态 batch，在一张 A40 上完成至少两次 forward/backward/AdamW/EMA step。
+5. 单卡只用于筛选 frame budget；必须再用 6 个 DDP rank 跑同一最坏 batch canary，计入 DDP/NCCL 额外显存。
+6. benchmark 必须确认总 loss、各 loss 分量和 gradient norm 都 finite，并且不写正式 checkpoint。
+7. 正式任务启动后，必须看到 6 个 worker 连续完成多个 update，且 contract、LR、loss、显存、GPU 利用率和日志全部正常。
+
+动态 frame batching稳定的是每步有效帧数，不代表增大 frame budget 后必须线性放大学习率。首轮继续使用
+`7.5e-5`，避免同时改变 batch 和优化语义。
+
+### 0.4 已完成门禁、正式运行与恢复依据
+
+权威文件与 SHA256：
+
+| 文件 | SHA256 |
+|---|---|
+| `state/latents/complete.json` | `e255f8ddea5181436283510538ad1bd6bf6808bbe61d3081f3f38977c91be69b` |
+| `state/hubert_40hz/complete.json` | `2e66525965d3d48495036c7c60772520d1a233832425fbc669614127df1b0f45` |
+| `state/latents/train_normalization.json` | `65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6` |
+| 正式 `training_contract.json` | `0f19420a6fd6244c45c5c4020e8779392fbd32e716faadebde86ea03c069e580` |
+
+HuBERT completion 记录 286,792 条、139,999,682 个 40 Hz target frames、174,674,621 个 native
+frames 和 573,475,406,848 bytes。最终发布前发现的 3 个旧原子临时文件与对应正式文件逐字节一致，
+已可恢复地隔离到：
+
+```text
+/home/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32/
+  quarantine/hubert_40hz/orphans/finalize-orphan-cleanup-20260804T0418CST/
+```
+
+它们没有被删除，也不在 active feature tree 内。
+
+显存门禁结果：
+
+| 配置 | 单卡 peak reserved | 6-rank peak reserved | 结论 |
+|---|---:|---:|---|
+| 13,500 frames、max 32 | 17.799 GiB | 未作为最终配置测试 | 安全但显存利用不足 |
+| 22,000 frames、max 32 | 27.902 GiB | 未作为最终配置测试 | max 32 已接近 batch 数饱和 |
+| 30,000 frames、max 64 | 41.182 GiB | rank0 41.822 GiB；其余约 41.168 GiB | 正式采用；留有 DDP/NCCL 余量 |
+
+正式训练固定使用：
+
+```text
+Git HEAD:       aac4e590a947142148f072f7543c4fc8ec3c56be
+GPU:            physical 2,3,4,5,6,7；一张卡一个 rank
+world size:     6
+precision:      BF16
+frame budget:   30000 / GPU
+max samples:    64 / GPU
+max updates:    500000
+warmup:         20000 updates
+learning rate:  7.5e-5
+```
+
+正式日志：
+
+```text
+AlignDiT_mmdit_c2_semantic_vae/logs/
+  pretrain_semantic_vae_6xa40_fb30000_ms64_20260804T051453.log
+```
+
+正式 checkpoint：
+
+```text
+/home/zjw524/projects/data/ckpts/
+  AlignDiT_SemanticVAE_pretrain_semantic_vae_40hz_LibriSpeech_svae40/
+```
+
+启动后已确认物理 GPU 2–7 分别严格映射 rank 0–5，29620 为实际 rendezvous 端口；连续超过 20 个
+真实 update 的 loss/diff_loss/proj_loss 均有限，日志没有 feature/latent 长度 warning、NaN/Inf、OOM、
+NCCL、Traceback 或 ChildFailed。GPU 0/1 属于其他任务，整个缓存门禁、benchmark、canary 和正式启动
+过程都没有使用它们。
+
+若后续需要恢复，必须继续使用同一源码、同一 6 卡 world、BF16、30,000/64 和同一缓存/normalization；
+脚本会验证现有 contract，并从 `model_last.pt` 恢复。`model_last.pt` 每 5,000 updates 才写入，
+`model_<update>.pt` 每 50,000 updates 写入，因此刚启动时只有 contract、没有 checkpoint 是正常行为。
+
 ## 1. 给新会话的一句话摘要
 
-当前工作是把 AlignDiT 的 **C2 结构（12 层 MM-DiT + 文本 Cross-Attention，后 6 层纯音频 DiT）** 从 `80 维、100 Hz mel + HiFi-GAN` 改造为 `64 维、40 Hz Semantic-VAE latent + Semantic-VAE decoder`。
-
-已完成 Semantic-VAE codec 上限评测和总体技术方案，证明 Semantic-VAE 1000k 的重建上限显著高于现有 mel+HiFi-GAN。**尚未完成 Semantic-VAE 的训练数据缓存、模型代码接入和三阶段训练。** 当前最大的外部阻塞是本机没有已解压的 LibriSpeech 训练集。
+当前工作是把 AlignDiT 的 **C2 结构（12 层 MM-DiT + 文本 Cross-Attention，后 6 层纯音频 DiT）**
+从 `80 维、100 Hz mel + HiFi-GAN` 改造为 `64 维、40 Hz Semantic-VAE latent + Semantic-VAE decoder`。
+当前正在执行的第一步，是先在 LibriSpeech 上从头完成 500k 的 40 Hz 纯音频预训练；详细状态以第 0 节为准。
 
 ## 2. 为什么选 C2 作为主干
 
@@ -206,7 +359,9 @@ decoder_native_length = T_latent * 400
 
 codec ceiling 实测 Semantic-VAE 平均比原 WAV 多约 198 samples。每条 manifest 必须保存 `original_num_samples`，最终 WAV 必须裁剪到原始样本数，不能用浮点 duration 反推。
 
-## 5. 当前代码的真实状态
+## 5. 历史代码状态（已由第 0 节的新实现取代）
+
+本节记录 2026-08-02 方案制定时旧 mel 快照的状态，不得据此判断当前代码仍缺少 latent 接口。
 
 ### 5.1 现有 LibriSpeech 预训练入口
 
@@ -300,7 +455,10 @@ HuBERT 50 Hz -> 按每条有效长度插值到 40 Hz
 
 因此现在不能只把 `n_mel_channels: 80` 改成 64 就启动训练。
 
-## 6. 当前卡点
+## 6. 历史卡点（现已解决或进入新流程）
+
+本节是旧服务器/旧方案的历史记录。当前服务器已有 LibriSpeech、独立 Semantic-VAE 快照和完整 latent cache；
+HuBERT、normalization 与正式启动状态以第 0 节为准。
 
 ### 6.1 本机缺少 LibriSpeech 数据
 
@@ -357,7 +515,11 @@ dev-other
 - 视频 25 -> 40 Hz 精确插值；
 - Semantic-VAE decoder 日志采样。
 
-## 7. 已确定的三阶段训练计划
+## 7. 历史方案：mel 500k warm-start 三阶段适配（当前不执行）
+
+以下 S1/S2/S3 方案是此前针对“部分复用 mel 预训练权重”的设计。当前实验已经改为在相同
+LibriSpeech 数据上从头进行 500k Semantic-VAE 音频预训练，因此不得按本节启动正式任务。
+本节仅用于记录设计演进，以及后续 `scratch vs mel warm-start` 消融。
 
 论文上分三阶段，实际执行建议分为 6 个独立任务：
 
@@ -593,7 +755,7 @@ normalization_stats_id/hash
 
 正式训练前必须用真实 tokenizer 再检查，修复或过滤这些样本。不能仅依赖 `zero_infinity=True` 将它们静默变成零损失。
 
-## 9. Batch 与 GPU 配置
+## 9. 历史 warm-start 方案的 Batch 与 GPU 配置（当前不执行）
 
 为保持每个 update 看到的音频秒数一致，不能直接沿用 mel 的 frame threshold。
 
@@ -642,7 +804,7 @@ max_samples=32
 
 首轮不要因为 40 Hz 序列更短就直接放大每 update 的音频秒数，否则无法将性能变化干净归因于 Semantic-VAE。
 
-## 10. Checkpoint、EMA 与 resume 规则
+## 10. 历史分阶段方案的 Checkpoint、EMA 与 resume 规则
 
 ### 10.1 同一小阶段中断
 
@@ -747,7 +909,7 @@ latent 原生 LibriSpeech 预训练 -> C2 CelebVDub
 
 两者使用相同预训练数据和 update 预算。
 
-## 13. 下一步执行顺序
+## 13. 历史方案的执行顺序（当前不执行）
 
 新会话应按以下顺序继续，不要直接启动训练。
 
@@ -868,24 +1030,18 @@ src/aligndit/script/train/pretrain_semantic_vae.py
 - Hydra outputs；
 - TensorBoard/W&B 产物。
 
-当前工作树中还有两个未跟踪 `data` 软链接：
-
-```text
-AlignDiT_mmdit_base/data
-AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/data
-```
-
-这些是本机数据路径，不要误加入 commit。
+工作树长期可能包含其他实验的 `data` 软链接、日志、TensorBoard events 和未完成快照。每次只显式
+`git add` 本步骤的目标文件，不要使用 `git add .`，也不要把这些本机产物误加入 commit。
 
 ## 15. 新会话开始时的建议检查清单
 
 1. 先完整阅读本文档和 `my_papers_code/AGENTS.md`。
 2. 执行 `git status --short --branch`，不要覆盖用户改动。
-3. 确认 Semantic-VAE 1000k EMA 权重仍存在。
-4. 确认 mel 500k LibriSpeech checkpoint 仍存在。
-5. 确认 LibriSpeech 是否已恢复；如未恢复，先处理数据，不启动训练。
-6. 不要把 codec ceiling WAV 目录当成 latent cache。
-7. 不要直接修改旧 `pretrain.py` 破坏 mel 复现性。
-8. 新建 C2 Semantic-VAE 独立快照后再开发。
-9. 代码完成后先单卡 smoke test，再切换到 4/8 卡正式训练。
-10. 每个实现步骤单独 commit/push。
+3. 检查 latent/HuBERT 两个 full completion marker、index 和 SHA，不以文件数量或进度日志代替完成标记。
+4. 检查 train-only normalization 存在且与 train manifest、latent completion SHA 绑定。
+5. 检查正式 checkpoint 目录：空目录可从头开始；有 checkpoint 时必须存在并严格匹配 training contract。
+6. 先运行单卡最坏真实 batch benchmark，再运行 6-rank DDP canary；不要从普通首个 batch 推断显存上限。
+7. 正式训练固定使用 `grad_accumulation_steps=1`、BF16 和 500k exact updates，不能临时改变 world size 后续训。
+8. 不要把 codec ceiling WAV 目录当成 latent cache，也不要修改旧 `pretrain.py` 的 mel 语义。
+9. 启动后同时核对 worker、连续 update、loss/LR、GPU 显存/利用率和日志错误，不能只看 launcher PID。
+10. 每个实现或文档步骤单独 commit/push，并核对本地 HEAD 与 `origin/main` 一致。

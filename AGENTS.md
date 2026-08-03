@@ -107,6 +107,50 @@ AlignDiT_mmdit_c2_semantic_vae/
 
 不要使用未完成且可能含本地运行产物的 `AlignDiT_mmdit_wav_vae_base_qknorm_ca/`，也不要覆盖原 C2 mel 快照。
 
+### Semantic-VAE 40 Hz 从头音频预训练
+
+`AlignDiT_mmdit_c2_semantic_vae/` 当前音频预训练主线是在 LibriSpeech 960h 上从头训练 500k
+optimizer updates，不再执行旧交接文档中的 mel 500k warm-start S1/S2 流程。旧
+`src/aligndit/script/train/pretrain.py` 必须保持 mel 语义；新入口固定为：
+
+| 用途 | 入口 |
+|---|---|
+| train-only latent mean/std | `src/aligndit/run/misc/compute_librispeech_svae_train_stats.sh` |
+| A40 真实最坏 batch 显存测试 | `src/aligndit/run/misc/benchmark_semantic_vae_pretrain_memory_a40.sh` |
+| 6×A40 正式 500k 预训练 | `src/aligndit/run/train/pretrain_semantic_vae_6xa40.sh` |
+| Hydra 配置 | `src/aligndit/config/pretrain_semantic_vae.yaml` |
+
+训练缓存根目录使用 ROOT_PREFIX 约定：
+
+```text
+${ROOT_PREFIX}/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32
+```
+
+正式启动前必须依次确认：latent 与 HuBERT 的 full `complete.json` 和 consolidated index 校验通过；
+train-only normalization 已原子发布；完整 dataset 的 latent/HuBERT 逐条等长；单卡最坏真实 batch
+测试通过；相同 frame budget 的 6-rank DDP canary 通过。单卡显存结果不包含完整 DDP/NCCL 开销，
+不能直接压到 45 GiB 后启动正式任务。
+
+正式训练使用 64D/40 Hz latent、40 Hz HuBERT、`projector_strides: [1,1]`、BF16、seed 666、
+LR `7.5e-5`、20k warmup、`grad_accumulation_steps=1` 和精确 500k updates。2026-08-04 正式
+contract 已固定为 6×A40、物理 GPU 2–7、一卡一 rank、`30000 frames/GPU`、`max_samples=64`；该组合
+在单卡和 6-rank 真实最坏 batch canary 中均已通过，6-rank 的 rank0 峰值 reserved 为 41.822 GiB。
+不要仅按 100 Hz→40 Hz 比例换算或在同一 checkpoint 目录临时修改 batch/world size。
+
+缓存完成标记与 normalization 的权威 SHA256 分别为：latent
+`e255f8ddea5181436283510538ad1bd6bf6808bbe61d3081f3f38977c91be69b`、HuBERT
+`2e66525965d3d48495036c7c60772520d1a233832425fbc669614127df1b0f45`、normalization
+`65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6`。正式 checkpoint 位于：
+
+```text
+${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_pretrain_semantic_vae_40hz_LibriSpeech_svae40
+```
+
+`training_contract.json` 会绑定 resolved config、缓存/normalization SHA、关键源码 SHA、world size 和
+mixed precision；存在 checkpoint 却没有 contract，或 contract 不同，必须 fail closed，不能用
+`strict=False`、删除 contract 或复制外来 checkpoint 绕过。位置卷积在 mask 模式下必须在每个卷积
+子层后重新清零 padding；否则短音频与长音频组 batch 时会污染有效边界帧。
+
 四组实验均使用深度 18、前 12 层 MM-DiT、CelebVDub、字符 tokenizer、RMS QK-Norm、BF16 和相同的动态 frame batch。只允许按下表改变文本注入层数和参考音频隔离开关：
 
 | 实验 | `n_mm_layers` | `n_text_layers` | `prompt_isolated_ca` | 语义 |
