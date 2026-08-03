@@ -131,3 +131,39 @@ ROOT_PREFIX=/home CUDA_VISIBLE_DEVICES= PYTHONPATH=src \
 offline run. It invalidates the completion marker while working, quarantines
 corrupt outputs, stale temp files and unexpected files, regenerates exact
 posterior samples, and republishes completion only after a full audit.
+
+## HuBERT 50 Hz to exact 40 Hz supervision
+
+The production teacher cache uses the local, pinned
+`facebook/hubert-large-ll60k` checkpoint in FP32/eager mode. Audio is decoded
+at its original valid length and normalized by the checkpoint's official
+feature extractor. The model's native convolution length is checked exactly;
+the final hidden state is then linearly interpolated with
+`align_corners=False` to the corresponding manifest `latent_frames`. Padding
+is never included in HuBERT inference.
+
+The golden utterance has a native shape of `[190, 1024]` and an aligned shape
+of `[153, 1024]`. Its raw aligned feature SHA256 is:
+
+```text
+f816736e744e5db01b100df05b76d2093465208c1466cbd998ba5a9d5b535b3c
+```
+
+Deterministic CuBLAS requires `CUBLAS_WORKSPACE_CONFIG=:4096:8` to be present
+before Python starts. The launcher sets this itself and also forces offline
+Hugging Face loading:
+
+```bash
+cd /home/zjw524/projects/alignDiT_idea6/my_papers_code/AlignDiT_mmdit_c2_semantic_vae
+
+setsid env ROOT_PREFIX=/home CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 \
+  NPROC_PER_NODE=6 HUBERT40_ATTEMPT_ID=<unique-id> \
+  bash src/aligndit/run/misc/extract_librispeech_hubert40.sh \
+  > logs/extract_librispeech_hubert40.log 2>&1 &
+```
+
+Outputs are stored under `hubert_40hz/`; immutable spec, progress, ordered
+index and completion state live under `state/hubert_40hz/`. The output is raw
+FP32 `[T, 1024]`, so the completed cache is expected to be roughly 573 GB.
+As with the latent cache, a partial selection is for testing only and never
+publishes a full completion marker.
