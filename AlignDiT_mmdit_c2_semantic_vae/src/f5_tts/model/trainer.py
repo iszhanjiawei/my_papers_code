@@ -3,12 +3,14 @@ from __future__ import annotations
 import gc
 import math
 import os
+import tempfile
+from datetime import timedelta
 
 import torch
 import torchaudio
 import wandb
 from accelerate import Accelerator
-from accelerate.utils import DistributedDataParallelKwargs
+from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs
 from ema_pytorch import EMA
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LinearLR, SequentialLR
@@ -18,6 +20,48 @@ from tqdm import tqdm
 from f5_tts.model import CFM
 from f5_tts.model.dataset import DynamicBatchSampler, collate_fn
 from f5_tts.model.utils import default, exists
+
+
+def _fsync_directory(path: str) -> None:
+    """Durably publish directory-entry changes after an atomic checkpoint replace."""
+
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_accelerator_save(accelerator: Accelerator, checkpoint: dict, destination: str) -> None:
+    """Serialize beside the destination and publish only a fully durable checkpoint."""
+
+    checkpoint_dir = os.path.dirname(destination)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f".{os.path.basename(destination)}.",
+            suffix=".tmp",
+            dir=checkpoint_dir,
+            delete=False,
+        ) as temporary_file:
+            temporary_path = temporary_file.name
+            os.fchmod(temporary_file.fileno(), 0o644)
+            accelerator.save(checkpoint, temporary_file)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+
+        # The temporary file is on the same filesystem, so replace is atomic
+        # and preserves the old model_last.pt until serialization succeeds.
+        os.replace(temporary_path, destination)
+        temporary_path = None
+        _fsync_directory(checkpoint_dir)
+    except BaseException:
+        if temporary_path is not None and os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+            _fsync_directory(checkpoint_dir)
+        raise
 
 
 # trainer
@@ -55,6 +99,10 @@ class Trainer:
         model_cfg_dict: dict = dict(),  # training config
     ):
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        distributed_timeout_seconds = int(os.environ.get("NCCL_TIMEOUT", "600"))
+        if distributed_timeout_seconds <= 0:
+            raise ValueError("NCCL_TIMEOUT must be a positive integer number of seconds")
+        process_group_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=distributed_timeout_seconds))
 
         if logger == "wandb" and not wandb.api.api_key:
             logger = None
@@ -62,7 +110,7 @@ class Trainer:
 
         self.accelerator = Accelerator(
             log_with=logger if logger == "wandb" else None,
-            kwargs_handlers=[ddp_kwargs],
+            kwargs_handlers=[ddp_kwargs, process_group_kwargs],
             gradient_accumulation_steps=grad_accumulation_steps,
             **accelerate_kwargs,
         )
@@ -154,30 +202,38 @@ class Trainer:
                 scheduler_state_dict=self.scheduler.state_dict(),
                 update=update,
             )
-            if not os.path.exists(self.checkpoint_path):
-                os.makedirs(self.checkpoint_path)
             if last:
-                self.accelerator.save(checkpoint, f"{self.checkpoint_path}/model_last.pt")
+                _atomic_accelerator_save(
+                    self.accelerator,
+                    checkpoint,
+                    os.path.join(self.checkpoint_path, "model_last.pt"),
+                )
                 print(f"Saved last checkpoint at update {update}")
             else:
-                if self.keep_last_n_checkpoints == 0:
-                    return
-                self.accelerator.save(checkpoint, f"{self.checkpoint_path}/model_{update}.pt")
-                if self.keep_last_n_checkpoints > 0:
-                    # Updated logic to exclude pretrained model from rotation
-                    checkpoints = [
-                        f
-                        for f in os.listdir(self.checkpoint_path)
-                        if f.startswith("model_")
-                        and not f.startswith("pretrained_")  # Exclude pretrained models
-                        and f.endswith(".pt")
-                        and f != "model_last.pt"
-                    ]
-                    checkpoints.sort(key=lambda x: int(x.split("_")[1].split(".")[0]))
-                    while len(checkpoints) > self.keep_last_n_checkpoints:
-                        oldest_checkpoint = checkpoints.pop(0)
-                        os.remove(os.path.join(self.checkpoint_path, oldest_checkpoint))
-                        print(f"Removed old checkpoint: {oldest_checkpoint}")
+                if self.keep_last_n_checkpoints != 0:
+                    _atomic_accelerator_save(
+                        self.accelerator,
+                        checkpoint,
+                        os.path.join(self.checkpoint_path, f"model_{update}.pt"),
+                    )
+                    if self.keep_last_n_checkpoints > 0:
+                        # Updated logic to exclude pretrained model from rotation
+                        checkpoints = [
+                            f
+                            for f in os.listdir(self.checkpoint_path)
+                            if f.startswith("model_")
+                            and not f.startswith("pretrained_")  # Exclude pretrained models
+                            and f.endswith(".pt")
+                            and f != "model_last.pt"
+                        ]
+                        checkpoints.sort(key=lambda x: int(x.split("_")[1].split(".")[0]))
+                        while len(checkpoints) > self.keep_last_n_checkpoints:
+                            oldest_checkpoint = checkpoints.pop(0)
+                            os.remove(os.path.join(self.checkpoint_path, oldest_checkpoint))
+                            print(f"Removed old checkpoint: {oldest_checkpoint}")
+
+        # Keep every rank behind rank 0 until the checkpoint is fully durable.
+        self.accelerator.wait_for_everyone()
 
     def load_checkpoint(self):
         if (

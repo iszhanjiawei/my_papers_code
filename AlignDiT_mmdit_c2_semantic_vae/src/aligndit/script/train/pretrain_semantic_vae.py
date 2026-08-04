@@ -57,6 +57,7 @@ def publish_training_contract(trainer: Trainer_notext, model_cfg, dataset: Seman
         "f5_modules": PROJECT_ROOT / "src/f5_tts/model/modules.py",
         "f5_trainer": PROJECT_ROOT / "src/f5_tts/model/trainer.py",
         "modules": PROJECT_ROOT / "src/aligndit/model/modules.py",
+        "pretrain_launcher": PROJECT_ROOT / "src/aligndit/run/train/pretrain_semantic_vae_6xa40.sh",
         "pretrain_semantic_vae": Path(__file__).resolve(),
         "svae_cache_utils": PROJECT_ROOT / "src/aligndit/script/misc/svae_cache_utils.py",
         "trainer_notext": PROJECT_ROOT / "src/aligndit/model/trainer_notext.py",
@@ -70,12 +71,25 @@ def publish_training_contract(trainer: Trainer_notext, model_cfg, dataset: Seman
         "config": OmegaConf.to_container(model_cfg, resolve=True),
         "distributed_runtime": {
             "accelerate": accelerate.__version__,
+            "cuda_allocator_backend": torch.cuda.memory.get_allocator_backend(),
             "distributed_type": str(trainer.accelerator.distributed_type),
+            "environment": {
+                name: os.environ.get(name)
+                for name in (
+                    "CUDA_VISIBLE_DEVICES",
+                    "NCCL_DEBUG",
+                    "NCCL_IB_DISABLE",
+                    "NCCL_P2P_DISABLE",
+                    "NCCL_TIMEOUT",
+                    "OMP_NUM_THREADS",
+                    "PYTORCH_CUDA_ALLOC_CONF",
+                )
+            },
             "mixed_precision": trainer.accelerator.mixed_precision,
             "num_processes": trainer.accelerator.num_processes,
             "torch": torch.__version__,
         },
-        "schema_version": 1,
+        "schema_version": 2,
         "source_sha256": {name: sha256_file(path) for name, path in source_paths.items()},
     }
     if trainer.accelerator.is_main_process:

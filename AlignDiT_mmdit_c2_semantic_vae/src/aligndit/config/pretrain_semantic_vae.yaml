@@ -62,5 +62,5 @@ ckpts:
   log_samples: False
   save_per_updates: 50000
   keep_last_n_checkpoints: -1
-  last_per_updates: 5000
+  last_per_updates: 500
   save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_${model.audio_representation.name}_${datasets.name}
