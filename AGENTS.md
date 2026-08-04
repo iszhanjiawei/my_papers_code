@@ -107,49 +107,58 @@ AlignDiT_mmdit_c2_semantic_vae/
 
 不要使用未完成且可能含本地运行产物的 `AlignDiT_mmdit_wav_vae_base_qknorm_ca/`，也不要覆盖原 C2 mel 快照。
 
-### Semantic-VAE 40 Hz 从头音频预训练
+### Semantic-VAE 40 Hz 音频 warm-start 主线
 
-`AlignDiT_mmdit_c2_semantic_vae/` 当前音频预训练主线是在 LibriSpeech 960h 上从头训练 500k
-optimizer updates，不再执行旧交接文档中的 mel 500k warm-start S1/S2 流程。旧
-`src/aligndit/script/train/pretrain.py` 必须保持 mel 语义；新入口固定为：
+LibriSpeech 960h 的 64D/40 Hz fixed posterior latent、同长度 40 Hz HuBERT 和 train-only mean/std
+缓存已经完成。原 6×A40、500k scratch 任务因耗时过长由用户明确停止；该目录仅保留至 update 3500
+的完整可恢复 checkpoint，不得把它误报成仍在运行的正式主线，也不要删除其 contract/checkpoint。
+
+当前主线从 mel 500k 的 **EMA** 严格迁移可兼容音频主干，再用四个独立任务逐步适配表示变化。
+当前实现基线为 commit `8dc2a447f81f0615f63a0247c9e852c494ce32c9`；正式 S1 尚未启动。
+
+| 阶段 | 更新数 | 可训练范围 | projection loss |
+|---|---:|---|---:|
+| S1 | 10k | 新 64D input/output interface | 0 |
+| S2a | 10k | interface、conv-pos、norm-out、blocks 12–17 | 0 |
+| S2b | 10k | interface、conv-pos、norm-out、blocks 6–17 | 0 |
+| S2c | 70k | 全音频主干与新 40 Hz projector | 0→0.1/5k ramp |
+
+固定入口如下：
 
 | 用途 | 入口 |
 |---|---|
-| train-only latent mean/std | `src/aligndit/run/misc/compute_librispeech_svae_train_stats.sh` |
-| A40 真实最坏 batch 显存测试 | `src/aligndit/run/misc/benchmark_semantic_vae_pretrain_memory_a40.sh` |
-| 6×A40 正式 500k 预训练 | `src/aligndit/run/train/pretrain_semantic_vae_6xa40.sh` |
-| Hydra 配置 | `src/aligndit/config/pretrain_semantic_vae.yaml` |
+| 严格迁移/冻结策略 | `src/aligndit/model/semantic_vae_warmstart.py` |
+| 阶段训练器 | `src/aligndit/model/trainer_semantic_vae_warmstart.py` |
+| Hydra 入口 | `src/aligndit/script/train/pretrain_semantic_vae_warmstart.py` |
+| S1/S2a/S2b/S2c 配置 | `src/aligndit/config/pretrain_semantic_vae_warmstart_*.yaml` |
+| 6×A40 launcher | `src/aligndit/run/train/pretrain_semantic_vae_warmstart_6xa40.sh <stage>` |
 
-训练缓存根目录使用 ROOT_PREFIX 约定：
+S1 只允许读取 `/zjw524/datasets/AlignDiT_pretrain_LibriSpeech_500000.pt` 的 EMA，必须核验其 SHA256
+`4a9fc0e526ce47745aee839348406ca99597d32f5ed028bda42a3de3ec900fcd` 和 update 500000。64D
+RMS-QKNorm 目标有 313 个 state keys：加载 263 个；显式重置 input/output interface、40 Hz projector
+和旧权重中不存在的 36 个 Q/K RMSNorm，共 50 个；只接受 3 个已知维度冲突。禁止用宽泛
+`strict=False` 掩盖 schema drift。
+
+跨阶段只能加载相邻阶段完成 checkpoint 的 EMA weights；online weights、optimizer、scheduler、EMA
+计数和阶段 update 全部重建。同阶段恢复则必须严格恢复全部状态并匹配 immutable
+`training_contract.json`。阶段目录禁止混入 `pretrained_*.pt` 或 safetensors。S2c 的 scheduler/contract
+固定为 70k；首次运行默认停在 S2c 20k（累计 50k）做门禁，通过后设置
+`RUN_UNTIL_UPDATE=70000` 恢复同一阶段。
+
+6×A40 默认使用 GPU 2–7、`7200 frames/GPU @ 40 Hz`、`max_samples=32`、BF16 和 seed 666；这与
+旧 mel 预训练 `8 × 13500 frames @ 100 Hz` 的每 update 全局音频秒数一致。缓存根目录为：
 
 ```text
 ${ROOT_PREFIX}/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32
 ```
 
-正式启动前必须依次确认：latent 与 HuBERT 的 full `complete.json` 和 consolidated index 校验通过；
-train-only normalization 已原子发布；完整 dataset 的 latent/HuBERT 逐条等长；单卡最坏真实 batch
-测试通过；相同 frame budget 的 6-rank DDP canary 通过。单卡显存结果不包含完整 DDP/NCCL 开销，
-不能直接压到 45 GiB 后启动正式任务。
+当前 A40 服务器的真实 2-rank canary 证明 DDP 同步必须设置 `NCCL_P2P_DISABLE=1` 和
+`NCCL_IB_DISABLE=1`；launcher 已默认设置。开启这两个传输路径会在 DDP 参数同步时挂住。其他服务器
+只有完成独立 NCCL canary 后才可显式覆盖为 0。
 
-正式训练使用 64D/40 Hz latent、40 Hz HuBERT、`projector_strides: [1,1]`、BF16、seed 666、
-LR `7.5e-5`、20k warmup、`grad_accumulation_steps=1` 和精确 500k updates。2026-08-04 正式
-contract 已固定为 6×A40、物理 GPU 2–7、一卡一 rank、`30000 frames/GPU`、`max_samples=64`；该组合
-在单卡和 6-rank 真实最坏 batch canary 中均已通过，6-rank 的 rank0 峰值 reserved 为 41.822 GiB。
-不要仅按 100 Hz→40 Hz 比例换算或在同一 checkpoint 目录临时修改 batch/world size。
-
-缓存完成标记与 normalization 的权威 SHA256 分别为：latent
-`e255f8ddea5181436283510538ad1bd6bf6808bbe61d3081f3f38977c91be69b`、HuBERT
-`2e66525965d3d48495036c7c60772520d1a233832425fbc669614127df1b0f45`、normalization
-`65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6`。正式 checkpoint 位于：
-
-```text
-${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_pretrain_semantic_vae_40hz_LibriSpeech_svae40
-```
-
-`training_contract.json` 会绑定 resolved config、缓存/normalization SHA、关键源码 SHA、world size 和
-mixed precision；存在 checkpoint 却没有 contract，或 contract 不同，必须 fail closed，不能用
-`strict=False`、删除 contract 或复制外来 checkpoint 绕过。位置卷积在 mask 模式下必须在每个卷积
-子层后重新清零 padding；否则短音频与长音频组 batch 时会污染有效边界帧。
+当前只实现并验证了 S1–S2c 的纯音频适配。CelebVDub 尚无同契约的 Semantic-VAE latent 缓存，现有
+finetune/data/infer 仍含 80D/100 Hz mel 与 HiFi-GAN 语义，因此不得把 S3/C2 多模态 latent 微调伪装成
+已可运行；先补 CelebVDub latent、25→40 Hz 视频精确插值、40 Hz CTC、反归一化与 Semantic-VAE 解码。
 
 四组实验均使用深度 18、前 12 层 MM-DiT、CelebVDub、字符 tokenizer、RMS QK-Norm、BF16 和相同的动态 frame batch。只允许按下表改变文本注入层数和参考音频隔离开关：
 
