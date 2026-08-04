@@ -114,7 +114,8 @@ LibriSpeech 960h 的 64D/40 Hz fixed posterior latent、同长度 40 Hz HuBERT �
 的完整可恢复 checkpoint，不得把它误报成仍在运行的正式主线，也不要删除其 contract/checkpoint。
 
 当前主线从 mel 500k 的 **EMA** 严格迁移可兼容音频主干，再用四个独立任务逐步适配表示变化。
-当前实现基线为 commit `8dc2a447f81f0615f63a0247c9e852c494ce32c9`；正式 S1 尚未启动。
+当前实现基线为 commit `8dc2a447f81f0615f63a0247c9e852c494ce32c9`。各阶段的实时运行状态不得
+写死在本文件中，应从日志、进程和 checkpoint 元数据读取。
 
 | 阶段 | 更新数 | 可训练范围 | projection loss |
 |---|---:|---|---:|
@@ -132,6 +133,8 @@ LibriSpeech 960h 的 64D/40 Hz fixed posterior latent、同长度 40 Hz HuBERT �
 | Hydra 入口 | `src/aligndit/script/train/pretrain_semantic_vae_warmstart.py` |
 | S1/S2a/S2b/S2c 配置 | `src/aligndit/config/pretrain_semantic_vae_warmstart_*.yaml` |
 | 6×A40 launcher | `src/aligndit/run/train/pretrain_semantic_vae_warmstart_6xa40.sh <stage>` |
+| 6×A40 自动串联 | `src/aligndit/run/train/pretrain_semantic_vae_warmstart_chain_6xa40.sh <start_stage>` |
+| 完成权重校验 | `src/aligndit/script/misc/validate_semantic_vae_warmstart_checkpoint.py` |
 
 S1 只允许读取 `/zjw524/datasets/AlignDiT_pretrain_LibriSpeech_500000.pt` 的 EMA，必须核验其 SHA256
 `4a9fc0e526ce47745aee839348406ca99597d32f5ed028bda42a3de3ec900fcd` 和 update 500000。64D
@@ -144,6 +147,12 @@ RMS-QKNorm 目标有 313 个 state keys：加载 263 个；显式重置 input/ou
 `training_contract.json`。阶段目录禁止混入 `pretrained_*.pt` 或 safetensors。S2c 的 scheduler/contract
 固定为 70k；首次运行默认停在 S2c 20k（累计 50k）做门禁，通过后设置
 `RUN_UNTIL_UPDATE=70000` 恢复同一阶段。
+
+用户明确选择无人值守完成整条纯音频适配时，可使用自动串联入口。它对 S2c 直接设置
+`RUN_UNTIL_UPDATE=70000`，仍按 10k 周期保留包括 S2c 20k 在内的中间权重，但不等待人工门禁。
+串联器必须持有单实例文件锁、在每阶段开始前拒绝已占用的目标 GPU，并且只有 launcher 零退出且
+`model_last.pt`、最终编号权重、EMA step、stage/update 和 training contract 全部校验通过后，才能进入
+下一阶段。该入口只覆盖纯音频 S1-S2c，禁止隐式启动 C2/S3 多模态训练。
 
 6×A40 默认使用 GPU 2–7、`7200 frames/GPU @ 40 Hz`、`max_samples=32`、BF16 和 seed 666；这与
 旧 mel 预训练 `8 × 13500 frames @ 100 Hz` 的每 update 全局音频秒数一致。缓存根目录为：
