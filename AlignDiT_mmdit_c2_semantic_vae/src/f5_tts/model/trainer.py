@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import math
 import os
+import re
 import tempfile
 from datetime import timedelta
 
@@ -164,6 +165,7 @@ class Trainer:
         self.keep_last_n_checkpoints = keep_last_n_checkpoints
         self.last_per_updates = default(last_per_updates, save_per_updates)
         self.checkpoint_path = default(checkpoint_path, "ckpts/test_f5-tts")
+        self.training_contract_sha256 = None
 
         self.batch_size_per_gpu = batch_size_per_gpu
         self.batch_size_type = batch_size_type
@@ -192,14 +194,33 @@ class Trainer:
     def is_main(self):
         return self.accelerator.is_main_process
 
+    def bind_training_contract(self, contract_sha256: str) -> None:
+        if re.fullmatch(r"[0-9a-f]{64}", contract_sha256) is None:
+            raise ValueError(f"Invalid training contract SHA256: {contract_sha256!r}")
+        self.training_contract_sha256 = contract_sha256
+
+    def _validate_checkpoint_contract(self, checkpoint: dict, checkpoint_name: str) -> None:
+        if self.training_contract_sha256 is None:
+            return
+        if checkpoint.get("checkpoint_schema_version") != 1:
+            raise RuntimeError(f"Checkpoint {checkpoint_name} is missing the bound checkpoint schema")
+        actual_sha256 = checkpoint.get("training_contract_sha256")
+        if actual_sha256 != self.training_contract_sha256:
+            raise RuntimeError(
+                f"Checkpoint {checkpoint_name} training contract mismatch: "
+                f"expected {self.training_contract_sha256}, got {actual_sha256!r}"
+            )
+
     def save_checkpoint(self, update, last=False):
         self.accelerator.wait_for_everyone()
         if self.is_main:
             checkpoint = dict(
+                checkpoint_schema_version=1,
                 model_state_dict=self.accelerator.unwrap_model(self.model).state_dict(),
                 optimizer_state_dict=self.optimizer.state_dict(),
                 ema_model_state_dict=self.ema_model.state_dict(),
                 scheduler_state_dict=self.scheduler.state_dict(),
+                training_contract_sha256=self.training_contract_sha256,
                 update=update,
             )
             if last:
@@ -275,6 +296,8 @@ class Trainer:
             checkpoint = torch.load(
                 f"{self.checkpoint_path}/{latest_checkpoint}", weights_only=True, map_location="cpu"
             )
+
+        self._validate_checkpoint_contract(checkpoint, latest_checkpoint)
 
         # patch for backward compatibility, 305e3ea
         for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_spec.mel_stft.spectrogram.window"]:

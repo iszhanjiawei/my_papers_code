@@ -38,8 +38,14 @@ for gpu_id in "${GPU_ARRAY[@]}"; do
     SEEN_GPUS[${gpu_id}]=1
 done
 
+ACCELERATE_DISTRIBUTED_ARGS=(--num_machines 1)
+if (( NUM_PROCESSES > 1 )); then
+    ACCELERATE_DISTRIBUTED_ARGS+=(--multi_gpu --gpu_ids all)
+fi
+
 cd "${PROJECT_ROOT}"
 export CUDA_VISIBLE_DEVICES="${GPU_IDS}"
+export EXPECTED_WORLD_SIZE="${NUM_PROCESSES}"
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
 export NCCL_TIMEOUT=${NCCL_TIMEOUT:-1200}
 export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
@@ -49,6 +55,7 @@ export PYTHONUNBUFFERED=1
 export PYTHONPATH=src
 
 exec "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/accelerate" launch \
+    "${ACCELERATE_DISTRIBUTED_ARGS[@]}" \
     --mixed_precision bf16 \
     --num_processes "${NUM_PROCESSES}" \
     --main_process_port "${MAIN_PROCESS_PORT}" \

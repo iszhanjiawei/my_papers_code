@@ -22,7 +22,7 @@ PROJECT_ROOT = Path(str(files("aligndit").joinpath("../.."))).resolve()
 os.chdir(PROJECT_ROOT)
 
 
-def publish_training_contract(trainer: Trainer_notext, model_cfg, dataset: SemanticVaePretrainDataset) -> None:
+def publish_training_contract(trainer: Trainer_notext, model_cfg, dataset: SemanticVaePretrainDataset) -> str:
     """Create an immutable resume contract next to checkpoints before update zero."""
 
     cache_root = dataset.cache_root
@@ -73,18 +73,6 @@ def publish_training_contract(trainer: Trainer_notext, model_cfg, dataset: Seman
             "accelerate": accelerate.__version__,
             "cuda_allocator_backend": torch.cuda.memory.get_allocator_backend(),
             "distributed_type": str(trainer.accelerator.distributed_type),
-            "environment": {
-                name: os.environ.get(name)
-                for name in (
-                    "CUDA_VISIBLE_DEVICES",
-                    "NCCL_DEBUG",
-                    "NCCL_IB_DISABLE",
-                    "NCCL_P2P_DISABLE",
-                    "NCCL_TIMEOUT",
-                    "OMP_NUM_THREADS",
-                    "PYTORCH_CUDA_ALLOC_CONF",
-                )
-            },
             "mixed_precision": trainer.accelerator.mixed_precision,
             "num_processes": trainer.accelerator.num_processes,
             "torch": torch.__version__,
@@ -99,6 +87,7 @@ def publish_training_contract(trainer: Trainer_notext, model_cfg, dataset: Seman
             flush=True,
         )
     trainer.accelerator.wait_for_everyone()
+    return sha256_file(contract_path)
 
 
 @hydra.main(version_base="1.3", config_path=str(files("aligndit").joinpath("config")), config_name=None)
@@ -148,6 +137,15 @@ def main(model_cfg) -> None:
         model_cfg_dict=OmegaConf.to_container(model_cfg, resolve=True),
         ema_kwargs=model_cfg.ema,
     )
+    expected_world_size_raw = os.environ.get("EXPECTED_WORLD_SIZE")
+    if expected_world_size_raw is None or not expected_world_size_raw.isdecimal():
+        raise RuntimeError("EXPECTED_WORLD_SIZE must be exported by the Semantic-VAE pretraining launcher")
+    expected_world_size = int(expected_world_size_raw)
+    if expected_world_size <= 0 or trainer.accelerator.num_processes != expected_world_size:
+        raise RuntimeError(
+            "Semantic-VAE pretraining world-size mismatch: "
+            f"expected {expected_world_size}, got {trainer.accelerator.num_processes}"
+        )
     set_seed(experiment_seed + trainer.accelerator.process_index)
 
     train_dataset = SemanticVaePretrainDataset(
@@ -155,7 +153,8 @@ def main(model_cfg) -> None:
         cache_root=model_cfg.datasets.cache_root,
         normalization_path=model_cfg.datasets.normalization_path,
     )
-    publish_training_contract(trainer, model_cfg, train_dataset)
+    training_contract_sha256 = publish_training_contract(trainer, model_cfg, train_dataset)
+    trainer.bind_training_contract(training_contract_sha256)
     trainer.train(
         train_dataset,
         num_workers=model_cfg.datasets.num_workers,

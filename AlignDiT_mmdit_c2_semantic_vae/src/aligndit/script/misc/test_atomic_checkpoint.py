@@ -50,6 +50,7 @@ def _make_trainer(checkpoint_path: Path, accelerator: _FakeAccelerator) -> Train
     trainer.scheduler = _Stateful(4)
     trainer.checkpoint_path = str(checkpoint_path)
     trainer.keep_last_n_checkpoints = -1
+    trainer.training_contract_sha256 = "a" * 64
     return trainer
 
 
@@ -81,6 +82,8 @@ class AtomicCheckpointTest(unittest.TestCase):
 
             checkpoint = torch.load(destination, map_location="cpu", weights_only=True)
             self.assertEqual(checkpoint["update"], 500)
+            self.assertEqual(checkpoint["checkpoint_schema_version"], 1)
+            self.assertEqual(checkpoint["training_contract_sha256"], "a" * 64)
             self.assertEqual(accelerator.save_count, 1)
             self.assertEqual(accelerator.barrier_count, 2)
             self.assertEqual(list(checkpoint_path.glob("*.tmp")), [])
@@ -128,6 +131,21 @@ class AtomicCheckpointTest(unittest.TestCase):
             self.assertEqual(accelerator.save_count, 0)
             self.assertEqual(accelerator.barrier_count, 2)
             self.assertEqual(list(checkpoint_path.iterdir()), [])
+
+    def test_checkpoint_contract_mismatch_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trainer = _make_trainer(Path(directory), _FakeAccelerator(is_main=True))
+            with self.assertRaisesRegex(RuntimeError, "training contract mismatch"):
+                trainer._validate_checkpoint_contract(
+                    {"checkpoint_schema_version": 1, "training_contract_sha256": "b" * 64},
+                    "model_last.pt",
+                )
+
+    def test_checkpoint_without_contract_schema_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trainer = _make_trainer(Path(directory), _FakeAccelerator(is_main=True))
+            with self.assertRaisesRegex(RuntimeError, "missing the bound checkpoint schema"):
+                trainer._validate_checkpoint_contract({}, "model_last.pt")
 
 
 if __name__ == "__main__":
