@@ -1,0 +1,24 @@
+defaults:
+  - pretrain_semantic_vae_warmstart_base
+  - _self_
+
+stage:
+  name: s1
+  parent_checkpoint: ${oc.env:ROOT_PREFIX,''}/zjw524/datasets/AlignDiT_pretrain_LibriSpeech_500000.pt
+  expected_parent_sha256: 4a9fc0e526ce47745aee839348406ca99597d32f5ed028bda42a3de3ec900fcd
+  expected_parent_update: 500000
+  expected_parent_stage: null
+  parent_contract_path: null
+
+optim:
+  max_updates: 10000
+  num_warmup_updates: 500
+  learning_rates:
+    interface: 1.0e-4
+
+projection:
+  target_lambda: 0.0
+  ramp_updates: 0
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s1_40hz_LibriSpeech

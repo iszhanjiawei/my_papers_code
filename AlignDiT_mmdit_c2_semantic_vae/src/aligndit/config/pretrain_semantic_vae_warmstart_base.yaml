@@ -1,0 +1,62 @@
+hydra:
+  run:
+    dir: ${ckpts.save_dir}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+seed: 666
+
+datasets:
+  name: LibriSpeech_svae40
+  cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32
+  manifest_path: ${datasets.cache_root}/manifests/train.jsonl
+  normalization_path: ${datasets.cache_root}/state/latents/train_normalization.json
+  # The original mel pretrain used 8 * 13,500 / 100 = 1,080 audio-seconds
+  # per global update.  Six ranks at 40 Hz preserve that exposure with 7,200.
+  batch_size_per_gpu: 7200
+  batch_size_type: frame
+  max_samples: 32
+  num_workers: 8
+
+optim:
+  epochs: 200
+  grad_accumulation_steps: 1
+  deterministic_update_seed: true
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+
+model:
+  name: AlignDiT_SemanticVAE_mel_warmstart
+  backbone: DiT_noText
+  arch:
+    dim: 768
+    depth: 18
+    heads: 12
+    ff_mult: 2
+    qk_norm: rms_norm
+    pe_attn_head: 1
+    attn_mask_enabled: true
+    mask_during_training: true
+    checkpoint_activations: false
+    layer_indices: [12]
+    projector_dim: 2048
+    z_dim: 1024
+    projector_strides: [1, 1]
+    padding_safe_projector: true
+  audio_representation:
+    name: semantic_vae_40hz
+    channels: 64
+    frame_rate: 40
+    sample_rate: 16000
+    hop_length: 400
+
+# Cross-stage EMA transfer is safe at 10k boundaries because every update is
+# incorporated.  update_every=10 would retain too much of a fresh interface.
+ema:
+  beta: 0.999
+  update_after_step: 100
+  update_every: 1
+
+ckpts:
+  logger: tensorboard
+  save_per_updates: 10000
+  keep_last_n_checkpoints: -1
+  last_per_updates: 500
