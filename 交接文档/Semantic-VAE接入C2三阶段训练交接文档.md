@@ -1,22 +1,23 @@
 # Semantic-VAE 接入 C2 与分阶段 mel warm-start 交接文档
 
-> 更新日期：2026-08-04
+> 更新日期：2026-08-08
 > 工作区：`/zjw524/projects/alignDiT_idea6`
 > Git 仓库：`/zjw524/projects/alignDiT_idea6/my_papers_code`
 > 远程：`https://github.com/iszhanjiawei/my_papers_code.git`
 > 当前主分支：`main`
 
-## 0. 2026-08-04 当前权威路线
+## 0. 2026-08-08 当前权威路线
 
-原 6×A40、500k scratch 路线因训练时间过长，已按用户要求安全停止。当前主线改为在独立快照：
+原 6×A40、500k scratch 路线因训练时间过长，已按用户要求安全停止。随后在独立快照：
 
 ```text
 AlignDiT_mmdit_c2_semantic_vae/
 ```
 
-从已有 mel 500k checkpoint 的 EMA 严格迁移兼容音频主干，再用 S1、S2a、S2b、S2c 四个独立任务
-逐步适配 `80D/100 Hz mel -> 64D/40 Hz Semantic-VAE latent`。实现已在 commit
-`8dc2a447f81f0615f63a0247c9e852c494ce32c9` 提交并推送。
+从已有 mel 500k checkpoint 的 EMA 严格迁移兼容音频主干，并已完成 S1、S2a、S2b、S2c
+四个独立任务，完成 `80D/100 Hz mel -> 64D/40 Hz Semantic-VAE latent` 的纯音频适配。
+后续唯一选定的纯音频初始化权重是 S2c `model_70000.pt`，不使用已停止的 scratch 3500
+或 S1/S2a/S2b 中间权重启动 C2 多模态训练。
 
 ### 0.1 当前状态
 
@@ -26,11 +27,15 @@ AlignDiT_mmdit_c2_semantic_vae/
 | Semantic-VAE latent cache | 已完成 | FP32 fixed posterior sample `[T,64]`，40 Hz |
 | HuBERT exact-40-Hz cache | 已完成 | FP32 `[T,1024]`，与 latent 逐条等长 |
 | train-only normalization | 已完成 | 281,241 条 train、138,504,846 帧、64 通道 mean/std |
-| 500k scratch | **已停止** | 进程在 update 3676 停止；最近完整 `model_last.pt` 为 update 3500 |
-| S1–S2c warm-start 代码 | **已实现、已推送** | commit `8dc2a44` |
-| 真实验证 | **已通过** | 真实 mel500k 迁移、单卡 S1/S2c backward、2-rank BF16 DDP 1-update canary |
-| 正式 S1 | **尚未启动** | canary 临时 checkpoint 已核对并删除，正式 S1 目录未写入 |
-| CelebVDub/C2 latent 微调 | **尚不可运行** | 缺 CelebVDub latent/40 Hz video+CTC/decoder 的完整数据与推理闭环 |
+| 500k scratch | **已停止** | 进程在 update 3676 停止；最近完整 `model_last.pt` 为 update 3500；后续不使用 |
+| S1 | **已完成** | 10k updates；新 64D input/output interface 校准 |
+| S2a | **已完成** | 10k updates；解冻 interface、conv-pos、norm-out、blocks 12–17 |
+| S2b | **已完成** | 10k updates；解冻范围扩展到 blocks 6–17 |
+| S2c | **已完成** | 70k updates；全音频主干与 40 Hz HuBERT projector 已适配 |
+| S2c 最终权重 | **已选定、已上传 only-VAE** | `model_70000.pt`，update/EMA step 均为 70000，见第 0.4 节 |
+| CelebVDub 64D/40 Hz latent cache | **未完成** | only-VAE 当前只有旧 80D/100 Hz mel 缓存 |
+| 25 Hz video -> exact 40 Hz | **未完成** | 现有 AV-HuBERT 为 25 Hz，尚未在 latent dataset 中逐条对齐到 `T_latent` |
+| S3a/S3b C2 latent 训练闭环 | **未完成、未启动** | 尚需 latent dataset、40 Hz CTC、S2c EMA 严格迁移、分阶段 trainer/config/launcher 和冒烟测试 |
 
 scratch 保留目录：
 
@@ -96,7 +101,7 @@ contract。跨阶段只迁移相邻阶段 EMA weights，不能继承 online mode
 local update。同阶段 resume 才恢复全部状态。任何未知 key/mismatch、外来 `pretrained_*.pt`、safetensors、
 checkpoint 无 contract 或 contract 内容变化都必须 fail closed，禁止用 `strict=False` 绕过。
 
-### 0.4 已实现入口与验证结果
+### 0.4 已完成的纯音频权重与 only-VAE 现场核验
 
 | 用途 | 文件 |
 |---|---|
@@ -118,26 +123,62 @@ checkpoint 无 contract 或 contract 内容变化都必须 fail closed，禁止�
 - 真实单卡 S2c backward：diff/proj loss 有限，projector 梯度非零；
 - 2-rank BF16 DDP 真实数据 1-update canary：loss 2.03，EMA step/update/contract/scheduler/checkpoint 一致。
 
-canary 使用独立临时目录，核对后已删除，没有混入正式 stage checkpoint。
+canary 使用独立临时目录，核对后已删除，没有混入正式 stage checkpoint。S1、S2a、S2b、S2c
+此后已全部完成，不再重新启动这四个阶段。
 
-正式 S1 只能在用户确认启动后运行：
+only-VAE 服务器当前已核对：
 
-```bash
-cd /home/zjw524/projects/alignDiT_idea6/my_papers_code/AlignDiT_mmdit_c2_semantic_vae
-setsid env ROOT_PREFIX=/home PYTHONUNBUFFERED=1 \
-  bash src/aligndit/run/train/pretrain_semantic_vae_warmstart_6xa40.sh s1 \
-  > logs/pretrain_semantic_vae_warmstart_s1_6xa40.log 2>&1 &
+```text
+GPU: 4 × RTX 4090 24 GB
+checkpoint:
+  /zjw524/projects/data/ckpts/
+    AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/model_70000.pt
+contract:
+  /zjw524/projects/data/ckpts/
+    AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/training_contract.json
 ```
 
-启动后必须确认 6 个 worker、物理 GPU 2–7、contract、连续多个 update、有限 loss、checkpoint 与日志均
-正常。不要只凭 launcher PID 存活判断成功。
+| 校验项 | 值 |
+|---|---|
+| checkpoint size | 约 2.6 GB |
+| checkpoint SHA256 | `02e35cf3e0de2a10573fb6efd8e5b7cdf0c59a18ea07807f34e5c7bf9c1395c4` |
+| contract SHA256 | `3d6fcf6649511a0f21546ca995ed047dfcca5ff58e9c2d3196d7c67b24e7633d` |
+| checkpoint schema | 1 |
+| warm-start stage | `s2c` |
+| update | 70000 |
+| EMA initialized | `True` |
+| EMA step | 70000 |
+| model state keys | 313 |
+
+checkpoint 内记录的 contract SHA256 与上传的 `training_contract.json` 一致。后续 S3 必须只读取
+`ema_model_state_dict` 中的纯音频路径作 weights-only initialization，不继承 S2c optimizer、scheduler 或 update。
+
+### 0.5 only-VAE 启动 S3 前的实际阻断项
+
+2026-08-08 现场检查结果：
+
+- Semantic-VAE 1000k encoder/decoder 权重存在：
+  `/zjw524/projects/alignDiT_idea6/Semantic-VAE/semantic_vae_1000k/dac/ema_state_dict.pth`；
+- CelebVDub 原始音频、25 Hz AV-HuBERT 视频特征、Arrow 和字符词表存在；
+- CelebVDub 尚未生成可训练的 fixed posterior sample `[T,64]` 40 Hz latent cache/manifest/complete marker；
+- only-VAE 当前缺 LibriSpeech train-only `train_normalization.json`。只有它的 SHA256
+  `65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6` 记录在 S2c contract 中，
+  mean/std 数值本身不在 checkpoint 内；
+- 当前 `finetune.py` / `CustomDataset_mel_video` / `Trainer_VT` 仍是 80D/100 Hz mel + HiFi-GAN 链路；
+- S3a/S3b 的严格 EMA 迁移、冻结策略、多 LR optimizer groups、exact update 契约和 4×4090 launcher
+  尚未实现。
+
+因此正式训练不得立即用旧 C2 launcher 启动。必须先按“迁移 normalization -> 生成 CelebVDub
+latent -> 实现 40 Hz dataset/model/trainer -> CTC 可行性预检 -> 单卡与 4-rank canary -> S3a -> S3b”
+顺序执行。
 
 ## 1. 给新会话的一句话摘要
 
 当前工作是把 AlignDiT 的 **C2 结构（12 层 MM-DiT + 文本 Cross-Attention，后 6 层纯音频 DiT）**
 从 `80 维、100 Hz mel + HiFi-GAN` 改造为 `64 维、40 Hz Semantic-VAE latent + Semantic-VAE decoder`。
-500k scratch 已停止；当前已完成 mel500k EMA 到 40 Hz latent 的 S1–S2c 分阶段适配代码与 canary，
-但正式 S1 尚未启动，CelebVDub/C2 latent 微调也尚未实现完整闭环。详细状态以第 0 节为准。
+500k scratch 已停止；mel500k EMA 到 40 Hz latent 的 S1–S2c 分阶段适配已全部训练完成，
+并固定选用 S2c `model_70000.pt`。当前任务从 CelebVDub 数据与 S3 C2 训练闭环开始，
+详细状态以第 0 节为准。
 
 ## 2. 为什么选 C2 作为主干
 
@@ -491,17 +532,17 @@ dev-other
 
 ## 7. 当前方案：mel 500k warm-start 与后续 C2 接入
 
-S1–S2c 已在 commit `8dc2a44` 完成实现和 canary，但正式 S1 尚未启动。S3a/S3b 仍是后续设计，
+S1–S2c 已完成实现、canary 和全部正式训练；最终使用 S2c 70k EMA。S3a/S3b 仍是后续设计，
 不能用当前 80D/100 Hz CelebVDub 入口直接运行。
 
 论文上分三阶段，实际执行建议分为 6 个独立任务：
 
 | 论文阶段 | 实际任务 | 数据 | updates | 实现状态 |
 |---|---|---|---:|---|
-| 阶段一 | S1：新接口校准 | LibriSpeech latent | 10k | 已实现，未正式启动 |
-| 阶段二 | S2a：解冻后 6 层 | LibriSpeech latent | 10k | 已实现 |
-| 阶段二 | S2b：解冻后 12 层 | LibriSpeech latent | 10k | 已实现 |
-| 阶段二 | S2c：全音频主干适配 | LibriSpeech latent | 70k | 已实现；20k 门禁 |
+| 阶段一 | S1：新接口校准 | LibriSpeech latent | 10k | **已完成** |
+| 阶段二 | S2a：解冻后 6 层 | LibriSpeech latent | 10k | **已完成** |
+| 阶段二 | S2b：解冻后 12 层 | LibriSpeech latent | 10k | **已完成** |
+| 阶段二 | S2c：全音频主干适配 | LibriSpeech latent | 70k | **已完成，选用 `model_70000.pt`** |
 | 阶段三 | S3a：训练新多模态模块 | CelebVDub latent/text/video | 5k | 尚未实现 |
 | 阶段三 | S3b：完整 C2 微调 | CelebVDub latent/text/video | 195k | 尚未实现 |
 
@@ -887,29 +928,26 @@ latent 原生 LibriSpeech 预训练 -> C2 CelebVDub
 
 ## 13. 后续执行顺序
 
-### 步骤 1：正式启动并验收 S1
+### 步骤 1：正式启动并验收 S1（已完成）
 
-- 先确认 Git HEAD 至少包含 `8dc2a44`，GPU 2–7 空闲，正式 S1 目录没有外来 checkpoint；
-- 只有用户明确要求后才用第 0.4 节命令启动；
-- 验证 6 rank、NCCL P2P/IB 均禁用、immutable contract 和连续多个有限 loss；
-- 观察实际显存和 update/s，再决定是否需要新 contract 做 batch 性能实验；
-- 精确完成 S1 10k，保留 `model_last.pt`、`model_10000.pt` 和 contract。
+- 已验证 6 rank、immutable contract、连续有限 loss 和 checkpoint；
+- 已精确完成 S1 10k，并以其 EMA 作为 S2a weights-only 初始化。
 
-### 步骤 2：依次执行 S2a 与 S2b
+### 步骤 2：依次执行 S2a 与 S2b（已完成）
 
 - 每段使用独立 config 和 checkpoint 目录；
 - 父 checkpoint 必须是相邻阶段 update 10000 的 EMA；
 - 检查每阶段 migration report、冻结参数集合和 LR groups；
 - 每段精确完成 10k，不把 optimizer/scheduler/EMA step 带入下一阶段。
 
-### 步骤 3：执行 S2c 与累计 50k 门禁
+### 步骤 3：执行 S2c 与累计 50k 门禁（已完成）
 
 - S2c contract/scheduler 固定 70k；
 - 首次只运行本阶段 20k，检查 flow loss、HuBERT projection loss、WER/SPKSIM 和梯度量级；
 - 通过 gate 后设置 `RUN_UNTIL_UPDATE=70000` 恢复同一 S2c；
-- 选定唯一 S2c EMA 供后续 C2 使用。
+- 已选定唯一 S2c EMA：`model_70000.pt`，供后续 C2 使用。
 
-### 步骤 4：补齐 CelebVDub Semantic-VAE 数据闭环
+### 步骤 4：补齐 CelebVDub Semantic-VAE 数据闭环（当前进行中）
 
 - 为 train/dev/test 生成同模式 fixed posterior `[T,64]` latent；
 - 继续使用 LibriSpeech train mean/std，不重新统计 CelebVDub 坐标系；
@@ -962,11 +1000,11 @@ latent 原生 LibriSpeech 预训练 -> C2 CelebVDub
 
 1. 先完整阅读本文档和 `my_papers_code/AGENTS.md`。
 2. 执行 `git status --short --branch`，不要覆盖用户改动。
-3. 检查 latent/HuBERT 两个 full completion marker、index 和 SHA，不以文件数量或进度日志代替完成标记。
-4. 检查 train-only normalization 存在且与 train manifest、latent completion SHA 绑定。
-5. 检查目标 warm-start stage 目录：无 checkpoint 才从父 EMA 初始化；有 checkpoint 时必须严格匹配该阶段 training contract。
-6. 已完成的 2-rank canary 只验证执行链；正式 6-rank S1 启动后仍要观察连续多个真实 update、显存和 checkpoint。
-7. 正式 S1–S2c 固定使用 `grad_accumulation_steps=1`、BF16、6×7200/32 和各阶段 exact update gate，不能临时改变 world size 后续训。
-8. 不要把 codec ceiling WAV 目录当成 latent cache，也不要修改旧 `pretrain.py` 的 mel 语义。
-9. 启动后同时核对 worker、连续 update、loss/LR、GPU 显存/利用率和日志错误，不能只看 launcher PID。
-10. 当前实现基线是 `8dc2a44`；每个后续实现或文档步骤单独 commit/push，并核对本地 HEAD 与 `origin/main` 一致。
+3. only-VAE 必须先获取 SHA256 为 `65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6`
+   的 LibriSpeech train-only normalization；不得在 CelebVDub 上重算新坐标系。
+4. 核对 S2c `model_70000.pt` 的 SHA、stage、update、EMA step 和 contract，并只做 EMA weights-only S3 初始化。
+5. 检查 CelebVDub latent full completion marker、index 和 manifest SHA，不以文件数量或进度日志代替完成标记。
+6. 用真实 tokenizer 做 CTC 最短路径预检，明确过滤名单，不依赖 `zero_infinity=True` 静默吞掉错标样本。
+7. 不要把 codec ceiling WAV 目录当成 latent cache，也不要修改旧 `pretrain.py` 的 mel 语义。
+8. S3 先做单卡 forward/backward 和 4-rank 1-update canary，再启动正式 S3a；同时核对 worker、连续 update、loss/LR、GPU 显存/利用率和 checkpoint。
+9. 每个后续实现或文档步骤单独 commit/push，并核对本地 HEAD 与 `origin/main` 一致。
