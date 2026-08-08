@@ -19,6 +19,12 @@ AlignDiT_mmdit_c2_semantic_vae/
 后续唯一选定的纯音频初始化权重是 S2c `model_70000.pt`，不使用已停止的 scratch 3500
 或 S1/S2a/S2b 中间权重启动 C2 多模态训练。
 
+only-VAE 服务器上的 CelebVDub manifest、79,826 个 64D/40 Hz latent、79,826 个
+25 Hz -> 40 Hz 视频 cache，以及 S3a/S3b trainer/chain 都已经完成。**正式 S3 训练尚未启动**：当前唯一外部
+阻塞是缺少 S2c contract 绑定的 LibriSpeech train-only `train_normalization.json`。音频 latent 和视频 cache
+的 4-rank 全量只读校验均已通过；文件补齐后仍须依次通过真实单卡和 4 卡 canary。这里要严格区分“代码/数据已准备”与
+“正式训练已启动”。
+
 ### 0.1 当前状态
 
 | 项目 | 状态 | 说明 |
@@ -26,16 +32,20 @@ AlignDiT_mmdit_c2_semantic_vae/
 | LibriSpeech immutable inventory | 已完成 | train 281,241，dev 5,551，总计 286,792 |
 | Semantic-VAE latent cache | 已完成 | FP32 fixed posterior sample `[T,64]`，40 Hz |
 | HuBERT exact-40-Hz cache | 已完成 | FP32 `[T,1024]`，与 latent 逐条等长 |
-| train-only normalization | 已完成 | 281,241 条 train、138,504,846 帧、64 通道 mean/std |
+| train-only normalization 统计 | **源服务器已完成，only-VAE 文件缺失** | 281,241 条 train、138,504,846 帧、64 通道 mean/std；见唯一阻塞项 |
 | 500k scratch | **已停止** | 进程在 update 3676 停止；最近完整 `model_last.pt` 为 update 3500；后续不使用 |
 | S1 | **已完成** | 10k updates；新 64D input/output interface 校准 |
 | S2a | **已完成** | 10k updates；解冻 interface、conv-pos、norm-out、blocks 12–17 |
 | S2b | **已完成** | 10k updates；解冻范围扩展到 blocks 6–17 |
 | S2c | **已完成** | 70k updates；全音频主干与 40 Hz HuBERT projector 已适配 |
 | S2c 最终权重 | **已选定、已上传 only-VAE** | `model_70000.pt`，update/EMA step 均为 70000，见第 0.4 节 |
-| CelebVDub 64D/40 Hz latent cache | **未完成** | only-VAE 当前只有旧 80D/100 Hz mel 缓存 |
-| 25 Hz video -> exact 40 Hz | **未完成** | 现有 AV-HuBERT 为 25 Hz，尚未在 latent dataset 中逐条对齐到 `T_latent` |
-| S3a/S3b C2 latent 训练闭环 | **未完成、未启动** | 尚需 latent dataset、40 Hz CTC、S2c EMA 严格迁移、分阶段 trainer/config/launcher 和冒烟测试 |
+| CelebVDub manifest | **已完成** | inventory 79,826；train 79,613；test 213；CTC-valid train 79,508 |
+| CelebVDub 64D/40 Hz latent cache | **已完成** | 79,826 个 FP32 `[T,64]` 文件；全量音频/latent 只读校验已通过 |
+| 25 Hz video -> exact 40 Hz cache | **已完成** | 79,826 个 FP32 `[T40,1024]` 文件；逐条目标长度等于 latent 长度 |
+| 视频 cache 全量只读校验 | **已通过** | 4-rank validate-only 验证 79,826/79,826，退出码 0，无 error/traceback |
+| 模型/数据严格对齐 | **已完成** | commit `73f9256`；40 Hz mask、padding、CTC 和 artifact 约束均已收紧 |
+| S3a/S3b trainer/chain | **已实现、未正式启动** | commit `8ae61ee`；S3a 5k + S3b 195k、阶段校验和 4×4090 launcher 已具备 |
+| LibriSpeech train normalization | **缺失，唯一外部阻塞** | 必须取得 SHA256 为 `65b8ab...d02c3f6` 的原文件，不得用 CelebVDub 重算 |
 
 scratch 保留目录：
 
@@ -140,7 +150,7 @@ contract:
 
 | 校验项 | 值 |
 |---|---|
-| checkpoint size | 约 2.6 GB |
+| checkpoint size | `2,762,690,094` bytes |
 | checkpoint SHA256 | `02e35cf3e0de2a10573fb6efd8e5b7cdf0c59a18ea07807f34e5c7bf9c1395c4` |
 | contract SHA256 | `3d6fcf6649511a0f21546ca995ed047dfcca5ff58e9c2d3196d7c67b24e7633d` |
 | checkpoint schema | 1 |
@@ -153,31 +163,150 @@ contract:
 checkpoint 内记录的 contract SHA256 与上传的 `training_contract.json` 一致。后续 S3 必须只读取
 `ema_model_state_dict` 中的纯音频路径作 weights-only initialization，不继承 S2c optimizer、scheduler 或 update。
 
-### 0.5 only-VAE 启动 S3 前的实际阻断项
+### 0.5 only-VAE 数据闭环与可审计 SHA/count
 
-2026-08-08 现场检查结果：
+CelebVDub 当前权威 cache 根目录：
 
-- Semantic-VAE 1000k encoder/decoder 权重存在：
-  `/zjw524/projects/alignDiT_idea6/Semantic-VAE/semantic_vae_1000k/dac/ema_state_dict.pth`；
-- CelebVDub 原始音频、25 Hz AV-HuBERT 视频特征、Arrow 和字符词表存在；
-- CelebVDub 尚未生成可训练的 fixed posterior sample `[T,64]` 40 Hz latent cache/manifest/complete marker；
-- only-VAE 当前缺 LibriSpeech train-only `train_normalization.json`。只有它的 SHA256
-  `65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6` 记录在 S2c contract 中，
-  mean/std 数值本身不在 checkpoint 内；
-- 当前 `finetune.py` / `CustomDataset_mel_video` / `Trainer_VT` 仍是 80D/100 Hz mel + HiFi-GAN 链路；
-- S3a/S3b 的严格 EMA 迁移、冻结策略、多 LR optimizer groups、exact update 契约和 4×4090 launcher
-  尚未实现。
+```text
+/zjw524/projects/data/CelebVDub_svae1000k_sample_seed666_fp32
+```
 
-因此正式训练不得立即用旧 C2 launcher 启动。必须先按“迁移 normalization -> 生成 CelebVDub
-latent -> 实现 40 Hz dataset/model/trainer -> CTC 可行性预检 -> 单卡与 4-rank canary -> S3a -> S3b”
-顺序执行。
+固定 posterior sample 使用 base seed 666。inventory 共 79,826 条，train/test 分别为 79,613/213；
+总原始音频采样点数 5,256,590,059，总 latent 帧数 13,179,773。CTC 40 Hz 预检后，train 中
+79,508 条可训练、105 条进入明确排除清单；test 中另有 1 条不可行，但 test 不参与训练。
+
+| manifest / source artifact | 条数或大小 | SHA256 |
+|---|---:|---|
+| `inventory.jsonl` | 79,826 条；68,395,999 bytes | `a6478cce785748cbcefd87af54eafa9f654d735afa1c41b8f846e041cbc1286d` |
+| `train.jsonl` | 79,613 条；68,218,316 bytes | `0d16d5c8f00eb25ee51c7de604299a37cace1bc0e65b7127a45420c433b4d395` |
+| `test.jsonl` | 213 条；177,683 bytes | `f724fa12947365e7bb08a5665c23aaf649a73855647e0667135352fa473e36b8` |
+| `train_ctc40_valid.jsonl` | 79,508 条；68,131,856 bytes | `cbeb9f02d805d403ce6b24a6a56f170ad278d3187cd65e289ef1e80cf665d58c` |
+| `ctc40_excluded.jsonl` | 105 条；86,460 bytes | `d4071db62d412ebeba144fe5e8a665530dfbc57ac52e19b4ad42212841ddcb0a` |
+| `ctc40_report.json` | 797 bytes | `bc4887aca72cf8c996c9fd89538aa9f83c66476606087201d8de1d3cc9f3042c` |
+| `inventory_meta.json` | 2,816 bytes | `c1aadbcef9dc83cd8f6a2c0d094311cc527b971f8921abbcfee1afd2c4e67bc2` |
+| `manifest_spec.json` | 970 bytes | `3343c5ff5b80999b05b049db55b19c6335133307c6c38b4e69611718a9ff7986` |
+| 原始 `CelebVDub_char/raw.arrow` | source | `99da14538f85eca3a039282d1cb5126f2a5598dd3c513422fe58b454af9437ef` |
+| `CelebVDub_char/vocab.txt` | vocab size 159 | `225df7792c4ade59e3de39789b36fdf735e1b30ed96b4456d2d27df0d86a875d` |
+
+字符目标实际范围为 0–158；CTC class 159 保留未用，blank id 为 160，因此输出类别数为 161。
+
+latent cache 为 79,826 个 FP32 `[T,64]` 文件，feature id 是
+`semantic_vae_posterior_sample_v1`，总 `.npy` 大小 3,384,239,616 bytes：
+
+| latent artifact | 条数或大小 | SHA256 |
+|---|---:|---|
+| `state/latents/spec.json` | 3,488 bytes | `ce413cba5f75cd3fb63a2bf74a8117277a04992af4716b1d2a319c971ff379d4` |
+| `state/latents/index.jsonl` | 79,826 条；22,641,889 bytes | `1a8dbdb5d5c8f08482f2091120ee4a2a0c54a822a99dda9fab6b23f490594475` |
+| `state/latents/complete.json` | 682 bytes | `dc06eb31449c0e12558a69874b0d91ef83a3ca543418533fe60cfa2b0d6e8767` |
+
+使用的 Semantic-VAE 1000k 权重为：
+
+```text
+/zjw524/projects/alignDiT_idea6/Semantic-VAE/semantic_vae_1000k/dac/ema_state_dict.pth
+sha256: 7c455aa8ab3f7d576b4834f8342558894aafaa61a371b84a9bfa4d10a100e516
+```
+
+视频 cache 为 79,826 个 FP32 `[T40,1024]` 文件，feature id 是
+`avhubert_video_25hz_to_40hz_linear_align_corners_false_v1`；原生 25 Hz 总帧数 8,238,378，
+插值后总帧数 13,179,773，与 latent 总帧数完全相等；总 `.npy` 大小 53,994,567,936 bytes：
+
+| video artifact | 条数或大小 | SHA256 |
+|---|---:|---|
+| `state/video_40hz/spec.json` | 1,829 bytes | `0622c768216dfd01e18720c590dae6bfa128402b5e9835eb558a90293c21cb5c` |
+| `state/video_40hz/index.jsonl` | 79,826 条；35,375,799 bytes | `6a58072e13848378e83c661f8843655a3368aab24cffd246545356c454c07325` |
+| `state/video_40hz/complete.json` | 745 bytes | `47d868473c0a133b2bcf9414d2511df285d40fd3636fe116f092fe5eaf3d60fc` |
+
+音频/latent 的 4-rank 全量 read-only validation 已成功读完 79,826 条，各 rank 分别处理
+19,957/19,957/19,956/19,956 条，日志为：
+
+```text
+AlignDiT_mmdit_c2_semantic_vae/logs/validate_celebvdub_svae_latents_20260808.log
+```
+
+视频的 4-rank 全量 validate-only 已成功读完 79,826 条，各 rank 分别处理
+19,957/19,957/19,956/19,956 条，进程退出码为 0，无 error/traceback，日志为：
+
+```text
+AlignDiT_mmdit_c2_semantic_vae/logs/validate_celebvdub_video_40hz_20260808.log
+```
+
+完成标记、spec、完整 index、selected manifest SHA 和文件 stat/size 必须同时匹配；不能仅凭 `.npy`
+数量或生成日志认定 cache 合格。
+
+### 0.6 已完成的模型、数据和 S3 trainer 实现
+
+当前仓库 `HEAD == origin/main == 8ae61ee`。关键提交为：
+
+| commit | 内容 | 当前结论 |
+|---|---|---|
+| `3c8ffc8` | CelebVDub 40 Hz cache/manifest 与审计链路 | 数据生成已完成，音频和视频全量只读校验均通过 |
+| `73f9256` | 模型/数据严格 Semantic-VAE C2 对齐 | 已完成 exact-40-Hz mask、padding-safe conv、CTC 与 artifact fail-closed 修复 |
+| `8ae61ee` | S3a/S3b staged trainer、config 和 chain launcher | 已实现，正式训练尚未启动 |
+
+`73f9256` 固定了音频和视频相同的 padded length/mask；输入卷积和 CTC projector 均保证 padding-safe；
+两个 CTC head 位于 `[6,12]`，保持 40 Hz、ratio `[1,1]`，使用 FP32 CTC、精确可行性检查和
+`zero_infinity=False`。S2c 313-key source 到 C2 703-key target 的迁移为：加载 303 个兼容 key，
+仅忽略 10 个已知旧 projector key，新建 400 个多模态/CTC key；未知 key、shape 或 artifact 绑定变化
+均 fail closed。严格对齐修复后的 10 项 regression tests 已通过；包含 Conformer 和随机 gate 的整模型
+padding invariant 误差约为 output `7.5e-8`、CTC `3e-7`，padding 输出为 0。
+
+`8ae61ee` 的正式阶段定义为：
+
+- S3a：5k updates，只训练新多模态路径，LR `5e-5`，warmup 500；
+- S3b：195k updates，全量 702 个参数解冻；新参数 `5e-5`、interface `2e-5`、audio blocks 0–5
+  `5e-6`、其余已加载音频路径 `1e-5`，warmup 5000；
+- 阶段间重建 optimizer/scheduler/EMA；chain 使用锁、空闲 GPU 拒绝、S3a 完成验证和严格父
+  checkpoint SHA/contract 后才允许启动 S3b；
+- 4×4090 默认 BF16、每卡 3,600 个 40 Hz frames、`max_samples=32`，即全局每 update 360 秒音频。
+
+### 0.7 warm-start 初始漂移风险
+
+迁移在 schema、key 和 shape 层面是严格的，但不是 function-preserving。使用真实 S2c
+`model_70000.pt` EMA、303 个共享 key、seed 666、完整 768×18/12MM + Conformer，并在 CPU 上用
+`T=24` 做审计时：
+
+- 纯音频 source 与接入随机视频后的 S3 输出 relative RMS drift 为 15.73% 和 18.03%，cosine 为
+  0.9886 和 0.9855；
+- 交换两组随机视频时，S3 输出 relative RMS 改变 5.64%；
+- 真实视频与 null/drop video 的输出 relative RMS 改变 10.04%。
+
+原因是已加载、非零的 audio attention gate 立即作用于 joint softmax；随机初始化的视频 embedding/K/V
+会从第一个 update 开始影响音频。`v_attn_norm` 的 zero gate 只阻断 attention residual 回写视频，不能阻断
+video K/V -> audio。因此 S3a 应准确称为“新多模态路径适配”，不能称为“零漂移接口校准”。为了保持与
+C2 架构可比，当前不擅自改变架构；上述漂移必须在真实 canary 中记录并作为训练风险监控。
+
+### 0.8 唯一外部阻塞与正式训练门禁
+
+only-VAE 当前唯一需要从外部取得的文件是：
+
+```text
+/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32/
+  state/latents/train_normalization.json
+expected sha256: 65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6
+```
+
+该 JSON 的逐通道 mean/std 数值不在 `model_70000.pt` 或 `training_contract.json` 内，不能从 checkpoint
+反推，也不能在 CelebVDub 上重算后冒充 LibriSpeech 坐标系。因此正式训练仍为“未启动”。拿到并核对
+该文件后，必须按以下门禁顺序执行：
+
+1. 核对新到的 LibriSpeech normalization 文件 SHA256 与 contract 完全一致；
+2. 用真实 CelebVDub dataset 构造器跑 artifact、长度、mask 和 CTC 可行性检查；
+3. 做真实单卡 forward/backward canary：diff/CTC/total loss 均 finite，新参数有梯度，S3a 冻结的
+   已加载路径不漂移，并记录初始输出漂移、loss、峰值显存；
+4. 在独立临时输出目录做 4-rank BF16 1-update canary：验证 DDP、update/EMA、checkpoint/contract、
+   无 NaN/OOM/NCCL 错误，并记录速度和各卡峰值显存；
+5. 仅在全部门禁通过后启动正式 chain：S3a 5k -> S3a validator -> S3b 195k。
+
+不得让 canary 与正式 checkpoint 目录混用，也不得在 normalization 缺失时用旧 mel launcher 或占位统计
+“先跑起来”。
 
 ## 1. 给新会话的一句话摘要
 
 当前工作是把 AlignDiT 的 **C2 结构（12 层 MM-DiT + 文本 Cross-Attention，后 6 层纯音频 DiT）**
 从 `80 维、100 Hz mel + HiFi-GAN` 改造为 `64 维、40 Hz Semantic-VAE latent + Semantic-VAE decoder`。
 500k scratch 已停止；mel500k EMA 到 40 Hz latent 的 S1–S2c 分阶段适配已全部训练完成，
-并固定选用 S2c `model_70000.pt`。当前任务从 CelebVDub 数据与 S3 C2 训练闭环开始，
+并固定选用 S2c `model_70000.pt`。CelebVDub 40 Hz 音频/视频数据、两类全量只读校验与 S3 C2 trainer 均已完成；
+当前等待唯一缺失的 LibriSpeech train normalization，随后执行真实单卡/4 卡 canary，正式训练尚未启动。
 详细状态以第 0 节为准。
 
 ## 2. 为什么选 C2 作为主干
@@ -453,9 +582,9 @@ HuBERT 50 Hz -> 按每条有效长度插值到 40 Hz
 
 阶段一先 `proj_lambda=0`，只做 latent flow loss；阶段二修复 40/50 Hz 对齐后再逐步引入 HuBERT projection loss。
 
-### 5.3 现有代码还不能直接训 latent
+### 5.3 旧 mel 入口不能直接训 latent（历史状态）
 
-现有代码仍然存在以下 mel 假设：
+2026-08-02 检查的旧入口存在以下 mel 假设：
 
 - `pretrain.py` 构造 `MelSpec_tacotron`；
 - dataset 硬编码读取 `/mel_tacotron/`；
@@ -468,14 +597,17 @@ HuBERT 50 Hz -> 按每条有效长度插值到 40 Hz
 - EMA 和 optimizer 在当前 Trainer 中创建得过早；
 - 没有 Semantic-VAE decoder 的 sample logging。
 
-因此现在不能只把 `n_mel_channels: 80` 改成 64 就启动训练。
+因此当时不能只把 `n_mel_channels: 80` 改成 64 就启动训练。当前独立快照
+`AlignDiT_mmdit_c2_semantic_vae` 已通过 `73f9256` 和 `8ae61ee` 完成正式 S3 训练侧的 64D/40 Hz
+dataset/model/trainer/launcher 改造；本小节只用于解释为什么不能回退使用旧 `finetune.py`、
+`CustomDataset_mel_video` 或旧 mel launcher。
 
 ## 6. 历史卡点（现已解决或进入新流程）
 
-本节是旧服务器/旧方案的历史记录。当前服务器已有 LibriSpeech、独立 Semantic-VAE 快照和完整 latent cache；
-HuBERT、normalization 与正式启动状态以第 0 节为准。
+本节是旧服务器/旧方案的历史记录。以下三个旧卡点中的数据和训练基础设施问题均已解决；only-VAE
+当前仍缺的是第 0.8 节指定 SHA 的 LibriSpeech train normalization 原文件。当前状态一律以第 0 节为准。
 
-### 6.1 本机缺少 LibriSpeech 数据
+### 6.1 本机缺少 LibriSpeech 数据（旧服务器问题，已解决）
 
 本机存在：
 
@@ -499,11 +631,12 @@ dev-clean
 dev-other
 ```
 
-开始阶段一/二前，必须先从旧服务器挂载或复制这些数据。
+该问题随后在执行 S1–S2c 的服务器上解决，四阶段纯音频适配已完成。only-VAE 不需要重新训练
+LibriSpeech 阶段，但必须复制与 S2c contract 完全一致的 `train_normalization.json`。
 
-### 6.2 Semantic-VAE latent 训练缓存尚未生成
+### 6.2 Semantic-VAE latent 训练缓存尚未生成（历史状态，现已完成）
 
-尚需为：
+原计划需要为：
 
 - LibriSpeech train/dev；
 - CelebVDub train/dev/test；
@@ -515,9 +648,12 @@ dev-other
 - LibriSpeech 960h：约 35 GB；
 - CelebVDub 91h：约 3.4 GB。
 
-### 6.3 三阶段训练基础设施尚未实现
+当前 LibriSpeech latent/HuBERT 缓存和 S2c 已完成；CelebVDub 79,826 个 latent 与 79,826 个 40 Hz
+视频 cache 也已完成。CelebVDub 不生成自己的训练 mean/std，必须继续使用 LibriSpeech train stats。
 
-尚缺：
+### 6.3 三阶段训练基础设施尚未实现（历史状态，现已实现）
+
+旧方案当时尚缺：
 
 - latent dataset/collate；
 - 64D / 40 Hz CFM 接口；
@@ -530,10 +666,14 @@ dev-other
 - 视频 25 -> 40 Hz 精确插值；
 - Semantic-VAE decoder 日志采样。
 
+其中正式 S3 训练必需的 latent dataset/collate、64D/40 Hz CFM、严格迁移、冻结/多 LR、精确 updates、
+阶段间 weights-only init、40 Hz CTC、25 -> 40 Hz 视频 cache 与 chain launcher 已由 `73f9256`、
+`8ae61ee` 实现。解码与最终评测仍按第 11 节单独验收，不能把“trainer 已实现”误写成“最终指标已验证”。
+
 ## 7. 当前方案：mel 500k warm-start 与后续 C2 接入
 
-S1–S2c 已完成实现、canary 和全部正式训练；最终使用 S2c 70k EMA。S3a/S3b 仍是后续设计，
-不能用当前 80D/100 Hz CelebVDub 入口直接运行。
+S1–S2c 已完成实现、canary 和全部正式训练；最终使用 S2c 70k EMA。S3a/S3b 已在独立 64D/40 Hz
+快照中实现，但尚未正式启动；不能回退使用 80D/100 Hz CelebVDub 入口。
 
 论文上分三阶段，实际执行建议分为 6 个独立任务：
 
@@ -543,8 +683,8 @@ S1–S2c 已完成实现、canary 和全部正式训练；最终使用 S2c 70k E
 | 阶段二 | S2a：解冻后 6 层 | LibriSpeech latent | 10k | **已完成** |
 | 阶段二 | S2b：解冻后 12 层 | LibriSpeech latent | 10k | **已完成** |
 | 阶段二 | S2c：全音频主干适配 | LibriSpeech latent | 70k | **已完成，选用 `model_70000.pt`** |
-| 阶段三 | S3a：训练新多模态模块 | CelebVDub latent/text/video | 5k | 尚未实现 |
-| 阶段三 | S3b：完整 C2 微调 | CelebVDub latent/text/video | 195k | 尚未实现 |
+| 阶段三 | S3a：训练新多模态模块 | CelebVDub latent/text/video | 5k | **已实现，未启动** |
+| 阶段三 | S3b：完整 C2 微调 | CelebVDub latent/text/video | 195k | **已实现，未启动** |
 
 建议初始预算：
 
@@ -761,13 +901,14 @@ normalization_stats_id/hash
 - 79,613 条；
 - 约 91.06 小时。
 
-40 Hz 预检发现：
+40 Hz 预检最终结果：
 
-- 72 条 `T_latent < len(text)`；
-- 考虑相邻重复字符需要 blank 后，约 105 条不满足 CTC 最短路径；
-- 其中存在明显错标数据。
+- train 79,613 条中，79,508 条可行、105 条不满足 CTC 最短路径并已写入排除 manifest；
+- test 213 条中另有 1 条不可行，但 test 不参与训练；
+- CTC 使用 `zero_infinity=False`，不能静默吞掉不可行或错标样本。
 
-正式训练前必须用真实 tokenizer 再检查，修复或过滤这些样本。不能仅依赖 `zero_infinity=True` 将它们静默变成零损失。
+正式 dataset 必须绑定 `train_ctc40_valid.jsonl` 及其 SHA，且启动 canary 时再次用真实 tokenizer/blank
+规则核对。
 
 ## 9. warm-start 的 Batch 与 GPU 配置
 
@@ -853,7 +994,8 @@ AlignDiT_SemanticVAE_mel_warmstart_s2b_40hz_LibriSpeech/
 AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/
 ```
 
-S3a/S3b 的目录只能在对应代码和数据闭环完成后创建。
+S3a/S3b 的代码、数据闭环与两类全量校验已完成，但在 normalization、单卡 canary 与 4-rank canary
+全部通过前，不得创建或污染正式 checkpoint 目录。canary 必须使用独立临时输出目录。
 
 当前 Trainer 会扫描 `model_last.pt` 并自动恢复 optimizer，所以跨阶段不得共用 checkpoint 目录。
 
@@ -947,23 +1089,23 @@ latent 原生 LibriSpeech 预训练 -> C2 CelebVDub
 - 通过 gate 后设置 `RUN_UNTIL_UPDATE=70000` 恢复同一 S2c；
 - 已选定唯一 S2c EMA：`model_70000.pt`，供后续 C2 使用。
 
-### 步骤 4：补齐 CelebVDub Semantic-VAE 数据闭环（当前进行中）
+### 步骤 4：补齐 CelebVDub Semantic-VAE 数据闭环（主体已完成）
 
-- 为 train/dev/test 生成同模式 fixed posterior `[T,64]` latent；
-- 继续使用 LibriSpeech train mean/std，不重新统计 CelebVDub 坐标系；
-- manifest 保存原始采样点数，decoder 后精确裁剪；
-- 以每条 `T_latent` 为目标把 25 Hz 视频特征精确插值到 40 Hz；
-- 用真实 tokenizer 处理约 105 条不满足 CTC 最短路径的样本。
+- 79,826 条 fixed posterior `[T,64]` latent 已生成，音频/latent 全量只读校验已通过；
+- 79,826 条 25 Hz -> exact 40 Hz 视频 cache 已生成，全量视频 validate-only 已通过；
+- manifest 已保存原始采样点数和 artifact 绑定；decoder 后仍须按原始采样点数精确裁剪；
+- 105 条 train CTC 不可行样本已写入明确排除 manifest；
+- CelebVDub 不重算坐标系；当前唯一外部阻塞是取得并校验 LibriSpeech train
+  `train_normalization.json`。
 
-### 步骤 5：实现并训练 S3 C2
+### 步骤 5：验收并正式训练 S3 C2（代码完成，训练未启动）
 
-- 25 Hz video -> exact 40 Hz；
-- C2 结构保持 12+6；
-- CTC 保留 `[6,12]`；
-- CTC 头保持 40 Hz；
-- S3a 5k 先训新多模态参数；
-- S3b 195k 全量微调；
-- 评估 50k/100k/150k/200k。
+- `73f9256` 已完成 C2 12+6、exact 40 Hz mask/padding、CTC `[6,12]` 和严格 artifact 对齐；
+- `8ae61ee` 已完成 S3a 5k、S3b 195k trainer/config/chain；
+- 音频/视频 validate-only 均已通过；补齐并核验 normalization 后做真实单卡 forward/backward canary；
+- 再做独立 4-rank BF16 1-update canary，记录 loss、漂移、梯度、速度和峰值显存；
+- 全部门禁通过后才能启动正式 S3a -> validator -> S3b；
+- 正式训练后评估累计 50k/100k/150k/200k。
 
 ## 14. Git 与实验跟踪要求
 
@@ -1001,10 +1143,12 @@ latent 原生 LibriSpeech 预训练 -> C2 CelebVDub
 1. 先完整阅读本文档和 `my_papers_code/AGENTS.md`。
 2. 执行 `git status --short --branch`，不要覆盖用户改动。
 3. only-VAE 必须先获取 SHA256 为 `65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6`
-   的 LibriSpeech train-only normalization；不得在 CelebVDub 上重算新坐标系。
+   的 LibriSpeech train-only normalization；这是当前唯一外部阻塞，不得在 CelebVDub 上重算新坐标系。
 4. 核对 S2c `model_70000.pt` 的 SHA、stage、update、EMA step 和 contract，并只做 EMA weights-only S3 初始化。
-5. 检查 CelebVDub latent full completion marker、index 和 manifest SHA，不以文件数量或进度日志代替完成标记。
+5. 重新检查 CelebVDub latent/video full completion marker、spec、完整 index 和 manifest SHA；两类全量
+   validate-only 已于 2026-08-08 成功结束，不以文件数量或进度日志代替完成标记。
 6. 用真实 tokenizer 做 CTC 最短路径预检，明确过滤名单，不依赖 `zero_infinity=True` 静默吞掉错标样本。
 7. 不要把 codec ceiling WAV 目录当成 latent cache，也不要修改旧 `pretrain.py` 的 mel 语义。
-8. S3 先做单卡 forward/backward 和 4-rank 1-update canary，再启动正式 S3a；同时核对 worker、连续 update、loss/LR、GPU 显存/利用率和 checkpoint。
+8. S3 先做真实单卡 forward/backward 和独立 4-rank BF16 1-update canary；记录 warm-start 初始漂移、
+   冻结路径是否稳定、新参数梯度、loss/LR、速度、GPU 峰值显存、update/EMA/checkpoint/contract，再启动正式 S3a。
 9. 每个后续实现或文档步骤单独 commit/push，并核对本地 HEAD 与 `origin/main` 一致。
