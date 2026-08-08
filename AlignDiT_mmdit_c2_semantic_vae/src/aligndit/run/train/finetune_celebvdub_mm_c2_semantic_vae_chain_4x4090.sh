@@ -20,13 +20,32 @@ fi
 source "$project_root/env.sh"
 cd "$project_root"
 
-lock_path="${ROOT_PREFIX}/zjw524/projects/data/ckpts/.aligndit_semantic_vae_c2_s3_chain_4x4090.lock"
-mkdir -p "$(dirname "$lock_path")"
-exec 9>"$lock_path"
-if ! flock -n 9; then
-    echo "Another Semantic-VAE C2 S3 chain owns $lock_path" >&2
+lock_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/.aligndit_semantic_vae_c2_s3_chain_4x4090.lock.d"
+lock_owner="$lock_dir/owner.txt"
+mkdir -p "$(dirname "$lock_dir")"
+if ! mkdir "$lock_dir" 2>/dev/null; then
+    echo "Another Semantic-VAE C2 S3 chain owns $lock_dir" >&2
+    if [[ -r "$lock_owner" ]]; then
+        echo "Recorded owner:" >&2
+        sed 's/^/  /' "$lock_owner" >&2
+    fi
     exit 1
 fi
+cleanup_lock() {
+    rm -f -- "$lock_owner" || true
+    rmdir -- "$lock_dir" 2>/dev/null || true
+}
+trap cleanup_lock EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+{
+    printf 'host=%s\n' "$(hostname)"
+    printf 'pid=%s\n' "$$"
+    printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
+    printf 'start_stage=%s\n' "$start_stage"
+    printf 'project_root=%s\n' "$project_root"
+} >"$lock_owner"
 
 gpu_count="$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)"
 if [[ "$gpu_count" -lt 4 ]]; then
