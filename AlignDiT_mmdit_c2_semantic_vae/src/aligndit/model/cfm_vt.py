@@ -29,6 +29,48 @@ from f5_tts.model.utils import (
 )
 
 
+def _ctc_min_input_lengths(text: torch.Tensor, text_lens: torch.Tensor) -> torch.Tensor:
+    """Return the exact CTC feasibility bound U plus adjacent repeated labels."""
+
+    if text.ndim != 2 or text_lens.ndim != 1 or text_lens.shape[0] != text.shape[0]:
+        raise ValueError(f"Expected text [B,U] and text_lens [B], got {tuple(text.shape)} and {tuple(text_lens.shape)}")
+    if torch.any(text_lens <= 0) or torch.any(text_lens > text.shape[1]):
+        raise ValueError(f"Invalid CTC target lengths {text_lens.tolist()} for padded width {text.shape[1]}")
+    if text.shape[1] <= 1:
+        return text_lens
+    pair_positions = torch.arange(text.shape[1] - 1, device=text.device).unsqueeze(0)
+    valid_pairs = pair_positions < (text_lens - 1).unsqueeze(1)
+    adjacent_repeats = ((text[:, :-1] == text[:, 1:]) & valid_pairs).sum(dim=1)
+    return text_lens + adjacent_repeats
+
+
+def _validate_strict_audio_video_alignment(
+    inp: torch.Tensor,
+    video: torch.Tensor,
+    lens: torch.Tensor,
+    video_lens: torch.Tensor,
+    audio_video_ratio: int,
+) -> None:
+    if audio_video_ratio != 1:
+        raise ValueError(f"Strict 40 Hz alignment requires audio_video_ratio=1, got {audio_video_ratio}")
+    if inp.ndim != 3 or video.ndim != 3 or inp.shape[0] != video.shape[0]:
+        raise ValueError(f"Expected aligned [B,T,D] tensors, got audio={tuple(inp.shape)}, video={tuple(video.shape)}")
+    if inp.shape[1] != video.shape[1]:
+        raise ValueError(
+            f"Strict 40 Hz alignment requires equal padded lengths, got audio={inp.shape[1]}, video={video.shape[1]}"
+        )
+    if lens.ndim != 1 or video_lens.ndim != 1 or lens.shape != video_lens.shape or lens.shape[0] != inp.shape[0]:
+        raise ValueError(
+            f"Expected aligned lengths [B], got audio={tuple(lens.shape)}, video={tuple(video_lens.shape)}"
+        )
+    if torch.any(lens <= 0) or torch.any(lens > inp.shape[1]):
+        raise ValueError(f"Invalid audio lengths {lens.tolist()} for padded length {inp.shape[1]}")
+    if torch.any(video_lens <= 0) or torch.any(video_lens > video.shape[1]):
+        raise ValueError(f"Invalid video lengths {video_lens.tolist()} for padded length {video.shape[1]}")
+    if not torch.equal(lens, video_lens):
+        raise ValueError(f"Strict 40 Hz audio/video lengths differ: {lens.tolist()} != {video_lens.tolist()}")
+
+
 class CFM_VT(CFM):
     def __init__(
         self,
@@ -37,6 +79,7 @@ class CFM_VT(CFM):
         video_drop_prob=0.2,
         audio_video_ratio=4,
         ctc_lambda=0.1,
+        strict_audio_video_alignment=False,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -46,6 +89,9 @@ class CFM_VT(CFM):
         self.video_drop_prob = video_drop_prob
 
         self.audio_video_ratio = audio_video_ratio  # audio to video ratio in length
+        self.strict_audio_video_alignment = strict_audio_video_alignment
+        if strict_audio_video_alignment and audio_video_ratio != 1:
+            raise ValueError("strict_audio_video_alignment requires audio_video_ratio=1")
 
         # ctc loss
         self.ctc_lambda = ctc_lambda
@@ -118,6 +164,11 @@ class CFM_VT(CFM):
         # Clip video to match clamped duration to avoid length mismatch in complementary_mask
         if video is not None:
             max_video_len = max_duration // self.audio_video_ratio
+            if self.strict_audio_video_alignment and video.shape[:2] != (batch, int(max_video_len)):
+                raise ValueError(
+                    "Strict 40 Hz sampling requires video padded to the requested audio duration, "
+                    f"expected {(batch, int(max_video_len))}, got {tuple(video.shape[:2])}"
+                )
             video = video[:, :max_video_len, :]
 
         # duplicate test corner for inner time step oberservation
@@ -138,7 +189,7 @@ class CFM_VT(CFM):
             cond_mask, cond, torch.zeros_like(cond)
         )  # allow direct control (cut cond audio) with lens passed in
 
-        if batch > 1:
+        if batch > 1 or self.strict_audio_video_alignment:
             mask = duration_mask
             video_mask = mask.repeat_interleave(self.audio_video_ratio, dim=-1)
         else:  # save memory and speed up, as single inference need no mask currently
@@ -284,7 +335,9 @@ class CFM_VT(CFM):
             video_lens = torch.full((batch,), video.size(1), device=device)
         video_mask = lens_to_mask(video_lens)
 
-        if not torch.equal(lens, video_lens * self.audio_video_ratio):
+        if self.strict_audio_video_alignment:
+            _validate_strict_audio_video_alignment(inp, video, lens, video_lens, self.audio_video_ratio)
+        elif not torch.equal(lens, video_lens * self.audio_video_ratio):
             print(
                 f"Warning: lens and video_lens are inconsistent with audio_video_ratio={self.audio_video_ratio}.\n"
                 f"lens: {lens.tolist()}\n"
@@ -373,18 +426,38 @@ class CFM_VT(CFM):
                     "ctc_lambda is positive but the transformer returned no CTC intermediates; "
                     "check layer_indices_ctc"
                 )
-            ctc_loss = torch.tensor(0.0, device=loss.device, dtype=loss.dtype)
+            ctc_min_input_lengths = _ctc_min_input_lengths(text, text_lens)
+            ctc_loss = torch.tensor(0.0, device=loss.device, dtype=torch.float32)
+            blank_index = self.transformer.text_embed.text_embed.num_embeddings
+            if self.strict_audio_video_alignment:
+                target_mask = torch.arange(text.shape[1], device=text.device).unsqueeze(0) < text_lens.unsqueeze(1)
+                valid_targets = text[target_mask]
+                if torch.any(valid_targets < 0) or torch.any(valid_targets >= blank_index):
+                    raise RuntimeError(
+                        f"S3 CTC targets must be in [0, {blank_index}), got "
+                        f"range=[{int(valid_targets.min())}, {int(valid_targets.max())}]"
+                    )
             for intermediate in intermediates_ctc.values():
                 z_tilde = intermediate["z_tilde"]
                 z_lens = intermediate["z_lens"]
+                if self.strict_audio_video_alignment and not torch.equal(z_lens, lens):
+                    raise RuntimeError(
+                        "S3 CTC projectors must preserve the exact 40 Hz length: "
+                        f"projected={z_lens.tolist()}, input={lens.tolist()}"
+                    )
+                if self.strict_audio_video_alignment and torch.any(z_lens < ctc_min_input_lengths):
+                    raise RuntimeError(
+                        "CTC-infeasible record reached S3 training: "
+                        f"input_lengths={z_lens.tolist()}, minimum={ctc_min_input_lengths.tolist()}"
+                    )
                 ctc_loss += F.ctc_loss(
-                    z_tilde.transpose(1, 0).log_softmax(-1),  # Log probabilities (n b c)
+                    z_tilde.float().transpose(1, 0).log_softmax(-1),  # Log probabilities (n b c)
                     text,  # Target sequences (b nt)
                     z_lens,  # Length of inputs
                     text_lens,  # Length of targets
-                    blank=self.transformer.text_embed.text_embed.num_embeddings,  # Blank token index
+                    blank=blank_index,  # Blank token index
                     reduction="mean",  # Reduction method ('none', 'mean', 'sum')
-                    zero_infinity=True,  # Ignore loss if log(0) happens
+                    zero_infinity=not self.strict_audio_video_alignment,
                 )
             ctc_loss /= len(intermediates_ctc)
             loss += ctc_loss * self.ctc_lambda

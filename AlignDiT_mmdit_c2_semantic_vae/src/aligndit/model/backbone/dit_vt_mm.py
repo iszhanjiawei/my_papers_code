@@ -50,12 +50,23 @@ class AudioInputEmbedding_MM(nn.Module):
         self.proj = nn.Linear(mel_dim * 2, out_dim)
         self.conv_pos_embed = ConvPositionEmbedding(dim=out_dim)
 
-    def forward(self, x: float["b n d"], cond: float["b n d"], drop_audio_cond=False):  # noqa: F722
+    def forward(
+        self,
+        x: float["b n d"],  # noqa: F722
+        cond: float["b n d"],  # noqa: F722
+        drop_audio_cond=False,
+        mask: bool["b n"] | None = None,  # noqa: F722
+    ):
         if drop_audio_cond:  # cfg for cond audio
             cond = torch.zeros_like(cond)
 
         x = self.proj(torch.cat((x, cond), dim=-1))
-        x = self.conv_pos_embed(x) + x
+        token_mask = mask.unsqueeze(-1) if mask is not None else None
+        if token_mask is not None:
+            x = x.masked_fill(~token_mask, 0.0)
+        x = self.conv_pos_embed(x, mask=mask) + x
+        if token_mask is not None:
+            x = x.masked_fill(~token_mask, 0.0)
         return x
 
 # 视频流输入层
@@ -63,7 +74,7 @@ class VideoInputEmbedding_MM(nn.Module):
     # video kept at native 25 Hz (no transposed-conv upsampling)
     def __init__(self, video_dim, out_dim, use_conformer=False):
         super().__init__()
-        self.register_buffer("vid_null_emb", nn.Parameter(torch.randn(1, video_dim) / video_dim**0.5))
+        self.vid_null_emb = nn.Parameter(torch.randn(1, video_dim) / video_dim**0.5)
         self.proj = nn.Linear(video_dim, out_dim)
         self.use_conformer = use_conformer
         if self.use_conformer:
@@ -106,9 +117,17 @@ class VideoInputEmbedding_MM(nn.Module):
             video_lens = torch.full((video.size(0),), video.size(1), device=video.device, dtype=torch.long)
 
         v = self.proj(video)
-        if self.use_conformer: # baseline的DiT是先采样到100Hz(长度*4)再在100Hz上跑Conformer 
-            v, _ = self.vid_conformer(v, video_lens) # 这里不进行上采样，直接在原生25Hz上跑Conformer同样有上下文的建模能力,但序列短4倍
-        v = self.conv_pos_embed(v) + v
+        token_mask = video_mask.unsqueeze(-1) if video_mask is not None else None
+        if token_mask is not None:
+            v = v.masked_fill(~token_mask, 0.0)
+        if self.use_conformer:  # baseline的DiT是先采样到100Hz(长度*4)再在100Hz上跑Conformer
+            # 在对齐后时间轴上跑 Conformer，长度始终来自显式 mask。
+            v, _ = self.vid_conformer(v, video_lens)
+            if token_mask is not None:
+                v = v.masked_fill(~token_mask, 0.0)
+        v = self.conv_pos_embed(v, mask=video_mask) + v
+        if token_mask is not None:
+            v = v.masked_fill(~token_mask, 0.0)
         return v
 
 
@@ -263,7 +282,6 @@ class MMDiTBlock_VT(DiTCrossBlock):
                 v_mask = torch.ones((batch_size, n_v), dtype=torch.bool, device=mask.device)
             key_mask = torch.cat([mask, v_mask], dim=1)
             attn_mask = key_mask.unsqueeze(1).unsqueeze(1)  # 'b n -> b 1 1 n'
-            attn_mask = attn_mask.expand(batch_size, heads, n_a + n_v, n_a + n_v)
         else:
             attn_mask = None
 
@@ -357,6 +375,7 @@ class DiT_VT_MMDiT(DiT):
         checkpoint_activations=False,
         use_conformer=True,
         layer_indices_ctc=[6, 12],
+        ctc_sampling_ratios=(2, 1),
         projector_dim=None,
         n_mm_layers=12,
         n_text_layers=None,
@@ -364,6 +383,9 @@ class DiT_VT_MMDiT(DiT):
         audio_video_ratio=4,
         video_dim=1024,
         video_rope_scaled=True,
+        strict_audio_video_alignment=False,
+        mask_input_embeddings=False,
+        always_use_attention_mask=False,
     ):
         super().__init__(
             dim=dim,
@@ -388,6 +410,20 @@ class DiT_VT_MMDiT(DiT):
         self.audio_video_ratio = audio_video_ratio
         self.video_rope_scaled = video_rope_scaled
         self.prompt_isolated_ca = prompt_isolated_ca
+        self.strict_audio_video_alignment = strict_audio_video_alignment
+        self.mask_input_embeddings = mask_input_embeddings
+        self.always_use_attention_mask = always_use_attention_mask
+        if strict_audio_video_alignment and (
+            audio_video_ratio != 1
+            or not text_mask_padding
+            or not attn_mask_enabled
+            or not mask_input_embeddings
+            or not always_use_attention_mask
+        ):
+            raise ValueError(
+                "strict_audio_video_alignment requires audio_video_ratio=1, text_mask_padding=True, "
+                "attn_mask_enabled=True, mask_input_embeddings=True and always_use_attention_mask=True"
+            )
         self.n_mm_layers = n_mm_layers
         self.n_text_layers = n_mm_layers if n_text_layers is None else n_text_layers
         if not 0 <= self.n_mm_layers <= self.n_text_layers <= depth:
@@ -410,6 +446,14 @@ class DiT_VT_MMDiT(DiT):
                 f"layer_indices_ctc must use zero-based indices in [0, {depth}), got {ctc_layer_indices}"
             )
         self.layer_indices_ctc = ctc_layer_indices
+        try:
+            self.ctc_sampling_ratios = tuple(ctc_sampling_ratios)
+        except TypeError as error:
+            raise TypeError("ctc_sampling_ratios must be an iterable of positive integers") from error
+        if not self.ctc_sampling_ratios or any(
+            type(ratio) is not int or ratio <= 0 for ratio in self.ctc_sampling_ratios
+        ):
+            raise ValueError(f"ctc_sampling_ratios must contain positive integers, got {self.ctc_sampling_ratios}")
 
         self.input_embed = AudioInputEmbedding_MM(mel_dim, dim)
         self.video_embed = VideoInputEmbedding_MM(video_dim, dim, use_conformer=use_conformer)
@@ -445,7 +489,16 @@ class DiT_VT_MMDiT(DiT):
         z_dim = self.text_embed.text_embed.num_embeddings + 1
         self.layer_map_ctc = {v: i for i, v in enumerate(self.layer_indices_ctc)}
         self.projectors_ctc = nn.ModuleList(
-            [DownsampleLayer([2, 1], self.dim, projector_dim, z_dim) for _ in self.layer_map_ctc]
+            [
+                DownsampleLayer(
+                    self.ctc_sampling_ratios,
+                    self.dim,
+                    projector_dim,
+                    z_dim,
+                    padding_safe=strict_audio_video_alignment,
+                )
+                for _ in self.layer_map_ctc
+            ]
         )
 
         # Initialize the re-created blocks without double-zeroing a gated branch.
@@ -497,11 +550,13 @@ class DiT_VT_MMDiT(DiT):
         else:
             text_embed = self.text_embed(text, seq_len, drop_text=drop_text, audio_mask=audio_mask)
 
-        x = self.input_embed(x, cond, drop_audio_cond=drop_audio_cond)
+        input_audio_mask = audio_mask if self.mask_input_embeddings else None
+        input_video_mask = video_mask if self.mask_input_embeddings else None
+        x = self.input_embed(x, cond, drop_audio_cond=drop_audio_cond, mask=input_audio_mask)
         v = self.video_embed(
             video,
             drop_video=drop_video,
-            video_mask=video_mask,
+            video_mask=input_video_mask,
             complementary_mask=complementary_mask,
         )
 
@@ -537,6 +592,33 @@ class DiT_VT_MMDiT(DiT):
             )
         if generation_mask.device != x.device:
             raise ValueError(f"generation_mask must be on {x.device}, got {generation_mask.device}")
+        if self.strict_audio_video_alignment:
+            required_masks = {"mask": mask, "text_mask": text_mask, "video_mask": video_mask}
+            missing_masks = [name for name, value in required_masks.items() if value is None]
+            if missing_masks:
+                raise ValueError(f"Strict 40 Hz alignment requires explicit masks: missing {missing_masks}")
+            if video.shape[:2] != (batch, seq_len):
+                raise ValueError(
+                    "Strict 40 Hz alignment requires equal padded audio/video shapes, "
+                    f"got audio={(batch, seq_len)}, video={tuple(video.shape[:2])}"
+                )
+            for name, value, expected_shape in (
+                ("mask", mask, (batch, seq_len)),
+                ("video_mask", video_mask, (batch, seq_len)),
+                ("text_mask", text_mask, text.shape[:2]),
+            ):
+                if value.dtype != torch.bool or value.shape != expected_shape or value.device != x.device:
+                    raise ValueError(
+                        f"{name} must be bool {tuple(expected_shape)} on {x.device}, "
+                        f"got {value.dtype} {tuple(value.shape)} on {value.device}"
+                    )
+            if not torch.equal(mask, video_mask):
+                raise ValueError("Strict 40 Hz alignment requires identical audio/video masks")
+            if complementary_mask is not None and complementary_mask.shape != video_mask.shape:
+                raise ValueError(
+                    f"complementary_mask must have shape {tuple(video_mask.shape)}, "
+                    f"got {tuple(complementary_mask.shape)}"
+                )
         if time.ndim == 0:
             time = time.repeat(batch)
 
@@ -642,8 +724,9 @@ class DiT_VT_MMDiT(DiT):
         for layer_i, block in enumerate(self.transformer_blocks):
             is_mm = isinstance(block, MMDiTBlock_VT)
             has_tail_text = isinstance(block, AudioTextDiTBlock)
-            block_mask = None if self.training else mask  # memory issue
-            block_v_mask = None if self.training else v_mask
+            use_block_mask = self.always_use_attention_mask or not self.training
+            block_mask = mask if use_block_mask else None
+            block_v_mask = v_mask if use_block_mask else None
             if self.checkpoint_activations:
                 # https://pytorch.org/docs/stable/checkpoint.html#torch.utils.checkpoint.checkpoint
                 if is_mm:
@@ -714,6 +797,11 @@ class DiT_VT_MMDiT(DiT):
                         rope=rope,
                     )
 
+            if self.strict_audio_video_alignment:
+                x = x.masked_fill(~mask.unsqueeze(-1), 0.0)
+                if is_mm:
+                    v = v.masked_fill(~v_mask.unsqueeze(-1), 0.0)
+
             if not cache and layer_i in self.layer_map_ctc:  # hack
                 projector = self.projectors_ctc[self.layer_map_ctc[layer_i]]
                 z_tilde, z_lens = projector(x, lens)
@@ -724,5 +812,7 @@ class DiT_VT_MMDiT(DiT):
 
         x = self.norm_out(x, t)
         output = self.proj_out(x)
+        if self.strict_audio_video_alignment:
+            output = output.masked_fill(~mask.unsqueeze(-1), 0.0)
 
         return output, intermediates_ctc

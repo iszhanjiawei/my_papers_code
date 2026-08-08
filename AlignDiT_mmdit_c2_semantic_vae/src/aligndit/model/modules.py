@@ -98,12 +98,16 @@ class DownsampleLayer(nn.Module):
         channels: int,
         out_channels: int,
         groups: int = 1,
+        padding_safe: bool = False,
     ):
         super().__init__()
-        self.sampling_ratios = sampling_ratios
+        self.sampling_ratios = tuple(sampling_ratios)
+        if not self.sampling_ratios or any(type(ratio) is not int or ratio <= 0 for ratio in self.sampling_ratios):
+            raise ValueError(f"sampling_ratios must contain positive integers, got {self.sampling_ratios}")
+        self.padding_safe = padding_safe
         model = nn.ModuleList([])
-        if len(sampling_ratios) > 0:
-            for i, r in enumerate(sampling_ratios):
+        if len(self.sampling_ratios) > 0:
+            for i, r in enumerate(self.sampling_ratios):
                 module = nn.Conv1d(in_channels if i == 0 else channels, channels, 3, r, 1)
                 norm = nn.GroupNorm(groups, channels)
                 act = nn.Mish()
@@ -114,6 +118,27 @@ class DownsampleLayer(nn.Module):
     def forward(self, x, ylens):
         # x in (B, T, D)
         # y in (L)
+        if self.padding_safe:
+            if x.ndim != 3 or ylens.ndim != 1 or ylens.shape[0] != x.shape[0]:
+                raise ValueError(
+                    f"Expected x [B,T,D] and ylens [B], got x={tuple(x.shape)}, ylens={tuple(ylens.shape)}"
+                )
+            if torch.any(ylens <= 0) or torch.any(ylens > x.shape[1]):
+                raise ValueError(f"Invalid projector lengths {ylens.tolist()} for padded length {x.shape[1]}")
+            outputs = []
+            output_lengths = []
+            for sample, sample_length in zip(x, ylens):
+                valid = sample[: int(sample_length)].transpose(0, 1).unsqueeze(0).contiguous()
+                output = self.model(valid).transpose(1, 2).squeeze(0).contiguous()
+                outputs.append(output)
+                output_lengths.append(output.shape[0])
+            output_lengths = torch.tensor(output_lengths, device=ylens.device, dtype=ylens.dtype)
+            max_length = int(output_lengths.max())
+            output = torch.stack(
+                [torch.nn.functional.pad(value, (0, 0, 0, max_length - value.shape[0])) for value in outputs]
+            )
+            return output, output_lengths
+
         for r in self.sampling_ratios:
             ylens = (ylens + 2 * 1 - 3) // r + 1
         mask = lens_to_mask(ylens).unsqueeze(-1)
