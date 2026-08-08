@@ -1,0 +1,30 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_base
+  - _self_
+
+stage:
+  name: s3b
+  parent_kind: s3a_c2
+  parent_checkpoint: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3a_40hz_CelebVDub_char/model_5000.pt
+  # The stage launcher computes and passes these three immutable identities
+  # after S3a finishes; null remains safe for direct inspection only because
+  # the entrypoint still hashes and records the exact files before loading.
+  expected_parent_sha256: null
+  expected_parent_size: null
+  expected_parent_stage: s3a
+  expected_parent_update: 5000
+  parent_contract_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3a_40hz_CelebVDub_char/training_contract.json
+  expected_parent_contract_sha256: null
+
+optim:
+  max_updates: 195000
+  num_warmup_updates: 5000
+  learning_rates:
+    multimodal_new: 5.0e-5
+    interface: 2.0e-5
+    audio_blocks_0_5: 5.0e-6
+    audio_backbone_rest: 1.0e-5
+
+ckpts:
+  save_per_updates: 50000
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3b_40hz_CelebVDub_char

@@ -1,0 +1,25 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_base
+  - _self_
+
+stage:
+  name: s3a
+  parent_kind: s2c_audio
+  parent_checkpoint: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/model_70000.pt
+  expected_parent_sha256: 02e35cf3e0de2a10573fb6efd8e5b7cdf0c59a18ea07807f34e5c7bf9c1395c4
+  expected_parent_size: 2762690094
+  expected_parent_stage: s2c
+  expected_parent_update: 70000
+  parent_contract_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/training_contract.json
+  expected_parent_contract_sha256: 3d6fcf6649511a0f21546ca995ed047dfcca5ff58e9c2d3196d7c67b24e7633d
+
+optim:
+  max_updates: 5000
+  num_warmup_updates: 500
+  learning_rates:
+    multimodal_new: 5.0e-5
+
+ckpts:
+  save_per_updates: 5000
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3a_40hz_CelebVDub_char
+

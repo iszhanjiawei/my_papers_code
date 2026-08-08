@@ -1,0 +1,82 @@
+hydra:
+  run:
+    dir: ${ckpts.save_dir}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+seed: 666
+
+datasets:
+  name: CelebVDub_svae40_ctc_valid
+  cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub_svae1000k_sample_seed666_fp32
+  full_manifest_path: ${datasets.cache_root}/manifests/inventory.jsonl
+  expected_full_manifest_sha256: a6478cce785748cbcefd87af54eafa9f654d735afa1c41b8f846e041cbc1286d
+  manifest_path: ${datasets.cache_root}/manifests/train_ctc40_valid.jsonl
+  expected_train_manifest_sha256: cbeb9f02d805d403ce6b24a6a56f170ad278d3187cd65e289ef1e80cf665d58c
+  ctc_excluded_path: ${datasets.cache_root}/manifests/ctc40_excluded.jsonl
+  expected_ctc_excluded_sha256: d4071db62d412ebeba144fe5e8a665530dfbc57ac52e19b4ad42212841ddcb0a
+  ctc_exclusion_report_path: ${datasets.cache_root}/manifests/ctc40_report.json
+  inventory_meta_path: ${datasets.cache_root}/manifests/inventory_meta.json
+  latent_completion_path: ${datasets.cache_root}/state/latents/complete.json
+  video_completion_path: ${datasets.cache_root}/state/video_40hz/complete.json
+  normalization_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32/state/latents/train_normalization.json
+  expected_normalization_sha256: 65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6
+  vocab_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub_char/vocab.txt
+  expected_vocab_sha256: 225df7792c4ade59e3de39789b36fdf735e1b30ed96b4456d2d27df0d86a875d
+  expected_record_count: 79508
+  # Four ranks * 3,600 frames / 40 Hz = 360 seconds per optimizer update.
+  batch_size_per_gpu: 3600
+  batch_size_type: frame
+  max_samples: 32
+  num_workers: 8
+
+optim:
+  grad_accumulation_steps: 1
+  deterministic_update_seed: true
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae
+  backbone: DiT_VT_MMDiT
+  arch:
+    dim: 768
+    depth: 18
+    heads: 12
+    ff_mult: 2
+    text_dim: 512
+    text_mask_padding: true
+    qk_norm: rms_norm
+    conv_layers: 4
+    pe_attn_head: 1
+    attn_mask_enabled: true
+    always_use_attention_mask: true
+    mask_input_embeddings: true
+    strict_audio_video_alignment: true
+    checkpoint_activations: false
+    use_conformer: true
+    layer_indices_ctc: [6, 12]
+    ctc_sampling_ratios: [1, 1]
+    projector_dim: 2048
+    n_mm_layers: 12
+    n_text_layers: 12
+    prompt_isolated_ca: false
+    audio_video_ratio: 1
+    video_dim: 1024
+    video_rope_scaled: false
+  audio_representation:
+    name: semantic_vae_40hz
+    channels: 64
+    frame_rate: 40
+    sample_rate: 16000
+    hop_length: 400
+  ctc_lambda: 0.1
+
+ema:
+  beta: 0.999
+  update_after_step: 100
+  update_every: 1
+
+ckpts:
+  logger: tensorboard
+  save_per_updates: 50000
+  keep_last_n_checkpoints: -1
+  last_per_updates: 5000
