@@ -59,7 +59,10 @@ def _update_semantic_digest(digest: Any, value: Any, *, field: str) -> None:
         digest.update(f"tensor:{tensor.dtype}:{tuple(tensor.shape)}:".encode())
         if (tensor.is_floating_point() or tensor.is_complex()) and not torch.isfinite(tensor).all():
             raise FloatingPointError(f"Non-finite tensor in {field}")
-        digest.update(memoryview(tensor.view(torch.uint8).numpy()))
+        # Flatten first because PyTorch cannot reinterpret a 0-D tensor as a
+        # byte dtype with a different element size. Optimizer step counters
+        # are commonly stored as scalar tensors in otherwise valid states.
+        digest.update(memoryview(tensor.reshape(-1).view(torch.uint8).numpy()))
         return
     if isinstance(value, dict):
         digest.update(b"dict{")
