@@ -165,9 +165,26 @@ ${ROOT_PREFIX}/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32
 `NCCL_IB_DISABLE=1`；launcher 已默认设置。开启这两个传输路径会在 DDP 参数同步时挂住。其他服务器
 只有完成独立 NCCL canary 后才可显式覆盖为 0。
 
-当前只实现并验证了 S1–S2c 的纯音频适配。CelebVDub 尚无同契约的 Semantic-VAE latent 缓存，现有
-finetune/data/infer 仍含 80D/100 Hz mel 与 HiFi-GAN 语义，因此不得把 S3/C2 多模态 latent 微调伪装成
-已可运行；先补 CelebVDub latent、25→40 Hz 视频精确插值、40 Hz CTC、反归一化与 Semantic-VAE 解码。
+CelebVDub 的 79,826 个 64D/40 Hz latent、25→40 Hz 视频 cache、CTC-valid manifest 和固定
+LibriSpeech train normalization 已完成并通过全量校验。旧 S3a→S3b 训练策略已确认失稳：无输出归一化的
+文本 ConvNeXt 塔发生尺度爆炸，经 12 层文本 CA 放大后使 global grad norm 溢出，旧 trainer 又静默把梯度
+裁成 0。旧 S3b 的全部 checkpoint（包括 50k、100k、115k 和 `model_last.pt`）只保留故障审计，禁止
+续训、正式评测或作为父权重；旧 S3a 5k 同样不得作为父权重。
+
+当前唯一正式 CelebVDub 训练入口从 S2c 70k EMA 直接启动连续 200k 的单阶段 `s3`，不在 5k 边界重置
+optimizer/scheduler/EMA：
+
+| 用途 | 路径 |
+|---|---|
+| 配置 | `src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_s3.yaml` |
+| 4×4090 launcher | `src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_single_stage_4x4090.sh` |
+| checkpoint | `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3_single_stage_v2_40hz_CelebVDub_char` |
+
+该策略固定 20k warmup、CTC 0→0.1/20k ramp、按风险拆分的 8 类学习率，并在所有文本 CA 前使用无参数
+LayerNorm。训练器必须记录 `grad_norm/global`、分组 grad norm、raw/post text RMS；raw text RMS > 3、
+global pre-clip norm > 100 或任一非有限值时必须在 `optimizer.step()` 前同步终止。首次只跑到 20k 做门禁；
+门禁通过后才从同一 `model_last.pt` 原样恢复到 200k。实时状态仍须从进程、日志、TensorBoard 和 checkpoint
+元数据读取。训练侧已可运行；反归一化、Semantic-VAE 解码及正式推理评测仍需在使用前单独验收。
 
 四组实验均使用深度 18、前 12 层 MM-DiT、CelebVDub、字符 tokenizer、RMS QK-Norm、BF16 和相同的动态 frame batch。只允许按下表改变文本注入层数和参考音频隔离开关：
 
