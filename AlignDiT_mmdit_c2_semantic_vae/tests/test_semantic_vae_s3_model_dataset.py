@@ -367,6 +367,94 @@ class SemanticVaeDatasetTests(unittest.TestCase):
 
 
 class SemanticVaeModelTests(unittest.TestCase):
+    def test_text_context_is_parameter_free_normalized_and_padding_safe_for_every_ca(self):
+        torch.manual_seed(2)
+        model = DiT_VT_MMDiT(
+            dim=16,
+            depth=2,
+            heads=2,
+            dim_head=8,
+            ff_mult=2,
+            mel_dim=64,
+            text_num_embeds=3,
+            text_dim=16,
+            text_mask_padding=True,
+            attn_mask_enabled=True,
+            use_conformer=False,
+            layer_indices_ctc=(),
+            ctc_sampling_ratios=(1, 1),
+            n_mm_layers=1,
+            n_text_layers=2,
+            prompt_isolated_ca=False,
+            audio_video_ratio=1,
+            video_dim=1024,
+            strict_audio_video_alignment=True,
+            mask_input_embeddings=True,
+            always_use_attention_mask=True,
+        ).eval()
+        state_keys_before = tuple(model.state_dict())
+        self.assertFalse(any("text_context" in key for key in state_keys_before))
+        raw_contexts = []
+        ca_contexts = []
+
+        def capture_raw_context(_module, _inputs, output):
+            raw_contexts.append(output.detach().clone())
+
+        def capture_ca_context(_module, inputs):
+            ca_contexts.append(inputs[1].detach().clone())
+
+        model.text_embed.register_forward_hook(capture_raw_context)
+        for block in model.transformer_blocks:
+            block.cross_attn.register_forward_pre_hook(capture_ca_context)
+
+        audio_mask = torch.ones(2, 4, dtype=torch.bool)
+        text = torch.tensor([[0, 1, 2, -1, -1], [0, -1, -1, -1, -1]])
+        text_mask = text != -1
+        with torch.no_grad():
+            model(
+                x=torch.randn(2, 4, 64),
+                cond=torch.randn(2, 4, 64),
+                text=text,
+                video=torch.randn(2, 4, 1024),
+                time=torch.rand(2),
+                mask=audio_mask,
+                text_mask=text_mask,
+                video_mask=audio_mask,
+                complementary_mask=torch.zeros_like(audio_mask),
+                generation_mask=audio_mask,
+            )
+
+        self.assertEqual(len(raw_contexts), 1)
+        self.assertEqual(len(ca_contexts), 2)
+        raw_context = raw_contexts[0]
+        cropped_mask = text_mask[:, : raw_context.shape[1]]
+        expected = F.layer_norm(raw_context, (raw_context.shape[-1],), weight=None, bias=None, eps=1e-6)
+        expected = expected.masked_fill(~cropped_mask.unsqueeze(-1), 0.0)
+        for ca_context in ca_contexts:
+            torch.testing.assert_close(ca_context, expected)
+
+        valid_context = expected[cropped_mask]
+        torch.testing.assert_close(valid_context.mean(dim=-1), torch.zeros(valid_context.shape[0]), atol=1e-6, rtol=0)
+        torch.testing.assert_close(
+            valid_context.square().mean(dim=-1).sqrt(),
+            torch.ones(valid_context.shape[0]),
+            atol=2e-5,
+            rtol=0,
+        )
+        self.assertTrue(torch.count_nonzero(expected[~cropped_mask]) == 0)
+        torch.testing.assert_close(
+            model.last_text_context_raw_rms,
+            raw_context[cropped_mask].float().square().mean().sqrt(),
+        )
+        torch.testing.assert_close(model.last_text_context_post_rms, valid_context.float().square().mean().sqrt())
+        self.assertEqual(tuple(model.state_dict()), state_keys_before)
+
+        invalid_tail_mask = text_mask.clone()
+        invalid_tail_mask[:, 3:] = False
+        invalid_tail_mask[0, 4] = True
+        with self.assertRaisesRegex(ValueError, "valid tokens beyond"):
+            model._normalize_text_context(raw_context, invalid_tail_mask)
+
     def test_padding_safe_ctc_projector_is_batch_invariant(self):
         torch.manual_seed(0)
         projector = DownsampleLayer((1, 1), 4, 4, 3, padding_safe=True).eval()
