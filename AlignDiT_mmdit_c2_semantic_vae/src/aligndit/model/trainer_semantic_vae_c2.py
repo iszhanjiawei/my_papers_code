@@ -1,4 +1,4 @@
-"""Exact-update trainer for staged Semantic-VAE C2 multimodal adaptation."""
+"""Exact-update trainer for legacy-staged and stable single-stage Semantic-VAE C2 adaptation."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from f5_tts.model.dataset import DynamicBatchSampler
 from f5_tts.model.trainer import _atomic_accelerator_save
 
 
-S3_STAGE_START_UPDATE = {"s3a": 0, "s3b": 5_000}
-S3_STAGE_MAX_UPDATES = {"s3a": 5_000, "s3b": 195_000}
-S3_FINAL_CUMULATIVE_UPDATE = {"s3a": 5_000, "s3b": 200_000}
+S3_STAGE_START_UPDATE = {"s3a": 0, "s3b": 5_000, "s3": 0}
+S3_STAGE_MAX_UPDATES = {"s3a": 5_000, "s3b": 195_000, "s3": 200_000}
+S3_FINAL_CUMULATIVE_UPDATE = {"s3a": 5_000, "s3b": 200_000, "s3": 200_000}
 
 
 def _scalar(value: Any, *, name: str) -> int | bool:
@@ -38,12 +38,11 @@ def _scalar(value: Any, *, name: str) -> int | bool:
 
 
 class SemanticVaeC2Trainer:
-    """Trainer whose resume boundary is local to S3a or S3b.
+    """Trainer with exact same-stage resume for both S3 policies.
 
-    Checkpoint names and the compatibility ``update`` field are cumulative
-    across S3a+S3b, while scheduler, optimizer and EMA counters are stage
-    local.  This keeps paper-facing 5k/50k/.../200k checkpoints unambiguous
-    without leaking S3a optimizer state into S3b.
+    The active ``s3`` policy has one continuous 200k optimizer/scheduler/EMA
+    timeline. Historical S3a/S3b checkpoints retain cumulative filenames but
+    stage-local optimizer state so the failed policy remains auditable.
     """
 
     def __init__(
@@ -63,6 +62,10 @@ class SemanticVaeC2Trainer:
         max_samples: int,
         grad_accumulation_steps: int,
         max_grad_norm: float,
+        ctc_ramp_updates: int = 0,
+        global_grad_norm_abort_threshold: float = 0.0,
+        group_grad_norm_log_interval: int = 0,
+        raw_text_rms_abort_threshold: float = 0.0,
         logger: str | None,
         run_name: str,
         ema_kwargs: dict[str, Any],
@@ -77,6 +80,24 @@ class SemanticVaeC2Trainer:
             raise ValueError(f"Unsupported batch_size_type: {batch_size_type!r}")
         if logger not in {None, "tensorboard"}:
             raise ValueError("The reproducible S3 path supports only tensorboard or null logging")
+        if ctc_ramp_updates < 0:
+            raise ValueError(f"ctc_ramp_updates must be non-negative, got {ctc_ramp_updates}")
+        if not math.isfinite(global_grad_norm_abort_threshold) or global_grad_norm_abort_threshold < 0:
+            raise ValueError(
+                "global_grad_norm_abort_threshold must be finite and non-negative, "
+                f"got {global_grad_norm_abort_threshold}"
+            )
+        if group_grad_norm_log_interval < 0:
+            raise ValueError(f"group_grad_norm_log_interval must be non-negative, got {group_grad_norm_log_interval}")
+        if not math.isfinite(raw_text_rms_abort_threshold) or raw_text_rms_abort_threshold < 0:
+            raise ValueError(
+                f"raw_text_rms_abort_threshold must be finite and non-negative, got {raw_text_rms_abort_threshold}"
+            )
+        ctc_target_lambda = getattr(model, "ctc_lambda", None)
+        if not isinstance(ctc_target_lambda, (int, float)) or not math.isclose(
+            float(ctc_target_lambda), 0.1, rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise ValueError(f"Semantic-VAE C2 requires the fixed CTC target lambda 0.1, got {ctc_target_lambda!r}")
 
         self.accelerator = accelerator
         self.model = model
@@ -94,6 +115,11 @@ class SemanticVaeC2Trainer:
         self.max_samples = int(max_samples)
         self.grad_accumulation_steps = int(grad_accumulation_steps)
         self.max_grad_norm = float(max_grad_norm)
+        self.ctc_target_lambda = 0.1
+        self.ctc_ramp_updates = int(ctc_ramp_updates)
+        self.global_grad_norm_abort_threshold = float(global_grad_norm_abort_threshold)
+        self.group_grad_norm_log_interval = int(group_grad_norm_log_interval)
+        self.raw_text_rms_abort_threshold = float(raw_text_rms_abort_threshold)
         self.logger = logger
         self.training_contract_sha256: str | None = None
         self.noise_scheduler = None
@@ -129,6 +155,88 @@ class SemanticVaeC2Trainer:
         if not 0 <= stage_update <= self.max_stage_updates:
             raise ValueError(f"Invalid {self.stage} stage update: {stage_update}")
         return self.stage_start_update + stage_update
+
+    def ctc_lambda_at(self, stage_update: int) -> float:
+        """Return the CTC weight for the next update after ``stage_update`` completed updates."""
+
+        if not 0 <= stage_update <= self.max_stage_updates:
+            raise ValueError(f"Invalid {self.stage} stage update for CTC ramp: {stage_update}")
+        if self.ctc_ramp_updates == 0:
+            return self.ctc_target_lambda
+        fraction = min((stage_update + 1) / self.ctc_ramp_updates, 1.0)
+        return self.ctc_target_lambda * fraction
+
+    def _set_ctc_lambda(self, stage_update: int) -> float:
+        value = self.ctc_lambda_at(stage_update)
+        self.accelerator.unwrap_model(self.model).ctc_lambda = value
+        return value
+
+    def _synchronized_failure_count(self, local_failure: bool) -> int:
+        flag = torch.tensor(int(local_failure), device=self.accelerator.device, dtype=torch.int32)
+        return int(self.accelerator.reduce(flag, reduction="sum").item())
+
+    def _text_context_rms(self) -> tuple[float, float]:
+        transformer = getattr(self.accelerator.unwrap_model(self.model), "transformer", None)
+        raw = getattr(transformer, "last_text_context_raw_rms", None)
+        post = getattr(transformer, "last_text_context_post_rms", None)
+        values = []
+        for name, value in (("raw", raw), ("post", post)):
+            if not isinstance(value, torch.Tensor) or value.numel() != 1:
+                raise RuntimeError(
+                    f"Transformer must expose last_text_context_{name}_rms as a scalar tensor after forward"
+                )
+            values.append(float(value.detach().float().item()))
+        return values[0], values[1]
+
+    @torch.no_grad()
+    def _optimizer_group_grad_norms(self) -> dict[str, float]:
+        """Compute diagnostic pre-clip norms in FP64; call only at the configured sparse interval."""
+
+        norms: dict[str, float] = {}
+        for index, group in enumerate(self.optimizer.param_groups):
+            squared_norm = torch.zeros((), device=self.accelerator.device, dtype=torch.float64)
+            for parameter in group["params"]:
+                gradient = parameter.grad
+                if gradient is None:
+                    continue
+                gradient = gradient.coalesce().values() if gradient.is_sparse else gradient
+                parameter_norm = torch.linalg.vector_norm(gradient.detach(), ord=2, dtype=torch.float64)
+                squared_norm.add_(parameter_norm.square())
+            name = str(group.get("group_name", f"group_{index}"))
+            norms[name] = float(squared_norm.sqrt().item())
+        return norms
+
+    def _clip_gradients_or_fail(self) -> float:
+        """Clip gradients and abort every rank before ``optimizer.step`` on an unsafe pre-clip norm.
+
+        Accelerate 1.13 does not expose PyTorch's ``error_if_nonfinite`` keyword.  Its return value is the
+        pre-clip global norm, so synchronizing the explicit finite/threshold guard provides the same fail-fast
+        property without allowing a rank to enter ``optimizer.step`` after a failed check.
+        """
+
+        if self.max_grad_norm <= 0:
+            raise RuntimeError("Semantic-VAE C2 gradient safety requires max_grad_norm > 0")
+        grad_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+        if grad_norm is None:
+            local_norm = float("nan")
+        elif isinstance(grad_norm, torch.Tensor):
+            if grad_norm.numel() != 1:
+                raise RuntimeError(f"Global gradient norm must be scalar, got shape={tuple(grad_norm.shape)}")
+            local_norm = float(grad_norm.detach().float().item())
+        else:
+            local_norm = float(grad_norm)
+        local_failure = self.global_grad_norm_abort_threshold > 0 and (
+            not math.isfinite(local_norm) or local_norm > self.global_grad_norm_abort_threshold
+        )
+        failed_ranks = self._synchronized_failure_count(local_failure)
+        if failed_ranks:
+            self.optimizer.zero_grad(set_to_none=True)
+            raise FloatingPointError(
+                f"Unsafe pre-clip global gradient norm in {self.stage}: local_norm={local_norm!r}, "
+                f"abort_threshold={self.global_grad_norm_abort_threshold}, failed_ranks={failed_ranks}/"
+                f"{self.accelerator.num_processes}"
+            )
+        return local_norm
 
     def reset_ema_from_online(self) -> None:
         """Initialize a fresh stage-local EMA at step zero from online weights."""
@@ -415,6 +523,9 @@ class SemanticVaeC2Trainer:
                     update_seed = seed * 1_000_003 + stage_update * self.accelerator.num_processes
                     update_seed += self.accelerator.process_index
                     set_seed(update_seed)
+                ctc_lambda = self._set_ctc_lambda(stage_update)
+                grad_norm = None
+                group_grad_norms: dict[str, float] = {}
                 with self.accelerator.accumulate(self.model):
                     latent = batch["mel"].permute(0, 2, 1)
                     loss, components, _, _ = self.model(
@@ -426,12 +537,44 @@ class SemanticVaeC2Trainer:
                         video_lens=batch["video_lengths"],
                         noise_scheduler=self.noise_scheduler,
                     )
-                    if not torch.isfinite(loss):
+                    try:
+                        raw_text_rms, post_text_rms = self._text_context_rms()
+                    except RuntimeError:
+                        raw_text_rms = float("nan")
+                        post_text_rms = float("nan")
+                    invalid_text_context = self.raw_text_rms_abort_threshold > 0 and (
+                        not math.isfinite(raw_text_rms)
+                        or raw_text_rms > self.raw_text_rms_abort_threshold
+                        or not math.isfinite(post_text_rms)
+                    )
+                    invalid_text_ranks = self._synchronized_failure_count(invalid_text_context)
+                    if invalid_text_ranks:
+                        self.optimizer.zero_grad(set_to_none=True)
+                        raise FloatingPointError(
+                            f"Unsafe text context in {self.stage}: raw_rms={raw_text_rms!r}, "
+                            f"post_rms={post_text_rms!r}, raw_abort_threshold="
+                            f"{self.raw_text_rms_abort_threshold}, failed_ranks={invalid_text_ranks}/"
+                            f"{self.accelerator.num_processes}"
+                        )
+
+                    nonfinite_loss_ranks = self._synchronized_failure_count(not bool(torch.isfinite(loss).item()))
+                    if nonfinite_loss_ranks:
                         keys = batch.get("utterance_keys", ("<unknown>",))
-                        raise FloatingPointError(f"Non-finite {self.stage} loss for batch keys={list(keys)[:4]}")
+                        self.optimizer.zero_grad(set_to_none=True)
+                        raise FloatingPointError(
+                            f"Non-finite {self.stage} loss for batch keys={list(keys)[:4]}, "
+                            f"failed_ranks={nonfinite_loss_ranks}/{self.accelerator.num_processes}"
+                        )
                     self.accelerator.backward(loss)
-                    if self.max_grad_norm > 0 and self.accelerator.sync_gradients:
-                        self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                    if self.accelerator.sync_gradients:
+                        next_stage_update = stage_update + 1
+                        if (
+                            self.group_grad_norm_log_interval > 0
+                            and next_stage_update % self.group_grad_norm_log_interval == 0
+                            and self.is_main
+                        ):
+                            group_grad_norms = self._optimizer_group_grad_norms()
+                        grad_norm = self._clip_gradients_or_fail()
                     self.optimizer.step()
                     self.scheduler.step()
                     self.optimizer.zero_grad()
@@ -446,13 +589,22 @@ class SemanticVaeC2Trainer:
                         stage_update=str(stage_update),
                         cumulative_update=str(cumulative_update),
                         loss=loss.item(),
+                        ctc_lambda=ctc_lambda,
+                        grad_norm=grad_norm,
                         **components,
                     )
                 else:
                     cumulative_update = self.cumulative_update(stage_update)
 
-                if self.accelerator.is_local_main_process and self.logger == "tensorboard":
+                if self.is_main and self.logger == "tensorboard":
                     self.writer.add_scalar("loss", loss.item(), cumulative_update)
+                    self.writer.add_scalar("ctc_lambda", ctc_lambda, cumulative_update)
+                    self.writer.add_scalar("text_context/raw_rms", raw_text_rms, cumulative_update)
+                    self.writer.add_scalar("text_context/post_rms", post_text_rms, cumulative_update)
+                    if grad_norm is not None:
+                        self.writer.add_scalar("grad_norm/global", grad_norm, cumulative_update)
+                    for group_name, value in group_grad_norms.items():
+                        self.writer.add_scalar(f"grad_norm/group/{group_name}", value, cumulative_update)
                     for key, value in components.items():
                         self.writer.add_scalar(key, value, cumulative_update)
                     for group in self.optimizer.param_groups:
