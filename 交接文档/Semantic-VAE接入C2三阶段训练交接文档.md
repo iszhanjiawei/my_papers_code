@@ -1,12 +1,12 @@
 # Semantic-VAE 接入 C2 与分阶段 mel warm-start 交接文档
 
-> 更新日期：2026-08-08
+> 更新日期：2026-08-09
 > 工作区：`/zjw524/projects/alignDiT_idea6`
 > Git 仓库：`/zjw524/projects/alignDiT_idea6/my_papers_code`
 > 远程：`https://github.com/iszhanjiawei/my_papers_code.git`
 > 当前主分支：`main`
 
-## 0. 2026-08-08 当前权威路线
+## 0. 2026-08-09 当前权威路线
 
 原 6×A40、500k scratch 路线因训练时间过长，已按用户要求安全停止。随后在独立快照：
 
@@ -22,9 +22,10 @@ AlignDiT_mmdit_c2_semantic_vae/
 only-VAE 服务器上的 CelebVDub manifest、79,826 个 64D/40 Hz latent、79,826 个
 25 Hz -> 40 Hz 视频 cache，以及 S3a/S3b trainer/chain 都已经完成。S2c contract 绑定的 LibriSpeech
 train-only `train_normalization.json` 已传入 only-VAE 并按 SHA、schema、计数和 64 通道统计严格核验；真实
-dataset、单卡最坏 batch 和 4 卡 BF16 1-update canary 也已全部通过。**正式 S3a -> S3b 自动串联训练已于
-2026-08-08 20:48:57 +08:00 启动**，当前应从第 0.8 节列出的 PID、日志、锁 owner 和 checkpoint 元数据读取
-实时状态，不再把 normalization 或 canary 写成待解决阻塞。
+dataset、单卡最坏 batch 和 4 卡 BF16 1-update canary 也已全部通过。正式 S3a 已完成并严格验证，S3b
+首次运行在累计 89,572 时因 rank 0 收到外部 `SIGKILL` 中断；用户随后明确选择保持原计划，不改配置，
+从最近完整累计 85k checkpoint 严格恢复。**恢复任务已于 2026-08-09 15:49:00 +08:00 启动并持续运行**。
+当前应从第 0.9 节列出的 PID、日志、锁 owner 和 checkpoint 元数据读取实时状态。
 
 ### 0.1 当前状态
 
@@ -48,7 +49,10 @@ dataset、单卡最坏 batch 和 4 卡 BF16 1-update canary 也已全部通过�
 | 真实 CelebVDub dataset gate | **已通过** | 79,508 条 CTC-valid train 全量检查；4,376 个动态 batch 无遗漏/重复/超限 |
 | 单卡最坏 batch gate | **已通过** | BF16 forward/backward、冻结权重不漂移、关键新路径梯度及一次临时 optimizer/EMA step 均通过 |
 | 4 卡 1-update canary | **已通过** | 独立目录；update/EMA=1；4.346 GB checkpoint 经严格 resume validator 验证 |
-| S3a/S3b trainer/chain | **正式训练中** | S3a 5k 后严格验证并自动进入 S3b 195k；2026-08-08 20:48:57 启动 |
+| S3a | **已完成并严格验证** | 5k updates；`model_5000.pt` 与 `model_last.pt` 恢复状态完全一致 |
+| S3b 首次运行 | **外部 SIGKILL 中断** | 实际到累计 89,572；最近完整 checkpoint 为累计 85k；不是代码、OOM、NCCL 或服务器重启 |
+| S3b 严格恢复 | **正式训练中** | 2026-08-09 15:49 从累计 85k 恢复；模型、optimizer、scheduler、EMA 和 update 全部续接 |
+| S3b loss 风险 | **已知且继续观察** | diffusion loss 在累计约 19k 后恶化并长期约 21–22；用户知情后选择继续完成原计划 |
 | LibriSpeech train normalization | **阻塞已解除** | only-VAE 原文件 SHA256、schema、count、frame_count 和 64D mean/std 全部匹配 |
 
 scratch 保留目录：
@@ -249,6 +253,7 @@ AlignDiT_mmdit_c2_semantic_vae/logs/validate_celebvdub_video_40hz_20260808.log
 | `8ae61ee` | S3a/S3b staged trainer、config 和 chain launcher | 已实现并进入正式训练 |
 | `ed80a0b` | 修复 checkpoint semantic digest 对 0 维 optimizer/EMA tensor 的字节哈希 | 同一 4 卡 canary checkpoint 已重新严格验证通过 |
 | `c6bef85` | 用原子目录锁替换 DPC 文件系统上无法可靠释放的 `flock` | 正式 chain 已通过 owner 可审计的跨主机互斥锁启动 |
+| `0df98e2` | 记录 normalization、全部门禁和首次正式 S3 启动现场 | 已被本文第 0.9 节的中断/恢复状态继续补充 |
 
 `73f9256` 固定了音频和视频相同的 padded length/mask；输入卷积和 CTC projector 均保证 padding-safe；
 两个 CTC head 位于 `[6,12]`，保持 40 Hz、ratio `[1,1]`，使用 FP32 CTC、精确可行性检查和
@@ -360,13 +365,182 @@ checkpoint 保存和验证时间；实时 update、速度和 ETA 必须重新读
 chain 会在 S3a 精确 5,000 updates 后保存并严格验证，只有验证通过才自动启动 S3b 195,000 updates；
 `model_last.pt` 每 5,000 updates 更新，正式编号权重按阶段配置保存。
 
+### 0.9 S3 实际执行、外部中断与 85k 严格恢复
+
+#### 0.9.1 S3a 已完成，不再重复训练
+
+首个正式 chain 于 2026-08-08 20:48:57 启动。S3a 在 21:34 左右完成 5,000 updates，chain 于
+21:36:50 完成严格 validator 后自动进入 S3b。S3a 两份最终文件均为 4,346,037,616 bytes，且当时
+byte SHA256 和四类 resumable-state digest 完全一致：
+
+```text
+directory:
+  /zjw524/projects/data/ckpts/
+    AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3a_40hz_CelebVDub_char
+model_5000.pt SHA256:
+  23a5d6696315722f3189b9bf9f590a6b436cacbcae919f1753a5469136e5a7c7
+model_last.pt SHA256:
+  23a5d6696315722f3189b9bf9f590a6b436cacbcae919f1753a5469136e5a7c7
+contract SHA256:
+  ce26935d98ab4bafe8ea583cde151754af72e34e4acb66a5096397744d4a1b50
+stage/cumulative/EMA:
+  5000 / 5000 / 5000
+```
+
+S3b 已完整加载 S3a EMA 的 703/703 个 key，ignored/new/shape mismatch 均为空，loaded fraction 为 1.0。
+因此后续无需再跑 S3a，也不能用 S2c 绕过已经完成的 S3a 多模态适配。
+
+#### 0.9.2 S3b 首次运行停止的直接原因
+
+S3b 首次运行日志：
+
+```text
+AlignDiT_mmdit_c2_semantic_vae/logs/
+  train_semantic_vae_c2_s3b_4x4090_20260808_204857.log
+```
+
+进程运行到累计 update 89,572 时，于 `2026-08-09 15:38:37 +08:00` 停止。直接证据是 rank 0
+PID 81105 收到 `SIGKILL`，exit code 为 `-9`；Torch Elastic 检测到 rank 0 消失后才向其余 rank
+发送 SIGTERM。已经排除：
+
+- Python/模型代码 traceback；
+- CUDA OOM；
+- CPU/cgroup OOM：检查时 cgroup `oom=0`、`oom_kill=0`，系统仍有约 442 GiB available；
+- NaN/Inf、FloatingPointError；
+- NCCL error/timeout；
+- 磁盘不足；
+- 服务器重启：当时 uptime 已超过 43 天。
+
+因此这不是训练代码自行停止，而是外部强杀。用户在相近时间切换网络，最合理推断是 Bitahub/远程会话
+平台的清理机制被连接变化触发，但没有预先开启 audit/eBPF 时，Linux 事后不能给出 `SIGKILL` 发送者，
+所以不能把该推断写成 100% 已证明。`setsid` 只能防普通 SSH 断开产生的 SIGHUP，无法抵抗平台主动
+发送的 SIGKILL；以后不能仅凭“使用了 setsid”就断言平台级强杀绝不会发生。
+
+#### 0.9.3 恢复点为什么是 85k，而不是 89,572
+
+S3b `last_per_updates=5000`，所以中断前最近一次原子落盘是：
+
+```text
+/zjw524/projects/data/ckpts/
+  AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3b_40hz_CelebVDub_char/model_last.pt
+
+resume-time metadata:
+  semantic_vae_c2_stage: s3b
+  stage_update:          80000
+  cumulative_update:     85000
+  update:                85000
+  EMA step:              80000
+  EMA initted:           true
+  model keys:            703
+  EMA keys:              705
+  contract SHA256:       cca7cf315b956cee8a125337be2f3759efc946219413e8b70670c74c0ed8c1f3
+```
+
+89,572 只是进程内存中的最新步数，85,001–89,572 没有完整 checkpoint，不能恢复，也不能伪造 update。
+恢复后必须重新计算这 4,572 步。
+
+#### 0.9.4 当前恢复任务
+
+用户在了解 loss 风险后明确要求保持原计划：不新建 S3b-v2、不修改 LR/解冻策略，直接从最近完整 85k
+checkpoint 继续。因此 2026-08-09 的恢复没有修改任何代码或配置，使用原 S3b 目录做 same-stage strict resume：
+
+```text
+恢复启动时间:
+  2026-08-09T15:49:00+08:00
+恢复 launcher PID/SID（启动现场，必须实时复查）:
+  347787 / 347787
+outer log:
+  AlignDiT_mmdit_c2_semantic_vae/logs/
+    train_semantic_vae_c2_chain_resume_s3b_from_85000_4x4090_20260809.log
+stage log:
+  AlignDiT_mmdit_c2_semantic_vae/logs/
+    train_semantic_vae_c2_s3b_4x4090_20260809_154901.log
+atomic lock:
+  /zjw524/projects/data/ckpts/
+    .aligndit_semantic_vae_c2_s3_chain_4x4090.lock.d
+lock owner:
+  host=bitahub-a20751278753968128132306
+  pid=347787
+  started_at=2026-08-09T15:49:00+08:00
+  start_stage=s3b
+```
+
+恢复 chain 先重新验证 S3a 的两份 5k 文件和 contract，再由 S3b trainer 验证原 S3b contract，随后完整加载：
+
+- online model；
+- AdamW optimizer state/moments；
+- scheduler state；
+- EMA model、initted 和 step；
+- stage/cumulative update。
+
+数据 epoch/batch 位置由 stage update 重建；`deterministic_update_seed=true` 按 stage update 和 rank 重建
+flow noise/time/dropout 随机流。恢复后日志已连续出现累计 85,001 之后的更新。语义上这是完整断点续训，
+不是只载入模型权重重新微调；但 CUDA/DDP 运算不承诺逐 bit 与未中断轨迹完全相同。
+
+`2026-08-09 17:15:38 +08:00` 状态快照：累计 update 91,303，最新完整 `model_last.pt` 为累计 90k，
+四卡显存约 16.1–18.5 GiB，速度约 1.25 update/s，无新的 OOM/NCCL/traceback。该 update、PID、速度
+都只是历史快照，新会话必须从实时进程、日志和 checkpoint 元数据重新读取。
+
+#### 0.9.5 loss 风险：机械恢复正确不等于优化健康
+
+S3b 的 parent、offset、contract、scheduler 和恢复机制都已核对正确，但首次运行的 loss 有持续恶化：
+
+| 区间 | diffusion loss 现象 |
+|---|---:|
+| S3b stage 1–10k | 均值约 1.39，正常 |
+| stage 约 14k | 开始快速上升 |
+| stage 15–37k | 长期约 15.9 |
+| stage 约 38k 以后 | 长期约 21–22 |
+
+512 条真实 latent 抽样中，“模型恒输出 0”的理论 flow MSE 约为 2.10，因此 21–22 不能解释为 latent
+天然尺度；CTC 也从早期约 0.8–1.7 恶化到约 4。最可能风险是 S3b 一次性解冻全音频主干后，
+multimodal `5e-5`、interface `2e-5`、audio backbone 最高 `1e-5`，并只 warmup 5k，导致长期定向漂移；
+`max_grad_norm=1.0` 只能限制单步梯度，不能阻止累计漂移。
+
+用户已经获知上述证据，但当前决定是继续完成原 S3b 至累计 200k，再用 100k/150k/200k 权重实际推理评估。
+新会话不得把风险隐瞒为“训练完全健康”，也不得未经用户再次授权擅自停止、改 LR 或另开 S3b-v2。
+
+### 0.10 已踩过的坑：新会话不要重复
+
+1. **不要只改通道数就把 mel 入口当 Semantic-VAE 入口。** 80D/100 Hz mel 与 64D/40 Hz latent 的
+   dataset、input/output、CTC、mask、video 对齐、decoder 和 checkpoint 契约都不同。
+2. **不要在 CelebVDub 上重算 normalization。** 唯一坐标系是 S2c 使用的 LibriSpeech train-only
+   mean/std，文件 SHA256 必须为 `65b8ab...d02c3f6`。
+3. **不要把 25 Hz 视频假装成 40 Hz。** 当前做法是按每条 latent 目标长度，以 linear、
+   `align_corners=false` 精确插值，缓存必须由 completion/spec/index/manifest SHA 联合绑定。
+4. **CTC 不能继续下采样到 20 Hz。** 两个 CTC head 固定在 `[6,12]`，sampling ratio `[1,1]`，
+   保持 40 Hz，并在训练前按重复字符的精确最短路径过滤 105 条不可行 train 样本。
+5. **跨阶段与同阶段恢复不能混用。** S2c -> S3a、S3a -> S3b 只取父阶段 EMA weights-only，并重建
+   optimizer/scheduler/EMA；S3b 中断恢复则必须恢复 online/optimizer/scheduler/EMA/update 全部状态。
+6. **不要给新阶段复用含旧 `model_last.pt` 的目录。** trainer 会自动 same-stage resume；若实验语义或
+   LR 改变，必须使用全新目录和 contract。当前用户选择的是原实验 same-stage resume，所以才复用原目录。
+7. **DPC 文件系统上的 `flock` 不可靠。** 已由 `c6bef85` 改成带 owner 的原子目录锁；不要改回
+   `flock`，也不要直接删除活跃锁目录来绕过单实例保护。
+8. **checkpoint validator 必须支持 0 维 optimizer tensor。** `ed80a0b` 已在字节 reinterpret 前 flatten；
+   不要恢复旧的 `tensor.view(torch.uint8)`，否则 AdamW scalar step 会让有效 checkpoint 校验失败。
+9. **`setsid` 不是 SIGKILL 防护。** 它能抵抗 SSH SIGHUP，但平台级强杀仍会停止任务。网络切换前后应检查
+   远程平台生命周期；中断后必须从日志确认 root cause，不能把所有停止都归咎于代码。
+10. **日志 finite 不代表训练健康。** 当前 S3b 没有 NaN/OOM，但 diffusion/CTC loss 已恶化；必须同时看
+    趋势和真实评估，不能只看进程、GPU 或 `update/s`。
+11. **最后一个 MM block 的 6 个纯视频输出参数无梯度是当前计算图的已知事实。** 末层之后视频输出无人
+    消费，但同层 video K/V -> audio 梯度非零；不要误判成整个视频条件路径失效。
+12. **不要混用 canary、正式目录或其他服务器结果。** canary 固定在 `_canary/`；正式 S3a/S3b 各自独立；
+    评测必须记录 checkpoint SHA、推理目录和样本数。
+13. **checkpoint 间隔内的进度不可恢复。** `model_last.pt` 每累计 5k 更新；进程日志中的更高 update 若未
+    原子落盘，只能重算，不能手工改 metadata 冒充恢复。
+14. **不要提交训练产物。** checkpoint、日志、TensorBoard、Hydra outputs、cache 和两个既有未跟踪
+    `data` 软链接都不得混入 Git；只显式暂存本次源码或文档。
+15. **S3b 文件名使用累计 update，不是本阶段 update。** 例如 `model_50000.pt` 内部是 S3b
+    `stage_update=45000, cumulative_update=50000`；最终 `model_200000.pt` 对应 S3b stage 195k。
+
 ## 1. 给新会话的一句话摘要
 
 当前工作是把 AlignDiT 的 **C2 结构（12 层 MM-DiT + 文本 Cross-Attention，后 6 层纯音频 DiT）**
 从 `80 维、100 Hz mel + HiFi-GAN` 改造为 `64 维、40 Hz Semantic-VAE latent + Semantic-VAE decoder`。
 500k scratch 已停止；mel500k EMA 到 40 Hz latent 的 S1–S2c 分阶段适配已全部训练完成，
 并固定选用 S2c `model_70000.pt`。CelebVDub 40 Hz 音频/视频数据、两类全量只读校验与 S3 C2 trainer 均已完成；
-LibriSpeech train normalization 和全部真实门禁已通过，正式 S3a -> S3b 自动串联训练已启动。
+LibriSpeech train normalization 和全部真实门禁已通过。S3a 5k 已完成；S3b 首次运行遭外部 SIGKILL，
+现已从完整累计 85k checkpoint 原配置恢复并继续训练，且已知 loss 恶化风险等待 100k/150k/200k 实评。
 详细状态以第 0 节为准。
 
 ## 2. 为什么选 C2 作为主干
@@ -732,8 +906,9 @@ LibriSpeech 阶段；与 S2c contract 完全一致的 `train_normalization.json`
 
 ## 7. 当前方案：mel 500k warm-start 与后续 C2 接入
 
-S1–S2c 已完成实现、canary 和全部正式训练；最终使用 S2c 70k EMA。S3a/S3b 已在独立 64D/40 Hz
-快照中实现并启动正式自动串联训练；不能回退使用 80D/100 Hz CelebVDub 入口。
+S1–S2c 已完成实现、canary 和全部正式训练；最终使用 S2c 70k EMA。S3a 已在独立 64D/40 Hz 快照中
+完成 5k 并严格验证；S3b 首次运行遭外部 SIGKILL 后已从完整累计 85k checkpoint 原配置恢复。
+不能回退使用 80D/100 Hz CelebVDub 入口。
 
 论文上分三阶段，实际执行建议分为 6 个独立任务：
 
@@ -743,8 +918,8 @@ S1–S2c 已完成实现、canary 和全部正式训练；最终使用 S2c 70k E
 | 阶段二 | S2a：解冻后 6 层 | LibriSpeech latent | 10k | **已完成** |
 | 阶段二 | S2b：解冻后 12 层 | LibriSpeech latent | 10k | **已完成** |
 | 阶段二 | S2c：全音频主干适配 | LibriSpeech latent | 70k | **已完成，选用 `model_70000.pt`** |
-| 阶段三 | S3a：训练新多模态模块 | CelebVDub latent/text/video | 5k | **正式训练中** |
-| 阶段三 | S3b：完整 C2 微调 | CelebVDub latent/text/video | 195k | **由 chain 排队，S3a 严格验收后自动启动** |
+| 阶段三 | S3a：训练新多模态模块 | CelebVDub latent/text/video | 5k | **已完成并严格验证** |
+| 阶段三 | S3b：完整 C2 微调 | CelebVDub latent/text/video | 195k | **外部 SIGKILL 后已从累计 85k 严格恢复，正式训练中** |
 
 建议初始预算：
 
@@ -1166,6 +1341,10 @@ latent 原生 LibriSpeech 预训练 -> C2 CelebVDub
 - 正式 S3a -> validator -> S3b chain 已于 2026-08-08 20:48:57 +08:00 启动；
 - S3a 结束时必须确认 `model_5000.pt` 与 `model_last.pt` 严格验证通过，且 S3b 的父 SHA/size/contract
   来自该 S3a 最终权重；chain 已自动执行这些约束；
+- S3b 首次运行在累计 89,572 因外部 SIGKILL 中断，最近完整 checkpoint 为累计 85k；不是代码异常；
+- 用户选择保持原配置，恢复 chain 已于 2026-08-09 15:49:00 从累计 85k 完整恢复 model、optimizer、
+  scheduler、EMA 和 update；当前状态与日志见第 0.9 节；
+- S3b diffusion/CTC loss 存在第 0.9.5 节记录的恶化风险；当前决策是继续训练，但不得把 finite 误报成健康；
 - 正式训练后评估累计 50k/100k/150k/200k。
 
 ## 14. Git 与实验跟踪要求
@@ -1212,5 +1391,9 @@ latent 原生 LibriSpeech 预训练 -> C2 CelebVDub
 6. 用真实 tokenizer 做 CTC 最短路径预检，明确过滤名单，不依赖 `zero_infinity=True` 静默吞掉错标样本。
 7. 不要把 codec ceiling WAV 目录当成 latent cache，也不要修改旧 `pretrain.py` 的 mel 语义。
 8. 单卡 forward/backward 和独立 4-rank BF16 1-update canary 已通过；不要重复写入正式目录。现在应先核对
-   PID/SID、原子锁 owner、outer/stage 日志、GPU、最新 update 和 checkpoint，再持续监控正式 S3a/S3b chain。
-9. 每个后续实现或文档步骤单独 commit/push，并核对本地 HEAD 与 `origin/main` 一致。
+   恢复 launcher PID/SID、原子锁 owner、恢复 outer/stage 日志、GPU、最新 update 和 checkpoint，再持续监控 S3b。
+9. 若进程再次消失，先查 stage 日志最后的 root cause、服务器 uptime、cgroup `memory.events` 和 GPU；不要
+   未诊断就重启，也不要把外部 SIGKILL 误报成代码错误。
+10. 同阶段只从 `model_last.pt` 的完整累计 update 恢复；日志中高于该值但未落盘的步数必须重算。
+11. 当前用户决定不改配置继续原 S3b；除非用户重新授权，不要擅自改 LR、另开 v2 或停止训练。
+12. 每个后续实现或文档步骤单独 commit/push，并核对本地 HEAD 与 `origin/main` 一致。
