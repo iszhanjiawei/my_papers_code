@@ -276,6 +276,24 @@ PYTHONPATH=src python -u src/aligndit/script/misc/smoke_test_mmdit.py
 - 若用户要求运行重任务，先确认目标快照、配置、checkpoint、输出目录和当前 GPU/Slurm 状态，防止覆盖或续训错误实验。
 - 不要提交数据集、模型 checkpoint、日志、生成音频或新的大文件。若任务必须更新二进制资产，先向用户确认。
 
+### 每次训练必须提供 TensorBoard 损失曲线
+
+每次启动任何训练（包括本机、后台和 Slurm 训练）时，必须同时完成以下事项；不得只启动训练进程而不提供可访问的损失曲线：
+
+1. 确认训练器使用 TensorBoard event 文件持续记录损失，至少包含总损失和该实验实际使用的各分项损失（例如 flow/CFM、CTC 或 projection loss）。只有文本日志不算完成此要求。仅主进程写 event，避免 DDP 多 rank 重复记录；续训必须沿用或明确区分对应 run 目录。
+2. 记录本次训练的确切 TensorBoard `logdir`，并在 Devin 可访问的机器上实际启动 TensorBoard，不能只给出一条尚未运行的命令。长时服务同样使用 `setsid`，例如：
+
+   ```bash
+   setsid /zjw524/ENTER/envs/aligndit/bin/python -m tensorboard \
+     --logdir <event-logdir> --host 0.0.0.0 --port <free-port> \
+     > <tensorboard-log> 2>&1 &
+   ```
+
+   若训练在其他节点而 event 文件位于共享文件系统，则在 Devin 所在机器上对该共享 `logdir` 启动 TensorBoard。
+3. 启动后检查 TensorBoard 进程、监听端口和 HTTP 响应，并确认 event 文件会随训练更新、TensorBoard Scalars 页面能看到对应的 loss tag。端口被占用时改用一个经检查的空闲端口，不要盲目复用旧端口。
+4. 每次启动训练后都必须在交接中同时给出：训练 run 名称、TensorBoard `logdir`、TensorBoard PID、端口和可直接点击的转发地址。并明确告诉用户：打开 Devin 底部面板的“端口”页签，找到该端口的那一行，点击“转发地址”列中的具体链接。必须报告当次运行实际显示的链接，不得把示例端口或过期链接当作当前地址。
+5. TensorBoard 未成功记录 loss、未运行或无法通过转发地址访问时，不得宣称训练启动已完成；应继续排查，或如实报告阻塞原因。
+
 ### 长时间后台任务
 
 用户明确要求在当前机器启动非 Slurm 长任务时，必须用 `setsid` 创建独立 session，不使用 `nohup`。`nohup` 可能只保护外层 Shell，而 `accelerate`/`torchrun` worker 仍留在原进程组，SSH 断开后可能收到 SIGHUP。
