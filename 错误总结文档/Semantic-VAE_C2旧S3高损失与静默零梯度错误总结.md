@@ -26,7 +26,8 @@ S2c 已经完成输入输出维度、时间频率、latent 分布和音频主干
 1. **结构直接根因**：四层 TextEmbedding/ConvNeXt 没有最终输出归一化，放大的文本 context 被连续送入
    12 层 Cross-Attention；
 2. **训练触发条件**：旧 S3a/S3b 对文本、视频、CTC、Cross-Attention 等约 1.96 亿新参数统一使用
-   `5e-5`，warmup 很短，且在 5k 边界重建 optimizer/scheduler/EMA；
+   `5e-5`，warmup 很短，且在 5k 边界重建 optimizer/scheduler、清空 Adam moments；EMA 也被重置，
+   但 EMA 不参与反向传播，不是爆炸触发器；
 3. **错误隐藏机制**：旧 trainer 丢弃 `clip_grad_norm_` 返回的 pre-clip norm。FP32 norm 溢出为
    `inf` 后，clip coefficient 变成 0，梯度被静默清零，但训练进程仍继续增加 update。
 
@@ -54,7 +55,8 @@ S2c 已经完成输入输出维度、时间频率、latent 分布和音频主干
 - warmup 为 20k；
 - 直接加载 `AlignDiT_pretrain_LibriSpeech_500000.pt`；
 - `AdamW(model.parameters())` 从一开始覆盖全部参数，没有隐藏的冻结阶段；
-- 新增 residual 路径采用 zero gate 起步，降低随机分支对已加载音频路径的初始扰动；
+- 部分新增 residual 分支采用 zero gate 起步，降低但不能消除随机分支的初始扰动；随机 video K/V 仍可
+  经已加载的 audio attention gate 从首步影响音频；
 - 只构造一次 optimizer、scheduler 和 EMA，中途不在 5k 处重置。
 
 对应代码：
@@ -110,7 +112,8 @@ mel-to-latent 接口适配。
 | optimizer/scheduler/EMA | 新建 | 在 5k 边界再次新建 |
 
 阶段切换丢掉了 S3a 已形成的 Adam moments，又给已经开始漂移的文本塔一次短 warmup、高 LR 重启。
-所以这里的两阶段不是“因为用了 VAE 所以必须这样做”，而是一次后来被实验证伪的保护策略。
+EMA step 的重置还破坏了评估权重的时间线连续性，但不参与梯度爆炸的因果链。所以这里的两阶段不是
+“因为用了 VAE 所以必须这样做”，而是一次后来被实验证伪的保护策略。
 
 ## 3. 训练错误到底是什么
 
@@ -172,12 +175,16 @@ gradient = gradient * 0
 self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 ```
 
-但没有读取返回值，也没有在 `optimizer.step()` 前检查 pre-clip norm。对应旧代码：
+但没有读取返回值，也没有在 `optimizer.step()` 前检查 pre-clip norm。本事故的直接故障源是修复提交
+`66791d8` 之前的 Semantic-VAE trainer：
 
 ```text
-AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/
-  src/aligndit/model/trainer_vt.py:210-226
+git show 66791d8^:AlignDiT_mmdit_c2_semantic_vae/src/aligndit/model/trainer_semantic_vae_c2.py
+# 历史版本约 429-435 行
 ```
+
+旧 mel `trainer_vt.py:210-226` 也存在“丢弃 clip 返回值”的同类潜在缺陷，但它不是这次 Semantic-VAE
+事故日志所对应的直接代码版本。
 
 结果是：loss finite、参数 grad 元素 finite、进程无异常，但裁剪后的有效梯度几乎全为 0。
 
@@ -275,8 +282,9 @@ AlignDiT_mmdit_c2_semantic_vae/
 - 12 层 Cross-Attention 共用同一个受控 context；
 - 同时记录 raw/post text RMS。
 
-在已经崩坏的旧 50k checkpoint 上做只读反事实实验，仅加这一层 context norm 就把 raw grad norm 从约
-`2.7e18` 降到约 `83.9`，证明文本 context 无归一化是直接因果点。
+在已经崩坏的旧 50k checkpoint 上，用另一组固定合成审计输入做只读反事实实验，仅增加这一层 context
+norm 就把 raw grad norm 从约 `2.7e18` 降到约 `83.9`。这组数值和第 3.3 节正式真实 batch 的约 `3e23`
+来自不同输入与审计设置，不能横向当成同一 batch；两者共同证明 context norm 会把异常梯度降低多个数量级。
 
 提交：`e345c320ee4f9c28503b5f562ea8237fea7c5d3b`。
 
