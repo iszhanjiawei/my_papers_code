@@ -1,9 +1,9 @@
 """Strict checkpoint migration and parameter policies for Semantic-VAE C2.
 
-S3a is the only representation-to-multimodal boundary: it imports the S2c
-pure-audio EMA, explicitly drops the obsolete HuBERT projector, and trains
-only parameters that do not belong to the imported audio path.  S3b imports
-the complete S3a EMA but starts a fresh optimizer, scheduler, and EMA.
+The active ``s3`` policy imports the S2c pure-audio EMA once and jointly
+adapts every parameter for 200k updates with risk-specific learning rates.
+The historical ``s3a``/``s3b`` policy remains available so its unstable run
+can be audited without conflating its checkpoints with the replacement run.
 """
 
 from __future__ import annotations
@@ -17,7 +17,9 @@ import torch
 from torch import nn
 
 
-S3_STAGES = ("s3a", "s3b")
+S3_STAGES = ("s3a", "s3b", "s3")
+LEGACY_STAGED_S3_STAGES = frozenset({"s3a", "s3b"})
+SINGLE_STAGE_S3 = "s3"
 S3A_SOURCE_KIND = "s2c_audio"
 S3B_SOURCE_KIND = "s3a_c2"
 ParentKind = Literal["s2c_audio", "s3a_c2"]
@@ -345,6 +347,43 @@ def _s3b_parameter_category(name: str) -> str:
     raise RuntimeError(f"Unexpected parameter outside the Semantic-VAE C2 transformer: {name}")
 
 
+def _single_stage_parameter_category(name: str) -> str:
+    """Assign one risk-specific optimizer category to every S3 parameter."""
+
+    if name.startswith("transformer.text_embed."):
+        return "text_conditioner"
+    if name.startswith("transformer.video_embed."):
+        return "multimodal_core"
+    if name.startswith("transformer.projectors_ctc."):
+        return "ctc_heads"
+    if name.startswith(("transformer.input_embed.proj.", "transformer.proj_out.")):
+        return "interface"
+    if name.startswith(("transformer.time_embed.", "transformer.norm_out.")):
+        return "shared_conditioning"
+
+    block_prefix = "transformer.transformer_blocks."
+    if name.startswith(block_prefix):
+        parts = name.split(".")
+        if len(parts) < 4:
+            raise RuntimeError(f"Cannot parse Transformer block parameter: {name!r}")
+        try:
+            block_index = int(parts[2])
+        except ValueError as error:
+            raise RuntimeError(f"Cannot parse audio block index from {name!r}") from error
+        block_module = parts[3]
+        if block_index < 12:
+            if block_module == "cross_attn":
+                return "text_conditioner"
+            if block_module in {"cross_attn_ada", "v_attn_norm"}:
+                return "multimodal_gates"
+            if block_module in {"v_attn", "v_ff"}:
+                return "multimodal_core"
+        return "audio_blocks_0_5" if block_index < 6 else "audio_backbone_rest"
+    if name.startswith("transformer."):
+        return "audio_backbone_rest"
+    raise RuntimeError(f"Unexpected parameter outside the Semantic-VAE C2 transformer: {name}")
+
+
 def configure_s3_parameters(
     model: nn.Module,
     *,
@@ -352,7 +391,7 @@ def configure_s3_parameters(
     learning_rates: dict[str, float],
     weight_decay: float,
 ) -> tuple[list[dict[str, Any]], S3ParameterReport]:
-    """Apply S3a/S3b freezing and build complete, non-overlapping AdamW groups."""
+    """Apply the selected S3 policy and build non-overlapping AdamW groups."""
 
     if stage not in S3_STAGES:
         raise ValueError(f"Unknown Semantic-VAE C2 stage: {stage!r}")
@@ -380,9 +419,9 @@ def configure_s3_parameters(
     loaded_count = 0
 
     for name, parameter in named_parameters:
-        category = _s3b_parameter_category(name)
+        category = _single_stage_parameter_category(name) if stage == SINGLE_STAGE_S3 else _s3b_parameter_category(name)
         categories.setdefault(category, []).append(name)
-        is_new = category == "multimodal_new"
+        is_new = _is_new_multimodal_parameter(name)
         new_count += int(is_new)
         loaded_count += int(not is_new)
         parameter.requires_grad = is_new if stage == "s3a" else True

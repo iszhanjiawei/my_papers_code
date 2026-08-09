@@ -1,4 +1,4 @@
-"""Strict S3a/S3b training entrypoint for 40-Hz Semantic-VAE C2."""
+"""Strict legacy-staged and stable single-stage training entrypoint for Semantic-VAE C2."""
 
 from __future__ import annotations
 
@@ -21,9 +21,11 @@ from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.semantic_vae_c2_stage import (
+    LEGACY_STAGED_S3_STAGES,
     S3_STAGES,
     S3A_SOURCE_KIND,
     S3B_SOURCE_KIND,
+    SINGLE_STAGE_S3,
     configure_s3_parameters,
     load_s3_parent_ema,
     sha256_file,
@@ -43,8 +45,9 @@ from f5_tts.model.utils import get_tokenizer
 
 PROJECT_ROOT = Path(str(files("aligndit").joinpath("../.."))).resolve()
 os.chdir(PROJECT_ROOT)
-POLICY_VERSION = "semantic-vae40-c2-s3-staged-v1"
-EXPECTED_STAGE_WARMUP = {"s3a": 500, "s3b": 5_000}
+LEGACY_POLICY_VERSION = "semantic-vae40-c2-s3-staged-v1"
+SINGLE_STAGE_POLICY_VERSION = "semantic-vae40-c2-s3-single-stage-stable-v2"
+EXPECTED_STAGE_WARMUP = {"s3a": 500, "s3b": 5_000, "s3": 20_000}
 EXPECTED_STAGE_LEARNING_RATES = {
     "s3a": {"multimodal_new": 5e-5},
     "s3b": {
@@ -53,6 +56,22 @@ EXPECTED_STAGE_LEARNING_RATES = {
         "audio_blocks_0_5": 5e-6,
         "audio_backbone_rest": 1e-5,
     },
+    "s3": {
+        "text_conditioner": 5e-6,
+        "multimodal_core": 1e-5,
+        "multimodal_gates": 1e-6,
+        "ctc_heads": 1e-5,
+        "interface": 5e-6,
+        "audio_blocks_0_5": 2e-6,
+        "audio_backbone_rest": 5e-6,
+        "shared_conditioning": 1e-6,
+    },
+}
+EXPECTED_SINGLE_STAGE_CTC_RAMP_UPDATES = 20_000
+EXPECTED_SINGLE_STAGE_MONITORING = {
+    "global_grad_norm_abort_threshold": 100.0,
+    "raw_text_rms_abort_threshold": 3.0,
+    "group_grad_norm_log_interval": 100,
 }
 EXPECTED_VALID_TRAIN_RECORDS = 79_508
 
@@ -319,8 +338,6 @@ def publish_training_contract(
         "trainer_semantic_vae_c2": PROJECT_ROOT / "src/aligndit/model/trainer_semantic_vae_c2.py",
         "trainer_semantic_vae_warmstart": PROJECT_ROOT / "src/aligndit/model/trainer_semantic_vae_warmstart.py",
         "finetune_semantic_vae_c2": Path(__file__).resolve(),
-        "stage_launcher": PROJECT_ROOT / "src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_4x4090.sh",
-        "chain_launcher": PROJECT_ROOT / "src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_chain_4x4090.sh",
         "checkpoint_validator": PROJECT_ROOT / "src/aligndit/script/misc/validate_semantic_vae_c2_checkpoint.py",
         "svae_cache_utils": PROJECT_ROOT / "src/aligndit/script/misc/svae_cache_utils.py",
         "f5_cfm": PROJECT_ROOT / "src/f5_tts/model/cfm.py",
@@ -329,6 +346,17 @@ def publish_training_contract(
         "f5_trainer": PROJECT_ROOT / "src/f5_tts/model/trainer.py",
         "f5_utils": PROJECT_ROOT / "src/f5_tts/model/utils.py",
     }
+    if trainer.stage == SINGLE_STAGE_S3:
+        source_paths["stage_launcher"] = (
+            PROJECT_ROOT / "src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_single_stage_4x4090.sh"
+        )
+    else:
+        source_paths["stage_launcher"] = (
+            PROJECT_ROOT / "src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_4x4090.sh"
+        )
+        source_paths["chain_launcher"] = (
+            PROJECT_ROOT / "src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_chain_4x4090.sh"
+        )
     group_membership = [
         {
             "group_name": group["group_name"],
@@ -350,10 +378,13 @@ def publish_training_contract(
     else:
         migration_contract = None
 
+    is_single_stage = trainer.stage == SINGLE_STAGE_S3
     contract = {
         "schema_version": 1,
         "policy": {
-            "version": POLICY_VERSION,
+            "version": SINGLE_STAGE_POLICY_VERSION if is_single_stage else LEGACY_POLICY_VERSION,
+            "family": "single_stage" if is_single_stage else "legacy_s3a_s3b",
+            "legacy_policy_has_observed_s3b_instability": trainer.stage in LEGACY_STAGED_S3_STAGES,
             "stage": trainer.stage,
             "stage_start_update": trainer.stage_start_update,
             "stage_max_updates": trainer.max_stage_updates,
@@ -363,6 +394,8 @@ def publish_training_contract(
             "fresh_stage_ema_step": 0,
             "checkpoint_filenames_are_cumulative": True,
             "s3a_trains_only_new_multimodal_parameters": trainer.stage == "s3a",
+            "ctc_ramp_updates": (int(model_cfg.optim.ctc_ramp_updates) if is_single_stage else 0),
+            "monitoring": (OmegaConf.to_container(model_cfg.monitoring, resolve=True) if is_single_stage else None),
         },
         "config": OmegaConf.to_container(model_cfg, resolve=True),
         "parent": parent_metadata,
@@ -409,9 +442,22 @@ def _validate_fixed_stage_config(model_cfg, stage: str) -> None:
             f"Stage {stage} learning-rate policy mismatch: "
             f"expected={EXPECTED_STAGE_LEARNING_RATES[stage]}, got={actual_learning_rates}"
         )
-    expected_parent_kind = S3A_SOURCE_KIND if stage == "s3a" else S3B_SOURCE_KIND
+    expected_parent_kind = S3A_SOURCE_KIND if stage in {"s3a", SINGLE_STAGE_S3} else S3B_SOURCE_KIND
     if model_cfg.stage.parent_kind != expected_parent_kind:
         raise RuntimeError(f"Stage {stage} must use parent_kind={expected_parent_kind!r}")
+    if stage == SINGLE_STAGE_S3:
+        if int(model_cfg.optim.ctc_ramp_updates) != EXPECTED_SINGLE_STAGE_CTC_RAMP_UPDATES:
+            raise RuntimeError(f"Single-stage S3 requires ctc_ramp_updates={EXPECTED_SINGLE_STAGE_CTC_RAMP_UPDATES}")
+        actual_monitoring = {
+            "global_grad_norm_abort_threshold": float(model_cfg.monitoring.global_grad_norm_abort_threshold),
+            "raw_text_rms_abort_threshold": float(model_cfg.monitoring.raw_text_rms_abort_threshold),
+            "group_grad_norm_log_interval": int(model_cfg.monitoring.group_grad_norm_log_interval),
+        }
+        if actual_monitoring != EXPECTED_SINGLE_STAGE_MONITORING:
+            raise RuntimeError(
+                "Single-stage S3 monitoring policy mismatch: "
+                f"expected={EXPECTED_SINGLE_STAGE_MONITORING}, got={actual_monitoring}"
+            )
     if int(model_cfg.datasets.batch_size_per_gpu) != 3_600:
         raise RuntimeError("The 4x4090 S3 contract requires 3,600 latent frames/GPU")
     if int(model_cfg.datasets.max_samples) != 32:
@@ -420,6 +466,8 @@ def _validate_fixed_stage_config(model_cfg, stage: str) -> None:
         raise RuntimeError(f"Semantic-VAE C2 requires exactly {EXPECTED_VALID_TRAIN_RECORDS} training records")
     if int(model_cfg.optim.grad_accumulation_steps) != 1 or float(model_cfg.optim.weight_decay) != 0.01:
         raise RuntimeError("Semantic-VAE C2 requires grad_accumulation_steps=1 and weight_decay=0.01")
+    if float(model_cfg.optim.max_grad_norm) != 1.0:
+        raise RuntimeError("Semantic-VAE C2 requires max_grad_norm=1.0")
     if int(model_cfg.seed) != 666:
         raise RuntimeError("Semantic-VAE C2 S3 uses the fixed experiment seed 666")
     if int(model_cfg.model.arch.audio_video_ratio) != 1:
@@ -520,6 +568,14 @@ def main(model_cfg) -> None:
         learning_rates={name: float(value) for name, value in model_cfg.optim.learning_rates.items()},
         weight_decay=float(model_cfg.optim.weight_decay),
     )
+    single_stage_trainer_kwargs = {}
+    if stage == SINGLE_STAGE_S3:
+        single_stage_trainer_kwargs = {
+            "ctc_ramp_updates": int(model_cfg.optim.ctc_ramp_updates),
+            "global_grad_norm_abort_threshold": float(model_cfg.monitoring.global_grad_norm_abort_threshold),
+            "raw_text_rms_abort_threshold": float(model_cfg.monitoring.raw_text_rms_abort_threshold),
+            "group_grad_norm_log_interval": int(model_cfg.monitoring.group_grad_norm_log_interval),
+        }
     trainer = SemanticVaeC2Trainer(
         model,
         accelerator=accelerator,
@@ -538,6 +594,7 @@ def main(model_cfg) -> None:
         logger=model_cfg.ckpts.logger,
         run_name=f"{model_cfg.model.name}_{stage}_{model_cfg.datasets.name}",
         ema_kwargs=OmegaConf.to_container(model_cfg.ema, resolve=True),
+        **single_stage_trainer_kwargs,
     )
     if not local_resume:
         trainer.reset_ema_from_online()

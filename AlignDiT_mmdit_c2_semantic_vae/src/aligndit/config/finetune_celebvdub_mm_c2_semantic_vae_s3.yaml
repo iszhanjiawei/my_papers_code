@@ -1,0 +1,45 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_base
+  - _self_
+
+# Stable replacement for the legacy S3a -> S3b policy.  It starts directly
+# from the validated S2c 70k EMA and owns an independent checkpoint directory.
+stage:
+  name: s3
+  parent_kind: s2c_audio
+  parent_checkpoint: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/model_70000.pt
+  expected_parent_sha256: 02e35cf3e0de2a10573fb6efd8e5b7cdf0c59a18ea07807f34e5c7bf9c1395c4
+  expected_parent_size: 2762690094
+  expected_parent_stage: s2c
+  expected_parent_update: 70000
+  parent_contract_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/training_contract.json
+  expected_parent_contract_sha256: 3d6fcf6649511a0f21546ca995ed047dfcca5ff58e9c2d3196d7c67b24e7633d
+
+optim:
+  max_updates: 200000
+  num_warmup_updates: 20000
+  # CTC starts at 0.1 / 20k on the first update and reaches 0.1 on update 20k.
+  ctc_ramp_updates: 20000
+  learning_rates:
+    text_conditioner: 5.0e-6
+    multimodal_core: 1.0e-5
+    multimodal_gates: 1.0e-6
+    ctc_heads: 1.0e-5
+    interface: 5.0e-6
+    audio_blocks_0_5: 2.0e-6
+    audio_backbone_rest: 5.0e-6
+    shared_conditioning: 1.0e-6
+
+monitoring:
+  # Abort before optimizer.step instead of silently zeroing an overflowing
+  # global gradient norm, and expose category-level drift in TensorBoard.
+  global_grad_norm_abort_threshold: 100.0
+  raw_text_rms_abort_threshold: 3.0
+  group_grad_norm_log_interval: 100
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3_single_stage_v2
+
+ckpts:
+  save_per_updates: 50000
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3_single_stage_v2_40hz_CelebVDub_char

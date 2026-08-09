@@ -1,4 +1,4 @@
-"""Real-schema smoke test for S2c-to-S3a migration and optimizer policies."""
+"""Real-schema smoke test for S2c migration and all S3 optimizer policies."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from aligndit.model.semantic_vae_c2_stage import (
     EXPECTED_LOADED_AUDIO_PARAMETER_TENSORS,
     EXPECTED_NEW_MULTIMODAL_PARAMETER_TENSORS,
     S3A_SOURCE_KIND,
+    SINGLE_STAGE_S3,
     configure_s3_parameters,
     load_s3_parent_ema,
 )
@@ -109,6 +110,60 @@ def main() -> None:
     if s3b_parameters.frozen_names:
         raise RuntimeError("S3b must unfreeze every model parameter")
 
+    single_stage_learning_rates = {
+        "text_conditioner": 5e-6,
+        "multimodal_core": 1e-5,
+        "multimodal_gates": 1e-6,
+        "ctc_heads": 1e-5,
+        "interface": 5e-6,
+        "audio_blocks_0_5": 2e-6,
+        "audio_backbone_rest": 5e-6,
+        "shared_conditioning": 1e-6,
+    }
+    single_stage_groups, single_stage_parameters = configure_s3_parameters(
+        model,
+        stage=SINGLE_STAGE_S3,
+        learning_rates=single_stage_learning_rates,
+        weight_decay=0.01,
+    )
+    if single_stage_parameters.frozen_names:
+        raise RuntimeError("Single-stage S3 must jointly adapt every model parameter")
+    if set(single_stage_parameters.category_names) != set(single_stage_learning_rates):
+        raise RuntimeError(
+            "Single-stage category mismatch: "
+            f"expected={sorted(single_stage_learning_rates)}, "
+            f"got={sorted(single_stage_parameters.category_names)}"
+        )
+    category_by_name = {
+        name: category for category, names in single_stage_parameters.category_names.items() for name in names
+    }
+    expected_representatives = {
+        "transformer.text_embed.": "text_conditioner",
+        "transformer.video_embed.": "multimodal_core",
+        "transformer.projectors_ctc.": "ctc_heads",
+        "transformer.input_embed.proj.": "interface",
+        "transformer.time_embed.": "shared_conditioning",
+        "transformer.norm_out.": "shared_conditioning",
+        "transformer.transformer_blocks.0.cross_attn.": "text_conditioner",
+        "transformer.transformer_blocks.0.cross_attn_ada.": "multimodal_gates",
+        "transformer.transformer_blocks.0.v_attn_norm.": "multimodal_gates",
+        "transformer.transformer_blocks.0.v_attn.": "multimodal_core",
+        "transformer.transformer_blocks.0.v_ff.": "multimodal_core",
+        "transformer.transformer_blocks.0.attn.": "audio_blocks_0_5",
+        "transformer.transformer_blocks.6.attn.": "audio_backbone_rest",
+    }
+    for prefix, expected_category in expected_representatives.items():
+        matches = [name for name in category_by_name if name.startswith(prefix)]
+        if not matches or any(category_by_name[name] != expected_category for name in matches):
+            raise RuntimeError(f"Single-stage category {expected_category!r} does not own prefix {prefix!r}")
+    for group in single_stage_groups:
+        category = group["group_name"].rsplit(".", 1)[0]
+        if group["lr"] != single_stage_learning_rates[category]:
+            raise RuntimeError(f"Single-stage optimizer group has wrong LR: {group['group_name']}")
+        expected_weight_decay = 0.0 if group["group_name"].endswith(".no_decay") else 0.01
+        if group["weight_decay"] != expected_weight_decay:
+            raise RuntimeError(f"Single-stage optimizer group has wrong decay: {group['group_name']}")
+
     with tempfile.TemporaryDirectory() as temp_dir:
         trainer = object.__new__(SemanticVaeC2Trainer)
         trainer.stage = "s3a"
@@ -175,6 +230,14 @@ def main() -> None:
                     "trainable_tensors": len(s3b_parameters.trainable_names),
                     "frozen_tensors": len(s3b_parameters.frozen_names),
                     "optimizer_groups": [group["group_name"] for group in s3b_groups],
+                },
+                "s3_single_stage": {
+                    "trainable_tensors": len(single_stage_parameters.trainable_names),
+                    "frozen_tensors": len(single_stage_parameters.frozen_names),
+                    "category_tensors": {
+                        name: len(parameters) for name, parameters in single_stage_parameters.category_names.items()
+                    },
+                    "optimizer_groups": [group["group_name"] for group in single_stage_groups],
                 },
                 "checkpoint_reconciliation": "passed",
                 "validator_resume_schema": "passed",
