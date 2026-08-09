@@ -1,0 +1,5 @@
+codec,latent_mode,samples,SPKSIM,WER,EMOSIM,AVSync,SNR_dB,evidence,source
+mel_hifigan,,213,0.79952,0.04710,0.85774,0.97969,-6.40507,artifact_verified,/zjw524/projects/data/codec_ceiling_celebvdub/_codec_ceiling_summary.json
+acoustic_vae_dim64,sample,213,0.92812,0.04289,0.94263,0.99282,9.83223,artifact_verified,/zjw524/projects/data/codec_ceiling_celebvdub/_codec_ceiling_summary.json
+semantic_vae_600k,sample,213,0.92792,0.03869,0.94534,0.99294,9.82383,artifact_verified,/zjw524/projects/data/codec_ceiling_celebvdub/_codec_ceiling_summary.json
+semantic_vae_1000k,sample,213,0.93038,0.04037,0.94910,0.99311,10.01959,artifact_verified,/zjw524/projects/data/codec_ceiling_celebvdub/_codec_ceiling_summary.json
