@@ -8,6 +8,7 @@
 - `AlignDiT_mmdit_base_qknorm_ca/`：在基线上启用 RMS QK-Norm，并为文本 cross-attention 增加由时间步调制的 AdaLN/gate。
 - `AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/`：当前论文改进与 C0-C3 消融实验的主快照；分离视频交互层数、文本注入层数，并支持仅向待生成音频帧写入文本 cross-attention 残差。
 - `AlignDiT_mmdit_c2_semantic_vae/`：从上述主快照的 C2 路线独立复制出的 Semantic-VAE 实验目录；目标是把 80 维、100 Hz mel 改为 64 维、40 Hz Semantic-VAE latent。该目录必须独立演进，不得把中间改动同步回已完成的 C0-C3/D0-D2 实验。
+- `AlignDiT_mmdit_c2_semantic_vae_direct/`：从原 mel C2 重新复制的严格单变量对照；只保留 64D/40 Hz latent、25→40 Hz 视频、1:1 时间轴和 40 Hz CTC 等 Semantic-VAE 必需改动，其他网络与训练语义保持原 C2。
 - `AlignDiT_mmdit_wav_vae_base_qknorm_ca/`：为 wav/Semantic-VAE 方向保留的实验快照；当前受 Git 跟踪的源码与 `AlignDiT_mmdit_base_qknorm_ca/` 基本一致，不要仅凭目录名假定 wav VAE 已完成集成。
 - `hifigan_16k_LRS3/`：共享的 HiFi-GAN 配置与权重。权重属于二进制资产，不要修改、格式化或重新生成。
 
@@ -105,6 +106,12 @@ AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/
 AlignDiT_mmdit_c2_semantic_vae/
 ```
 
+若任务明确要求“完全按照原 C2、只替换 Semantic-VAE 表示”，则只修改：
+
+```text
+AlignDiT_mmdit_c2_semantic_vae_direct/
+```
+
 不要使用未完成且可能含本地运行产物的 `AlignDiT_mmdit_wav_vae_base_qknorm_ca/`，也不要覆盖原 C2 mel 快照。
 
 ### Semantic-VAE 40 Hz 音频 warm-start 主线
@@ -171,8 +178,8 @@ LibriSpeech train normalization 已完成并通过全量校验。旧 S3a→S3b �
 裁成 0。旧 S3b 的全部 checkpoint（包括 50k、100k、115k 和 `model_last.pt`）只保留故障审计，禁止
 续训、正式评测或作为父权重；旧 S3a 5k 同样不得作为父权重。
 
-当前唯一正式 CelebVDub 训练入口从 S2c 70k EMA 直接启动连续 200k 的单阶段 `s3`，不在 5k 边界重置
-optimizer/scheduler/EMA：
+早前的稳定化 CelebVDub 路线从 S2c 70k EMA 启动连续 200k 的单阶段 `s3`，不在 5k 边界重置
+optimizer/scheduler/EMA。该路线保留用于审计，但它包含相对原 C2 新增的优化变量：
 
 | 用途 | 路径 |
 |---|---|
@@ -185,6 +192,34 @@ LayerNorm。训练器必须记录 `grad_norm/global`、分组 grad norm、raw/po
 global pre-clip norm > 100 或任一非有限值时必须在 `optimizer.step()` 前同步终止。首次只跑到 20k 做门禁；
 门禁通过后才从同一 `model_last.pt` 原样恢复到 200k。实时状态仍须从进程、日志、TensorBoard 和 checkpoint
 元数据读取。训练侧已可运行；反归一化、Semantic-VAE 解码及正式推理评测仍需在使用前单独验收。
+
+### Semantic-VAE Direct-C2 严格单变量实验
+
+当前用于回答“只替换 Semantic-VAE 表示是否有效”的正式实验位于
+`AlignDiT_mmdit_c2_semantic_vae_direct/`。它从 S2c 70k EMA 重新开始，不能从任何旧 Semantic
+CelebVDub checkpoint 续作父权重。它严格复刻原 C2：18 层、前 12 层 MM-DiT、后 6 层原生无文本
+音频 DiT、统一 AdamW `5e-5`、20k warmup、固定 CTC `0.1`、单阶段全参数训练和 200 epochs。EMA 配置
+只传 `beta=0.999`，保留原 C2 的 `update_after_step=100`、`update_every=10` 默认语义。
+
+只允许以下表示变化：80D/100 Hz mel 改成固定规范化的 64D/40 Hz latent；视频25 Hz离线插值到与
+latent逐帧等长的40 Hz；音视频比例4改1；视频RoPE不再乘4；CTC stride从`[2,1]`改`[1,1]`；每卡
+frame batch从9000改3600以保持90秒/GPU。训练使用完整`train.jsonl` 79,613条，与原mel C2逐条对应。
+其中105条40 Hz CTC不可行记录仍参加diffusion loss，仅依靠原 C2 的`zero_infinity=True`将其CTC项置零；
+不得换成79,508条过滤集，否则会额外改变训练数据。
+
+固定入口如下：
+
+| 用途 | 路径 |
+|---|---|
+| 实验契约 | `SEMANTIC_VAE_DIRECT_C2.md` |
+| 配置 | `src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_direct.yaml` |
+| Python入口 | `src/aligndit/script/train/finetune_semantic_vae_c2_direct.py` |
+| 4×4090 launcher | `src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_direct_4x4090.sh` |
+| 真实权重/数据/CUDA smoke | `src/aligndit/script/misc/smoke_test_semantic_vae_c2_direct.py` |
+
+该实验禁止加入S3a/S3b、冻结、分组学习率、CTC ramp、额外text LayerNorm、raw RMS硬停止、强制训练
+attention mask、CTC hidden 2048或显式200k scheduler horizon。工程侧可以保留不改变数值轨迹的哈希、
+schema、resume及非有限值检查。
 
 四组实验均使用深度 18、前 12 层 MM-DiT、CelebVDub、字符 tokenizer、RMS QK-Norm、BF16 和相同的动态 frame batch。只允许按下表改变文本注入层数和参考音频隔离开关：
 
