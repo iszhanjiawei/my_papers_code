@@ -430,3 +430,55 @@ checkpoint:
   /zjw524/projects/data/ckpts/
     AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3_single_stage_v2_40hz_CelebVDub_char/
 ```
+
+## 11. 2026-08-10 最终纠正：稳定化 S3 不能冒充“只替换 VAE”的 C2 对照
+
+前述 single-stage v2 解决的是旧 S3 已经观测到的数值灾变，因此加入了文本 LayerNorm、八组学习率、
+CTC ramp、RMS/梯度硬门禁等稳定化设计。这些设计本身可以继续作为独立的稳定性实验，但它们同时改变了
+训练策略和网络前向，不能回答“原 C2 只把 mel 换成 Semantic-VAE 后效果如何”。此前把它称为当前唯一
+训练路线，会混淆两个不同的科研问题。
+
+最终按用户要求新建严格对照快照：
+
+```text
+AlignDiT_mmdit_c2_semantic_vae_direct/
+```
+
+它直接从原 mel C2 `AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio` 复制，只允许以下必要变化：
+
+1. `80D/100 Hz mel -> 64D/40 Hz Semantic-VAE latent`，使用 S2c 绑定的 LibriSpeech-train mean/std；
+2. 视频使用已经预提取的精确 40 Hz cache，音视频长度比改为 1:1；
+3. CTC tap 仍为 `[6,12]`，只将时间 stride 从 `[2,1]` 改为 `[1,1]`，避免 40 Hz 再降到 20 Hz；
+4. frame batch 从 `9000@100 Hz` 等时长换算为 `3600@40 Hz`；
+5. 从已完成表示适配的纯音频 S2c 70k EMA 做严格权重迁移。
+
+下列内容全部恢复原 C2，不再加入稳定化变量：
+
+```text
+单阶段、全部参数可训练、单一 AdamW 参数组、LR=5e-5、warmup=20k、
+CTC lambda 从第1步固定为0.1、200 epochs、原始 EMA 默认节奏、
+无额外 text LayerNorm、无冻结、无分组 LR、无 CTC ramp、无 RMS 硬停止。
+```
+
+训练数据使用完整 79,613 条，与原 mel C2 的 `raw.arrow` 逐条一致。40 Hz 下新增的 105 条 CTC
+不可行样本仍参与 diffusion loss，并沿用原 C2 的 `zero_infinity=True` 令其 CTC 项为 0。不能使用
+79,508 条过滤集，否则会额外改变训练数据集合。
+
+代码提交为 `44d9df2`。正式 4×4090 Direct-C2 任务已经从干净的 S2c 70k 启动，独立输出到：
+
+```text
+/zjw524/projects/data/ckpts/
+  AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_c2_40hz_CelebVDub_char/
+```
+
+启动验收已连续超过 200 updates，约 `1.53-1.55 update/s`；早期 `diff_loss` 约 1.3-1.5、原始
+`ctc_loss` 约 7-10、总 `loss` 约 2.0-2.5，四卡进程、梯度更新和 TensorBoard 均正常。总 loss
+高于使用 CTC ramp 的实验是预期现象，因为原 C2 从首步就计算 `0.1 * ctc_loss`，不能据此再次擅自
+改回 ramp。
+
+后续纪律：
+
+- Direct-C2 是“只替换 Semantic-VAE”的主对照；single-stage v2 是额外稳定化实验，二者不能混写；
+- Direct-C2 若后续失稳，应先保留现场并把它作为实验事实分析，不能在同一实验中途改变训练公式；
+- 任意 LayerNorm、分组学习率、CTC ramp、冻结或硬门禁，都必须另建实验目录和名称；
+- 禁止将旧 S3a/S3b、旧 single-stage v2 50k 权重续入 Direct-C2 输出目录。

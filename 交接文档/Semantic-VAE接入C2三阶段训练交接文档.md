@@ -1,12 +1,77 @@
 # Semantic-VAE 接入 C2 与 mel warm-start 交接文档
 
-> 更新日期：2026-08-09
+> 更新日期：2026-08-10
 > 工作区：`/zjw524/projects/alignDiT_idea6`
 > Git 仓库：`/zjw524/projects/alignDiT_idea6/my_papers_code`
 > 远程：`https://github.com/iszhanjiawei/my_papers_code.git`
 > 当前主分支：`main`
 
-## 0. 2026-08-09 当前权威路线
+## 0. 2026-08-10 Direct-C2 当前权威路线
+
+用户最终要求以已经完成、指标最好的原 mel C2 为唯一母版，只替换接入 Semantic-VAE 必须改变的表示
+接口和时间轴，不再混入额外稳定化策略。为此新建了完全独立的快照：
+
+```text
+/zjw524/projects/alignDiT_idea6/my_papers_code/
+  AlignDiT_mmdit_c2_semantic_vae_direct/
+```
+
+代码已在 commit `44d9df2` 提交并推送到 `origin/main`。该快照从原
+`AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio` 的 C2 直接复制，只允许以下必要变化：
+
+- 80D/100 Hz mel 改成使用固定 LibriSpeech-train mean/std 的 64D/40 Hz Semantic-VAE latent；
+- AV-HuBERT 视频使用已经完成的25 Hz→40 Hz离线线性插值 cache，并与latent逐帧等长；
+- `audio_video_ratio: 4→1`，视频RoPE不再乘4；
+- CTC位置仍为`[6,12]`，只把stride从`[2,1]`改为`[1,1]`，保持40 Hz；
+- frame batch从9000@100 Hz改为3600@40 Hz，仍是每卡90秒音频；
+- 父权重改为严格迁移S2c 70k EMA。
+
+其余恢复原 C2：前12层MM-DiT、后6层原生无文本音频DiT；统一AdamW `5e-5`；固定CTC权重0.1；
+20k warmup；单阶段全部参数共同训练；200 epochs；EMA只配置`beta=0.999`，真实默认仍为
+`update_after_step=100/update_every=10`。明确禁止S3a/S3b、冻结、8组学习率、CTC ramp、额外text
+LayerNorm、raw RMS硬停止、强制训练mask、CTC hidden 2048和显式200k scheduler horizon。
+
+训练集使用完整`train.jsonl` 79,613条，与原mel C2的`raw.arrow`逐条一致。40 Hz下105条CTC无解样本
+仍参加diffusion loss，仅沿用原 C2 `zero_infinity=True`令其CTC项为0；不能使用79,508条过滤集，否则
+会额外改变训练数据。
+
+正式启动前已经通过：
+
+- 原MM-DiT全量CPU smoke；
+- 真实79,613条manifest、normalization、vocab和cache contract校验；
+- 真实S2c 70k迁移：source 313、target 703、加载303、只忽略10、C2新初始化400、零shape mismatch；
+- online/EMA逐键一致，EMA step 70k，单一optimizer group `5e-5`；
+- 单卡CUDA真实前反向：loss、diff、CTC和梯度全部finite。
+
+正式4×4090训练入口和现场：
+
+```text
+launcher:
+  AlignDiT_mmdit_c2_semantic_vae_direct/src/aligndit/run/train/
+    finetune_celebvdub_mm_c2_semantic_vae_direct_4x4090.sh
+accelerate PID/SID at launch (会过期，必须实时复查):
+  873761 / 873761
+log:
+  AlignDiT_mmdit_c2_semantic_vae_direct/logs/
+    train_semantic_vae_direct_c2_4x4090_20260810.log
+checkpoint:
+  /zjw524/projects/data/ckpts/
+    AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_c2_40hz_CelebVDub_char/
+TensorBoard logdir:
+  AlignDiT_mmdit_c2_semantic_vae_direct/runs/
+    AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_c2_semantic_vae_40hz_CelebVDub_char/
+TensorBoard service at launch:
+  PID 878626, 0.0.0.0:34952
+```
+
+启动验收时已经连续完成超过230个update，约1.53–1.55 update/s；四卡显存约14.8–15.8 GB；
+TensorBoard已确认持续记录`loss/diff_loss/ctc_loss/lr`。当前CTC约7–10、diff约1.3–1.5、总loss约
+2.0–2.5，符合原C2从第1步固定CTC 0.1时的正常量级，不要因其高于CTC-ramp实验而再次擅自增加ramp。
+
+该Direct-C2路线现在优先于下方2026-08-09的S3稳定化路线。旧single-stage v2和旧S3a/S3b目录全部
+保留作故障/消融审计，不能作为Direct-C2父权重，也不能把旧50k续进当前输出目录。
+
+## A. 2026-08-09 历史稳定化路线（已被 Direct-C2 对照取代）
 
 原 6×A40、500k scratch 路线因训练时间过长，已按用户要求安全停止。随后在独立快照：
 
