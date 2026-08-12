@@ -18,6 +18,26 @@ from f5_tts.model.utils import exists
 
 # trainer
 class Trainer_VT(Trainer):
+    def _before_update(self, global_update: int) -> None:
+        """Optional per-update hook; the historical C2 path is a no-op."""
+
+    def _forward_diagnostics(self, loss, loss_components) -> dict[str, float]:
+        """Optional validation/logging hook; the historical C2 path is unchanged."""
+
+        return {}
+
+    def _clip_gradients(self) -> float | None:
+        """Historical C2 clipping, factored into a hook for guarded variants."""
+
+        if self.max_grad_norm <= 0 or not self.accelerator.sync_gradients:
+            return None
+        self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+        return None
+
+    def _reached_run_limit(self, global_update: int) -> bool:
+        run_until_update = getattr(self, "run_until_update", None)
+        return run_until_update is not None and global_update >= run_until_update
+
     def load_pretrained(self, pretrained_path):
         self.accelerator.wait_for_everyone()
         checkpoint = torch.load(pretrained_path, weights_only=True, map_location="cpu")
@@ -161,6 +181,16 @@ class Trainer_VT(Trainer):
         )  # actual multi_gpu updates = single_gpu updates / gpu nums
         start_update = self.load_checkpoint()
         global_update = start_update
+        run_until_update = getattr(self, "run_until_update", None)
+        if run_until_update is not None and start_update > run_until_update:
+            raise RuntimeError(
+                f"checkpoint update {start_update} is beyond requested run limit {run_until_update}"
+            )
+        if self._reached_run_limit(global_update):
+            if self.accelerator.is_local_main_process:
+                print(f"Checkpoint already reached requested update {global_update}; nothing to do", flush=True)
+            self.accelerator.end_training()
+            return
 
         if exists(resumable_with_seed):
             orig_epoch_step = len(train_dataloader)
@@ -172,6 +202,8 @@ class Trainer_VT(Trainer):
             skipped_epoch = 0
 
         for epoch in range(skipped_epoch, self.epochs):
+            if self._reached_run_limit(global_update):
+                break
             self.model.train()
             if exists(resumable_with_seed) and epoch == skipped_epoch:
                 progress_bar_initial = math.ceil(skipped_batch / self.grad_accumulation_steps)
@@ -199,6 +231,10 @@ class Trainer_VT(Trainer):
             )
 
             for batch in current_dataloader:
+                if self._reached_run_limit(global_update):
+                    break
+                self._before_update(global_update)
+                grad_norm = None
                 with self.accelerator.accumulate(self.model):
                     text_inputs = batch["text"]
                     mel_spec = batch["mel"].permute(0, 2, 1)
@@ -216,10 +252,11 @@ class Trainer_VT(Trainer):
                         video_lens=video_lengths,
                         noise_scheduler=self.noise_scheduler,
                     )
+                    diagnostics = self._forward_diagnostics(loss, loss_components)
                     self.accelerator.backward(loss)
 
-                    if self.max_grad_norm > 0 and self.accelerator.sync_gradients:
-                        self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                    if self.accelerator.sync_gradients:
+                        grad_norm = self._clip_gradients()
 
                     self.optimizer.step()
                     self.scheduler.step()
@@ -234,13 +271,18 @@ class Trainer_VT(Trainer):
                     progress_bar.set_postfix(update=str(global_update), loss=loss.item(), **loss_components)
 
                 if self.accelerator.is_local_main_process:
-                    self.accelerator.log(
-                        {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0]}, step=global_update
-                    )
+                    scalar_log = {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], **diagnostics}
+                    if grad_norm is not None:
+                        scalar_log["grad_norm/global"] = grad_norm
+                    self.accelerator.log(scalar_log, step=global_update)
                     self.accelerator.log(loss_components, step=global_update)
                     if self.logger == "tensorboard":
                         self.writer.add_scalar("loss", loss.item(), global_update)
                         self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_update)
+                        if grad_norm is not None:
+                            self.writer.add_scalar("grad_norm/global", grad_norm, global_update)
+                        for k, v in diagnostics.items():
+                            self.writer.add_scalar(k, v, global_update)
                         for k, v in loss_components.items():
                             self.writer.add_scalar(k, v, global_update)
 

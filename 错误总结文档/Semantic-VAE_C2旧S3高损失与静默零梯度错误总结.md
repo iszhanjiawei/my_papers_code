@@ -482,3 +482,110 @@ CTC lambda 从第1步固定为0.1、200 epochs、原始 EMA 默认节奏、
 - Direct-C2 若后续失稳，应先保留现场并把它作为实验事实分析，不能在同一实验中途改变训练公式；
 - 任意 LayerNorm、分组学习率、CTC ramp、冻结或硬门禁，都必须另建实验目录和名称；
 - 禁止将旧 S3a/S3b、旧 single-stage v2 50k 权重续入 Direct-C2 输出目录。
+
+## 12. 2026-08-12 Direct-C2 长程结果：严格对照同样失稳
+
+Direct-C2 最终连续运行到约 update 208.9k。它没有 S3a/S3b 阶段边界，因而给出了一个重要纠正：
+
+> 两阶段重置会放大旧 S3 的问题，但不是必要条件，也不是唯一根因。即使完全复刻原 C2 的一次性
+> optimizer/scheduler/EMA，Semantic-VAE Direct-C2 仍会触发同一种文本入口尺度失稳和静默零梯度。
+
+### 12.1 精确时间线
+
+TensorBoard 共记录 208,903 个 update：
+
+| 区间 | 现象 |
+|---:|---|
+| 0-29.7k | `diff_loss` 约 1.37-1.40，表面健康 |
+| 29,998-30,401 | 首次灾变，总 loss 峰值 174.397 |
+| 30.5k-85.2k | 暂时回落到约 3.7-5，但已明显劣化 |
+| 85,215 起 | loss 持续大于 10，随后长期约 21-23 |
+
+第一次灾变由 diffusion 分支主导，CTC 同时恶化但不是单独触发源。Direct 配置已经证明“照旧 C2、
+只改 VAE 必需接口”不是尚未尝试的方案，而是已经被长程实验否定的方案。
+
+### 12.2 checkpoint 证明 50k 前已停止有效学习
+
+50k/100k/150k/200k 四个编号 checkpoint 均无 NaN/Inf，但 optimizer 有决定性证据：
+
+- 318,749,570 个 Adam `exp_avg` 元素中，约 0.93% 为 0，其余全部衰减到不超过
+  `5.605193857e-45` 的 FP32 次正规数；
+- 150k->200k 的代表性 `exp_avg_sq` 比值为 `1.8823e-22`，与
+  `0.999^50000 = 1.8811e-22` 基本相同，证明这 50k 步没有新的有效平方梯度贡献；
+- 同期代表性权重仅缩小约 0.994，符合 AdamW weight decay，而不是正常梯度学习；
+- S2c 70k 父权重的 `exp_avg` RMS 为 `2.07e-6`，故障不是从纯音频父模型继承的。
+
+因此 Direct 的 50k/100k/150k/200k/last 只保留用于事故审计，禁止续训、评测或作为父权重。
+
+### 12.3 激活与 attention 的直接证据
+
+固定输入审计结果：
+
+| checkpoint | Text final RMS | time embedding RMS | block-0 gated CA residual RMS |
+|---|---:|---:|---:|
+| mel D2 50k | 1.406 | 0.483 | 0.054 |
+| stable-v2 50k | 2.641，送 CA 前归一为 1 | 0.711 | 0.054 |
+| Direct-C2 50k | 268.1 | 13.83 | 2492 |
+
+Direct 50k 的 block-0 CA attention-logit RMS 达到约 `1.63e7`，注意力熵接近 0。这里配置中的
+RMS QK-Norm 没有保护文本 CA：文本 CA 使用 `nn.MultiheadAttention`，其文本 K/V 未经过该 QK-Norm。
+由于 30k 附近没有保存权重和分组梯度日志，不能声称 TextEmbedding 是时间上第一个异常参数；严谨结论是
+最早可审计的异常簇集中在 TextEmbedding/GRN、block-0 audio attention、block-0 text CA 和 time/AdaLN。
+
+### 12.4 为什么 mel C2 没触发、Semantic-VAE 却触发
+
+这不是“VAE 让 TextEmbedding 天生失效”，而是换表示后旧超参的稳定裕度不足：
+
+- S2c 到 C2 target 只迁移 303/703 个 key，约 47.63% 参数量；400 个文本、视频、MM、CTC key 新建；
+- Direct 丢弃 S2c optimizer 状态，把所有 701 个参数统一放入 `AdamW(lr=5e-5, weight_decay=0.01)`；
+- 标准化 latent 的健康初期 diffusion loss 约 1.4，高于 mel C2 约 0.7-0.8；
+- 同等 90 秒/GPU 下，loss 平均的音频标量数由 `9000*80` 降为 `3600*64`，少约 3.125 倍，
+  梯度噪声更大；
+- 视频 token 从相对音频的 1/4 变成 1:1，随机新视频路径的相对参与度上升；
+- CTC 时间网格由 50 Hz 变为 40 Hz，且随机 CTC 头从首步固定权重 0.1。
+
+这些因素改变了梯度和 Jacobian 的尺度，使原本无输出归一化的文本入口跨过失稳阈值。latent mean/std、
+25->40 Hz 视频插值、GPU 型号、resume 计数和 EMA 已分别通过数据或 checkpoint 审计排除为直接根因。
+
+## 13. 彻底修复：独立 minimal-fix v1
+
+修复没有覆盖 Direct 历史语义，而是在 `AlignDiT_mmdit_c2_semantic_vae_direct` 中新增独立配置、入口、
+实验名称和 checkpoint 目录。它仍是一个连续单阶段任务：不冻结、不拆 S3a/S3b、不重置 optimizer，
+使用完整 79,613 条训练集，12 MM + 12 text、固定 CTC 0.1、单一 AdamW 参数组。
+
+只增加两项训练语义变化：
+
+1. 同一个文本 context 进入 12 层 CA 前执行一次无参数、padding-safe、per-token LayerNorm；
+2. 已被 Direct 长程证伪的全局 LR `5e-5` 降到 `1e-5`，20k warmup 和其余 C2 公式不变。
+
+工程保护不会改变健康轨迹：
+
+- native clip 前用 FP64 per-tensor norm + host `math.hypot` 得到不会静默溢出的 pre-clip global norm；
+- norm 非有限、`<=1e-12` 或 `>100` 时在全部 DDP rank 同步、在 optimizer step 前终止；
+- TensorBoard 每步记录 loss、diff/CTC、raw/post text RMS 和 pre-clip norm；
+- checkpoint 采用同盘临时文件、fsync、原子 replace；
+- checkpoint 固定 schema/policy/contract hash，并绑定 seed=666、world-size=4、batch 策略、完整 manifest、
+  normalization、vocab、S2c parent 及 resolved config；加载时选择 update 最大且 contract 匹配的完整文件；
+- 每个 update 根据 `seed + update + rank` 重建 Python/Torch 随机流，固定四卡、grad accumulation=1。
+
+固定入口：
+
+```text
+配置:
+  AlignDiT_mmdit_c2_semantic_vae_direct/src/aligndit/config/
+    finetune_celebvdub_mm_c2_semantic_vae_minimal_fix.yaml
+launcher:
+  AlignDiT_mmdit_c2_semantic_vae_direct/src/aligndit/run/train/
+    finetune_celebvdub_mm_c2_semantic_vae_minimal_fix_4x4090.sh
+checkpoint:
+  /zjw524/projects/data/ckpts/
+    AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1_40hz_CelebVDub_char/
+```
+
+真实 4x4090 已完成 0->1、1->2 的真实数据/真实父权重 resume smoke：S2c 迁移仍为
+`303 loaded / 10 ignored / 400 new`；update 1 的 `diff=1.343`、raw CTC=12.700、
+pre-clip norm=2.102、raw/post text RMS=`1.301/1.000`；update 2 续训也保持 finite，并且 checkpoint
+schema、contract、optimizer、scheduler、EMA step 均通过读取验证。
+
+这说明代码层的故障链和静默假训练已被切断。长期数值稳定仍必须用同一个正式轨迹跨过旧危险区
+30k、50k、85-90k 和 100k 才能最终确认，不能仅凭两步 smoke 宣称 200k 指标已经得到保证。

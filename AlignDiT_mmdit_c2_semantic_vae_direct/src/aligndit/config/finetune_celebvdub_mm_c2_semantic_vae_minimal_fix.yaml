@@ -1,0 +1,97 @@
+hydra:
+  run:
+    dir: ${ckpts.save_dir}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+# Fixed before model construction and re-derived per update/rank so an exact
+# checkpoint resume reproduces the same stochastic training stream.
+seed: 666
+
+datasets:
+  name: CelebVDub
+  cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub_svae1000k_sample_seed666_fp32
+  manifest_path: ${datasets.cache_root}/manifests/train.jsonl
+  expected_manifest_sha256: 0d16d5c8f00eb25ee51c7de604299a37cace1bc0e65b7127a45420c433b4d395
+  expected_inventory_sha256: a6478cce785748cbcefd87af54eafa9f654d735afa1c41b8f846e041cbc1286d
+  normalization_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32/state/latents/train_normalization.json
+  expected_normalization_sha256: 65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6
+  vocab_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub_char/vocab.txt
+  expected_vocab_sha256: 225df7792c4ade59e3de39789b36fdf735e1b30ed96b4456d2d27df0d86a875d
+  expected_record_count: 79613
+  # Same 90 seconds/GPU dynamic-frame budget as mel C2.
+  batch_size_per_gpu: 3600
+  batch_size_type: frame
+  max_samples: 32
+  num_workers: 16
+
+optim:
+  # Keep the original 200-epoch scheduler horizon, but stop the paper run at
+  # an exact update boundary.  This preserves the historical C2 LR shape.
+  epochs: 200
+  max_updates: 200000
+  learning_rate: 1.0e-5
+  num_warmup_updates: 20000
+  grad_accumulation_steps: 1
+  max_grad_norm: 1.0
+  bnb_optimizer: False
+
+monitoring:
+  global_grad_norm_min_threshold: 1.0e-12
+  global_grad_norm_abort_threshold: 100.0
+  post_text_rms_min: 0.95
+  post_text_rms_max: 1.05
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1
+  tokenizer: char
+  tokenizer_path: null
+  backbone: DiT_VT_MMDiT
+
+  arch:
+    dim: 768
+    depth: 18
+    heads: 12
+    ff_mult: 2
+    text_dim: 512
+    text_mask_padding: False
+    qk_norm: rms_norm
+    conv_layers: 4
+    pe_attn_head: 1
+    attn_mask_enabled: True
+    checkpoint_activations: False
+    use_conformer: True
+    layer_indices_ctc: [6, 12]
+    ctc_sampling_ratios: [1, 1]
+    n_mm_layers: 12
+    n_text_layers: 12
+    prompt_isolated_ca: False
+    audio_video_ratio: 1
+    video_dim: 1024
+    video_rope_scaled: False
+    normalize_text_context: True
+
+  audio_representation:
+    name: semantic_vae_40hz
+    channels: 64
+    frame_rate: 40
+    sample_rate: 16000
+    hop_length: 400
+
+  # Deliberately retain original C2 supervision: no CTC ramp or stage split.
+  ctc_lambda: 0.1
+
+ema:
+  beta: 0.999
+
+ckpts:
+  pretrained_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/model_70000.pt
+  expected_parent_sha256: 02e35cf3e0de2a10573fb6efd8e5b7cdf0c59a18ea07807f34e5c7bf9c1395c4
+  expected_parent_size: 2762690094
+  expected_parent_update: 70000
+  parent_contract_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/training_contract.json
+  expected_parent_contract_sha256: 3d6fcf6649511a0f21546ca995ed047dfcca5ff58e9c2d3196d7c67b24e7633d
+  logger: tensorboard
+  log_samples: False
+  save_per_updates: 50000
+  keep_last_n_checkpoints: -1
+  last_per_updates: 5000
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1_40hz_CelebVDub_char

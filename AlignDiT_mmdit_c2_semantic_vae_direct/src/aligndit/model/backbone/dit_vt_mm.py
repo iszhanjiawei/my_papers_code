@@ -365,6 +365,7 @@ class DiT_VT_MMDiT(DiT):
         audio_video_ratio=4,
         video_dim=1024,
         video_rope_scaled=True,
+        normalize_text_context=False,
     ):
         super().__init__(
             dim=dim,
@@ -389,6 +390,12 @@ class DiT_VT_MMDiT(DiT):
         self.audio_video_ratio = audio_video_ratio
         self.video_rope_scaled = video_rope_scaled
         self.prompt_isolated_ca = prompt_isolated_ca
+        self.normalize_text_context = bool(normalize_text_context)
+        # Runtime-only diagnostics.  These are deliberately not buffers: the
+        # repair must remain state-dict compatible with the S2c parent and the
+        # completed Direct-C2 control.
+        self.last_text_context_raw_rms: torch.Tensor | None = None
+        self.last_text_context_post_rms: torch.Tensor | None = None
         self.n_mm_layers = n_mm_layers
         self.n_text_layers = n_mm_layers if n_text_layers is None else n_text_layers
         if not 0 <= self.n_mm_layers <= self.n_text_layers <= depth:
@@ -518,6 +525,54 @@ class DiT_VT_MMDiT(DiT):
 
         return x, text_embed, v
 
+    @staticmethod
+    def _masked_text_context_rms(text_context: torch.Tensor, text_mask: torch.Tensor) -> torch.Tensor:
+        context_float = text_context.float()
+        valid = text_mask.unsqueeze(-1)
+        squared_sum = context_float.square().masked_fill(~valid, 0.0).sum()
+        valid_elements = text_mask.sum(dtype=torch.float32) * text_context.shape[-1]
+        return torch.sqrt(squared_sum / valid_elements.clamp_min(1.0))
+
+    def _stabilize_text_context(
+        self,
+        text_context: torch.Tensor,
+        text_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Bound the shared text K/V scale before all twelve cross-attentions.
+
+        The original text conditioner is a four-block residual ConvNeXt tower
+        without an output normalization.  A single parameter-free per-token
+        LayerNorm here fixes that unbounded interface without adding checkpoint
+        keys or changing which blocks receive text.
+        """
+
+        if text_context.ndim != 3:
+            raise ValueError(f"text context must have shape [batch, tokens, dim], got {tuple(text_context.shape)}")
+        batch, context_len, context_dim = text_context.shape
+        if text_mask is None:
+            context_mask = torch.ones((batch, context_len), dtype=torch.bool, device=text_context.device)
+        else:
+            if text_mask.dtype != torch.bool:
+                raise TypeError(f"text_mask must be bool, got {text_mask.dtype}")
+            if text_mask.ndim != 2 or text_mask.shape[0] != batch or text_mask.shape[1] < context_len:
+                raise ValueError(
+                    "text_mask must have shape [batch, tokens] and cover the encoded context, "
+                    f"got context={tuple(text_context.shape)}, mask={tuple(text_mask.shape)}"
+                )
+            if text_mask.device != text_context.device:
+                raise ValueError(f"text_mask must be on {text_context.device}, got {text_mask.device}")
+            if text_mask.shape[1] > context_len and text_mask[:, context_len:].any().item():
+                raise ValueError("text_mask contains valid tokens beyond the encoded text context length")
+            context_mask = text_mask[:, :context_len]
+
+        raw_rms = self._masked_text_context_rms(text_context, context_mask)
+        normalized = F.layer_norm(text_context, (context_dim,), weight=None, bias=None, eps=1e-6)
+        normalized = normalized.masked_fill(~context_mask.unsqueeze(-1), 0.0)
+        post_rms = self._masked_text_context_rms(normalized, context_mask)
+        self.last_text_context_raw_rms = raw_rms.detach()
+        self.last_text_context_post_rms = post_rms.detach()
+        return normalized, context_mask
+
     def forward(
         self,
         x: float["b n d"],  # nosied input audio  # noqa: F722
@@ -621,6 +676,9 @@ class DiT_VT_MMDiT(DiT):
                 drop_text=drop_text,
                 drop_video=drop_video,
             )
+
+        if self.normalize_text_context:
+            text_embed, text_mask = self._stabilize_text_context(text_embed, text_mask)
 
         lens = (
             mask.sum(dim=1)

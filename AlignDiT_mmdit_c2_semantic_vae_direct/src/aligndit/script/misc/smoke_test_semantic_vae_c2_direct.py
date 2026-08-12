@@ -109,6 +109,7 @@ def main() -> None:
     torch.manual_seed(1234)
     model = build_model(vocab_size, vocab_char_map)
     assert not hasattr(model.transformer, "text_context_norm")
+    assert model.transformer.normalize_text_context is False
     assert model.transformer.layer_indices_ctc == (6, 12)
     assert model.transformer.ctc_sampling_ratios == (1, 1)
     assert all(projector.sampling_ratios == (1, 1) for projector in model.transformer.projectors_ctc)

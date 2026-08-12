@@ -221,6 +221,28 @@ frame batch从9000改3600以保持90秒/GPU。训练使用完整`train.jsonl` 79
 attention mask、CTC hidden 2048或显式200k scheduler horizon。工程侧可以保留不改变数值轨迹的哈希、
 schema、resume及非有限值检查。
 
+Direct-C2 已于 2026-08-12 跑到约 208.9k，并确认从约 29.9k 起失稳：50k/100k/150k/200k 的
+Adam 一阶矩已经衰减到 0/FP32 最小次正规数，150k->200k 只有 AdamW decay，没有有效梯度学习。
+因此该目录下原 Direct 输出全部只用于故障审计，禁止续训、评测或作为父权重。严格对照证明“只改 VAE
+接口、继续使用旧全局 LR=5e-5”在本设置下不可行；不能再次原样重跑并称为修复。
+
+当前修复保留在同一快照中的独立 minimal-fix v1 实验，不覆盖 Direct 配置：
+
+| 用途 | 路径 |
+|---|---|
+| 配置 | `src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_minimal_fix.yaml` |
+| 4×4090 launcher | `src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_minimal_fix_4x4090.sh` |
+| CPU smoke | `src/aligndit/script/misc/smoke_test_semantic_vae_c2_minimal_fix.py` |
+| checkpoint | `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1_40hz_CelebVDub_char` |
+
+minimal-fix 仍为完整 79,613 条数据、连续单阶段、全参数、单一 AdamW、固定 CTC=0.1 和 12MM+12text；
+仅在 12 层文本 CA 的共享 context 前增加一次无参数 padding-safe LayerNorm，并把已证伪的全局 LR 从
+`5e-5` 降为 `1e-5`。它禁止冻结、阶段重启、分组 LR 和 CTC ramp。训练器在 native clipping 前计算
+scale-safe pre-clip norm，非有限、<=1e-12 或 >100 时在 optimizer step 前同步 fail-fast；raw text RMS
+只记录，post RMS 必须约为1。checkpoint 使用原子写并绑定 policy/seed=666/world-size=4/data/parent/config
+contract；禁止跨实验恢复。代码 smoke 只证明故障保护生效，正式长期验收必须跨过旧 30k 和 85-90k
+危险区，并审计 50k/100k optimizer moments。
+
 四组实验均使用深度 18、前 12 层 MM-DiT、CelebVDub、字符 tokenizer、RMS QK-Norm、BF16 和相同的动态 frame batch。只允许按下表改变文本注入层数和参考音频隔离开关：
 
 | 实验 | `n_mm_layers` | `n_text_layers` | `prompt_isolated_ca` | 语义 |
