@@ -1,9 +1,9 @@
 # Semantic-VAE C2 旧 S3 高损失与静默零梯度错误总结
 
-> 记录日期：2026-08-09  
-> 影响项目：`AlignDiT_mmdit_c2_semantic_vae`  
-> 事故范围：已废弃的 `S3a -> S3b` CelebVDub 多模态训练  
-> 当前正式路线：S2c 70k EMA -> 连续单阶段 S3 200k
+> 首次记录：2026-08-09；最后更新：2026-08-12
+> 影响项目：`AlignDiT_mmdit_c2_semantic_vae`、`AlignDiT_mmdit_c2_semantic_vae_direct`
+> 事故范围：旧 `S3a -> S3b`、Direct-C2 长程失稳及 minimal-fix v1 梯度阈值误杀
+> 当前路线：S2c 70k EMA -> minimal-fix v2 连续单阶段 200k
 
 ## 1. 先给结论
 
@@ -547,7 +547,7 @@ RMS QK-Norm 没有保护文本 CA：文本 CA 使用 `nn.MultiheadAttention`，�
 这些因素改变了梯度和 Jacobian 的尺度，使原本无输出归一化的文本入口跨过失稳阈值。latent mean/std、
 25->40 Hz 视频插值、GPU 型号、resume 计数和 EMA 已分别通过数据或 checkpoint 审计排除为直接根因。
 
-## 13. 彻底修复：独立 minimal-fix v1
+## 13. 第一版最小修复：minimal-fix v1（已退役）
 
 修复没有覆盖 Direct 历史语义，而是在 `AlignDiT_mmdit_c2_semantic_vae_direct` 中新增独立配置、入口、
 实验名称和 checkpoint 目录。它仍是一个连续单阶段任务：不冻结、不拆 S3a/S3b、不重置 optimizer，
@@ -558,7 +558,7 @@ RMS QK-Norm 没有保护文本 CA：文本 CA 使用 `nn.MultiheadAttention`，�
 1. 同一个文本 context 进入 12 层 CA 前执行一次无参数、padding-safe、per-token LayerNorm；
 2. 已被 Direct 长程证伪的全局 LR `5e-5` 降到 `1e-5`，20k warmup 和其余 C2 公式不变。
 
-工程保护不会改变健康轨迹：
+v1 当时加入的工程保护为：
 
 - native clip 前用 FP64 per-tensor norm + host `math.hypot` 得到不会静默溢出的 pre-clip global norm；
 - norm 非有限、`<=1e-12` 或 `>100` 时在全部 DDP rank 同步、在 optimizer step 前终止；
@@ -587,5 +587,93 @@ checkpoint:
 pre-clip norm=2.102、raw/post text RMS=`1.301/1.000`；update 2 续训也保持 finite，并且 checkpoint
 schema、contract、optimizer、scheduler、EMA step 均通过读取验证。
 
-这说明代码层的故障链和静默假训练已被切断。长期数值稳定仍必须用同一个正式轨迹跨过旧危险区
-30k、50k、85-90k 和 100k 才能最终确认，不能仅凭两步 smoke 宣称 200k 指标已经得到保证。
+这说明代码层的旧静默假训练链已被切断，但不足以验证 v1 的长程门限设计。v1 随后在
+3.2k 遇到有限梯度尖峰时被过于保守的 100 硬阈值误杀，具体现场和 v2 纠正见第 14 节。
+
+## 14. 2026-08-12 minimal-fix v1 阈值误杀与 v2 纠正
+
+### 14.1 v1 停止的精确现场
+
+v1 正式 4×4090 轨迹于 2026-08-12 15:02:47 停止。训练已成功完成
+`global_update=3205`；在准备执行下一次 optimizer step 时，四个 DDP rank 计算到完全一致的
+scale-safe pre-clip global norm：
+
+```text
+112.31316606539498
+```
+
+v1 的人工安全范围为 `(1e-12, 100]`，所以 4/4 ranks 在 `optimizer.step()` 前同步抛出
+`FloatingPointError`。这说明 fail-fast 按代码设计工作，但也说明把“有限 norm 大于 100”直接
+定义为数值故障过于保守。`max_grad_norm=1.0` 原本就是用来处理这类有限尖峰；对该 batch
+正常裁剪的系数上界约为 `1/112.313=0.00890`，不应在裁剪之前误杀整个任务。
+
+上一个已成功写入 TensorBoard 的 step 3205 仍全部正常：
+
+| 指标 | step 3205 |
+|---|---:|
+| total loss | 1.812511 |
+| diffusion loss | 1.459590 |
+| raw CTC loss | 3.529202 |
+| LR | 1.6025e-6 |
+| pre-clip global norm | 0.287361 |
+| raw text RMS | 1.348893 |
+| post text RMS | 1.000000 |
+
+停止 batch 的 norm 是有限值，前一成功 step 的 loss、text RMS 和梯度都没有爆炸。日志中没有
+CUDA OOM、NCCL 故障、网络中断、NaN/Inf 或 latent 读取异常。因此本次停止不是 Semantic-VAE
+本身导致的 loss 爆炸，也不是旧 Direct-C2 的静默零梯度复发；它是一次可复现的人工阈值
+误杀。
+
+v1 设置每 5k 才保存 `model_last.pt`，停止时尚未到 5k。故 v1 正式目录中只有
+`training_contract.json` 和 `parent_migration.json`，没有任何可恢复 checkpoint。v1 不能 exact resume，
+更不能仅传递 online/EMA weights 伪装成同一轨迹。
+
+### 14.2 v2 的阈值语义
+
+v2 不改变 minimal-fix 的模型、数据、单阶段 AdamW、`LR=1e-5`、固定 CTC 0.1、文本 context
+LayerNorm 和 `max_grad_norm=1.0`。唯一训练语义纠正是把有限梯度尖峰分为“可裁剪的告警”与
+“明确不安全的硬停”：
+
+| pre-clip global norm | v2 行为 |
+|---|---|
+| NaN/Inf | 4-rank 同步硬停，不进入 optimizer step |
+| `<=1e-12` | 4-rank 同步硬停，防止静默零梯度 |
+| `(1e-12, 100]` | 正常执行 `max_grad_norm=1.0` 裁剪与 optimizer step |
+| `(100, 1e6]` | 软告警，记录故障现场后仍裁剪至 1 并正常更新 |
+| `>1e6` | 4-rank 同步硬停，不进入 optimizer step |
+
+当有限 norm 大于 100 时，只由主 rank 追加写入 `gradient_spikes.jsonl`。每条记录包含：
+
+- step 边界、global norm、`max_grad_norm` 和裁剪系数上界；
+- 当前 total/diffusion/CTC loss 及 raw/post text RMS；
+- 按 FP64 per-parameter grad norm 排序的 top-12 参数名与数值。
+
+这样既不会再把 112.313 这类可裁剪尖峰误判为崩溃，也不会恢复到旧 trainer 那种不检查、
+可能静默零梯度的状态。post text RMS 的有限性及 `[0.95,1.05]` 范围仍是硬门禁，loss 和各
+分项 loss 仍必须有限。
+
+### 14.3 v2 必须独立干净重启
+
+v2 的 policy 字符串、resolved config、contract hash、模型名和 checkpoint 目录均与 v1 隔离。
+v1 本来也没有 5k checkpoint，所以 v2 只允许从已验证的 S2c 70k EMA 重新迁移
+`303 loaded / 10 ignored / 400 new`，不允许读取 v1 任何运行产物。
+
+固定路径：
+
+```text
+v1 事故审计（禁止续训）:
+  /zjw524/projects/data/ckpts/
+    AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1_40hz_CelebVDub_char/
+
+v2 正式输出:
+  /zjw524/projects/data/ckpts/
+    AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v2_40hz_CelebVDub_char/
+
+v2 训练 policy:
+  semantic-vae40-c2-one-stage-minimal-fix-v2
+```
+
+v2 已通过独立的真实 4-rank 3-update smoke：`model_last.pt` 的 update=3、EMA step=70003，
+checkpoint schema/policy/contract 与 S2c 迁移都可读。该 smoke 目录仅用于验证，不是正式 v2 父权重。
+正式 v2 轨迹必须在上述独立 v2 目录从干净 S2c 70k 开始，并继续跨过 30k、50k、
+85-90k 和 100k 危险区做长程验收。

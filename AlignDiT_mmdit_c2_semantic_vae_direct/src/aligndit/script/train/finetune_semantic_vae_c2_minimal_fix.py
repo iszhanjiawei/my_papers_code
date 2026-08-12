@@ -14,7 +14,7 @@ from omegaconf import OmegaConf
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
-from aligndit.model.trainer_semantic_vae_minimal_fix import SemanticVaeMinimalFixC2Trainer
+from aligndit.model.trainer_semantic_vae_minimal_fix import MINIMAL_FIX_POLICY, SemanticVaeMinimalFixC2Trainer
 from f5_tts.model.utils import get_tokenizer
 
 
@@ -132,13 +132,14 @@ def main(model_cfg) -> None:
         expected_parent_update=model_cfg.ckpts.expected_parent_update,
         seed=seed,
         run_until_update=run_until,
+        global_grad_norm_warning_threshold=model_cfg.monitoring.global_grad_norm_warning_threshold,
         global_grad_norm_abort_threshold=model_cfg.monitoring.global_grad_norm_abort_threshold,
         global_grad_norm_min_threshold=model_cfg.monitoring.global_grad_norm_min_threshold,
         post_text_rms_min=model_cfg.monitoring.post_text_rms_min,
         post_text_rms_max=model_cfg.monitoring.post_text_rms_max,
         experiment_contract={
             "checkpoint_schema_version": 1,
-            "training_policy": "semantic-vae40-c2-one-stage-minimal-fix-v1",
+            "training_policy": MINIMAL_FIX_POLICY,
             "seed": seed,
             "world_size": 4,
             "gradient_accumulation_steps": int(model_cfg.optim.grad_accumulation_steps),

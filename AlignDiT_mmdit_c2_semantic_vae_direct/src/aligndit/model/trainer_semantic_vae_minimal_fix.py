@@ -18,7 +18,7 @@ from aligndit.model.trainer_semantic_vae_direct import SemanticVaeDirectC2Traine
 
 
 MINIMAL_FIX_CHECKPOINT_SCHEMA = 1
-MINIMAL_FIX_POLICY = "semantic-vae40-c2-one-stage-minimal-fix-v1"
+MINIMAL_FIX_POLICY = "semantic-vae40-c2-one-stage-minimal-fix-v2"
 
 
 def _fsync_directory(path: str) -> None:
@@ -87,6 +87,26 @@ def scale_safe_global_grad_norm(parameters: Iterable[torch.nn.Parameter]) -> flo
     return math.hypot(*values)
 
 
+@torch.no_grad()
+def scale_safe_top_gradient_norms(
+    named_parameters: Iterable[tuple[str, torch.nn.Parameter]], limit: int = 12
+) -> list[dict[str, float | str]]:
+    """Return the largest finite per-parameter gradient norms for spike forensics."""
+
+    if limit <= 0:
+        return []
+    norms: list[dict[str, float | str]] = []
+    for name, parameter in named_parameters:
+        gradient = parameter.grad
+        if gradient is None:
+            continue
+        gradient = gradient.coalesce().values() if gradient.is_sparse else gradient
+        value = float(torch.linalg.vector_norm(gradient.detach(), ord=2, dtype=torch.float64).item())
+        norms.append({"name": name, "norm": value})
+    norms.sort(key=lambda item: float(item["norm"]), reverse=True)
+    return norms[:limit]
+
+
 class SemanticVaeMinimalFixC2Trainer(SemanticVaeDirectC2Trainer):
     """Original one-stage C2 policy plus deterministic numerical safeguards."""
 
@@ -95,6 +115,7 @@ class SemanticVaeMinimalFixC2Trainer(SemanticVaeDirectC2Trainer):
         *args,
         seed: int,
         run_until_update: int,
+        global_grad_norm_warning_threshold: float,
         global_grad_norm_abort_threshold: float,
         global_grad_norm_min_threshold: float,
         post_text_rms_min: float,
@@ -106,12 +127,18 @@ class SemanticVaeMinimalFixC2Trainer(SemanticVaeDirectC2Trainer):
             raise ValueError(f"seed must be non-negative, got {seed}")
         if run_until_update <= 0:
             raise ValueError(f"run_until_update must be positive, got {run_until_update}")
-        if not 0 <= global_grad_norm_min_threshold < global_grad_norm_abort_threshold:
-            raise ValueError("gradient norm thresholds must satisfy 0 <= min < abort")
+        if not (
+            0
+            <= global_grad_norm_min_threshold
+            < global_grad_norm_warning_threshold
+            < global_grad_norm_abort_threshold
+        ):
+            raise ValueError("gradient norm thresholds must satisfy 0 <= min < warning < abort")
         if not 0 < post_text_rms_min < post_text_rms_max:
             raise ValueError("post-text RMS thresholds must satisfy 0 < min < max")
         self.repair_seed = int(seed)
         self.run_until_update = int(run_until_update)
+        self.global_grad_norm_warning_threshold = float(global_grad_norm_warning_threshold)
         self.global_grad_norm_abort_threshold = float(global_grad_norm_abort_threshold)
         self.global_grad_norm_min_threshold = float(global_grad_norm_min_threshold)
         self.post_text_rms_min = float(post_text_rms_min)
@@ -119,6 +146,7 @@ class SemanticVaeMinimalFixC2Trainer(SemanticVaeDirectC2Trainer):
         self.experiment_contract = experiment_contract
         self.experiment_contract_sha256 = _sha256_json(experiment_contract)
         self.current_update = 0
+        self.last_forward_snapshot: dict[str, Any] = {}
         super().__init__(*args, **kwargs)
         if self.grad_accumulation_steps != 1:
             raise ValueError("the reproducible minimal repair currently requires grad_accumulation_steps=1")
@@ -245,7 +273,38 @@ class SemanticVaeMinimalFixC2Trainer(SemanticVaeDirectC2Trainer):
                 f"required_post_range=[{self.post_text_rms_min}, {self.post_text_rms_max}], "
                 f"failed_ranks={failed_ranks}/{self.accelerator.num_processes}"
             )
+        self.last_forward_snapshot = {
+            "loss": float(loss.detach().float().item()),
+            "loss_components": {
+                name: float(value.detach().float().item()) if isinstance(value, torch.Tensor) else float(value)
+                for name, value in loss_components.items()
+            },
+            "raw_text_rms": raw_value,
+            "post_text_rms": post_value,
+        }
         return {"text_context/raw_rms": raw_value, "text_context/post_rms": post_value}
+
+    def _record_gradient_spike(self, safe_norm: float) -> None:
+        report = {
+            "current_update_before_step": self.current_update,
+            "optimizer_step_after_success": self.current_update + 1,
+            "global_grad_norm": safe_norm,
+            "max_grad_norm": self.max_grad_norm,
+            "clip_coefficient_upper_bound": min(1.0, self.max_grad_norm / safe_norm),
+            "forward": self.last_forward_snapshot,
+            "top_parameter_gradient_norms": scale_safe_top_gradient_norms(self.model.named_parameters()),
+        }
+        path = Path(self.checkpoint_path) / "gradient_spikes.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n")
+            file.flush()
+            os.fsync(file.fileno())
+        print(
+            "Finite gradient spike will be clipped, not treated as numerical failure: "
+            f"{json.dumps(report, ensure_ascii=False, sort_keys=True)}",
+            flush=True,
+        )
 
     def _clip_gradients(self) -> float:
         if not self.accelerator.sync_gradients:
@@ -270,6 +329,9 @@ class SemanticVaeMinimalFixC2Trainer(SemanticVaeDirectC2Trainer):
                 f"{self.global_grad_norm_abort_threshold}], "
                 f"failed_ranks={failed_ranks}/{self.accelerator.num_processes}"
             )
+
+        if safe_norm > self.global_grad_norm_warning_threshold and self.accelerator.is_main_process:
+            self._record_gradient_spike(safe_norm)
 
         native_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
         native_value = float(native_norm.detach().float().item())

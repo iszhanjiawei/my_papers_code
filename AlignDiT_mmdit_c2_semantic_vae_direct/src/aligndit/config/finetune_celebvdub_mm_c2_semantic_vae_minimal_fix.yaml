@@ -36,12 +36,16 @@ optim:
 
 monitoring:
   global_grad_norm_min_threshold: 1.0e-12
-  global_grad_norm_abort_threshold: 100.0
+  # A finite spike is expected to be handled by max_grad_norm=1.0.  Record the
+  # responsible tensors above 100, and abort only at an unambiguously unsafe
+  # scale (or for NaN/Inf/near-zero gradients).
+  global_grad_norm_warning_threshold: 100.0
+  global_grad_norm_abort_threshold: 1.0e6
   post_text_rms_min: 0.95
   post_text_rms_max: 1.05
 
 model:
-  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v2
   tokenizer: char
   tokenizer_path: null
   backbone: DiT_VT_MMDiT
@@ -94,4 +98,4 @@ ckpts:
   save_per_updates: 50000
   keep_last_n_checkpoints: -1
   last_per_updates: 5000
-  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1_40hz_CelebVDub_char
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v2_40hz_CelebVDub_char

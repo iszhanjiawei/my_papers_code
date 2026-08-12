@@ -226,22 +226,34 @@ Adam 一阶矩已经衰减到 0/FP32 最小次正规数，150k->200k 只有 Adam
 因此该目录下原 Direct 输出全部只用于故障审计，禁止续训、评测或作为父权重。严格对照证明“只改 VAE
 接口、继续使用旧全局 LR=5e-5”在本设置下不可行；不能再次原样重跑并称为修复。
 
-当前修复保留在同一快照中的独立 minimal-fix v1 实验，不覆盖 Direct 配置：
+当前修复保留在同一快照中的独立 minimal-fix 实验，不覆盖 Direct 配置。
+minimal-fix v1 已经退役，仅保留事故审计；当前配置和训练策略为 v2：
 
 | 用途 | 路径 |
 |---|---|
 | 配置 | `src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_minimal_fix.yaml` |
 | 4×4090 launcher | `src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_minimal_fix_4x4090.sh` |
 | CPU smoke | `src/aligndit/script/misc/smoke_test_semantic_vae_c2_minimal_fix.py` |
-| checkpoint | `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1_40hz_CelebVDub_char` |
+| v1 事故目录 | `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1_40hz_CelebVDub_char` |
+| v2 正式 checkpoint | `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v2_40hz_CelebVDub_char` |
 
 minimal-fix 仍为完整 79,613 条数据、连续单阶段、全参数、单一 AdamW、固定 CTC=0.1 和 12MM+12text；
 仅在 12 层文本 CA 的共享 context 前增加一次无参数 padding-safe LayerNorm，并把已证伪的全局 LR 从
 `5e-5` 降为 `1e-5`。它禁止冻结、阶段重启、分组 LR 和 CTC ramp。训练器在 native clipping 前计算
-scale-safe pre-clip norm，非有限、<=1e-12 或 >100 时在 optimizer step 前同步 fail-fast；raw text RMS
-只记录，post RMS 必须约为1。checkpoint 使用原子写并绑定 policy/seed=666/world-size=4/data/parent/config
-contract；禁止跨实验恢复。代码 smoke 只证明故障保护生效，正式长期验收必须跨过旧 30k 和 85-90k
-危险区，并审计 50k/100k optimizer moments。
+scale-safe pre-clip norm。v2 对 NaN/Inf、`<=1e-12` 或 `>1e6` 仍在 optimizer step 前同步
+fail-fast；有限 norm `>100` 只是软告警，由主 rank 把当前 loss/text RMS 和最大的 12 个参数梯度
+写入 `gradient_spikes.jsonl`，然后仍执行 `max_grad_norm=1.0` 的 native clipping 和正常 optimizer step。raw
+text RMS 只记录，post RMS 必须约为 1。checkpoint 使用原子写并绑定
+policy/seed=666/world-size=4/data/parent/config contract；禁止跨实验恢复。v2 必须在独立新目录从
+干净 S2c 70k EMA 重新开始，不得从 v1 续训。代码 smoke 只证明故障保护生效，正式长期验收必须
+跨过旧 30k 和 85-90k 危险区，并审计 50k/100k optimizer moments。
+
+minimal-fix v1 在 2026-08-12 15:02:47 于已成功完成 `global_update=3205` 后停止。下一个 batch
+的 scale-safe pre-clip norm 为有限的 `112.313166`，因 v1 把人工阈值 100 误当成数值故障而被
+4/4 ranks 同步误杀。上一个已成功 TensorBoard step 3205 仍正常：`loss=1.8125`、
+`diff=1.4596`、`CTC=3.5292`、`grad_norm=0.2874`、raw/post text RMS=`1.3489/1.0000`。这不是
+网络中断、VAE/latent 数据错误、loss 爆炸、NaN/Inf 或旧式静默零梯度。v1 尚未到 5k，因而没有
+`model_last.pt` 或 5k 编号 checkpoint，v1 目录不能 exact resume，也不能作为 v2 父权重。
 
 四组实验均使用深度 18、前 12 层 MM-DiT、CelebVDub、字符 tokenizer、RMS QK-Norm、BF16 和相同的动态 frame batch。只允许按下表改变文本注入层数和参考音频隔离开关：
 

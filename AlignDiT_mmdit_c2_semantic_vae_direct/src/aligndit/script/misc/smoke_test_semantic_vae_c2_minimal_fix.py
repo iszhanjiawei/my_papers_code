@@ -10,7 +10,10 @@ import torch
 from torch import nn
 
 from aligndit.model.backbone.dit_vt_mm import DiT_VT_MMDiT
-from aligndit.model.trainer_semantic_vae_minimal_fix import scale_safe_global_grad_norm
+from aligndit.model.trainer_semantic_vae_minimal_fix import (
+    scale_safe_global_grad_norm,
+    scale_safe_top_gradient_norms,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -53,6 +56,15 @@ def test_scale_safe_gradient_norm() -> None:
     assert math.isnan(scale_safe_global_grad_norm((first, second)))
 
 
+def test_gradient_spike_report_is_ranked() -> None:
+    first = nn.Parameter(torch.zeros(2))
+    second = nn.Parameter(torch.zeros(2))
+    first.grad = torch.tensor([3.0, 4.0])
+    second.grad = torch.tensor([0.0, 12.0])
+    report = scale_safe_top_gradient_norms((("first", first), ("second", second)), limit=1)
+    assert report == [{"name": "second", "norm": 12.0}]
+
+
 def test_minimal_config_diff_is_explicit() -> None:
     from omegaconf import OmegaConf
 
@@ -64,6 +76,7 @@ def test_minimal_config_diff_is_explicit() -> None:
         "optim.max_updates",
         "optim.learning_rate",
         "monitoring.global_grad_norm_min_threshold",
+        "monitoring.global_grad_norm_warning_threshold",
         "monitoring.global_grad_norm_abort_threshold",
         "monitoring.post_text_rms_min",
         "monitoring.post_text_rms_max",
@@ -100,6 +113,7 @@ def test_minimal_config_diff_is_explicit() -> None:
 def main() -> None:
     test_parameter_free_text_context_normalization()
     test_scale_safe_gradient_norm()
+    test_gradient_spike_report_is_ranked()
     test_minimal_config_diff_is_explicit()
     print("Semantic-VAE C2 minimal-fix CPU smoke tests passed")
 
