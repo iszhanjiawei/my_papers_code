@@ -9,6 +9,7 @@
 - `AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/`：当前论文改进与 C0-C3 消融实验的主快照；分离视频交互层数、文本注入层数，并支持仅向待生成音频帧写入文本 cross-attention 残差。
 - `AlignDiT_mmdit_c2_semantic_vae/`：从上述主快照的 C2 路线独立复制出的 Semantic-VAE 实验目录；目标是把 80 维、100 Hz mel 改为 64 维、40 Hz Semantic-VAE latent。该目录必须独立演进，不得把中间改动同步回已完成的 C0-C3/D0-D2 实验。
 - `AlignDiT_mmdit_c2_semantic_vae_direct/`：从原 mel C2 重新复制的严格单变量对照；只保留 64D/40 Hz latent、25→40 Hz 视频、1:1 时间轴和 40 Hz CTC 等 Semantic-VAE 必需改动，其他网络与训练语义保持原 C2。
+- `AlignDiT_mmdit_c2_mingtok_vae/`：从原 mel C2 独立复制的 MingTok 实验；使用 raw sampled 64D/50 Hz acoustic latent、原生 25 Hz 视频和 2:1 时间轴，并从 CelebVDub 随机初始化训练，禁止加载 LibriSpeech 纯音频 AlignDiT 权重。
 - `AlignDiT_mmdit_wav_vae_base_qknorm_ca/`：为 wav/Semantic-VAE 方向保留的实验快照；当前受 Git 跟踪的源码与 `AlignDiT_mmdit_base_qknorm_ca/` 基本一致，不要仅凭目录名假定 wav VAE 已完成集成。
 - `hifigan_16k_LRS3/`：共享的 HiFi-GAN 配置与权重。权重属于二进制资产，不要修改、格式化或重新生成。
 
@@ -111,6 +112,18 @@ AlignDiT_mmdit_c2_semantic_vae/
 ```text
 AlignDiT_mmdit_c2_semantic_vae_direct/
 ```
+
+当任务明确涉及 MingTok 64D/50 Hz acoustic latent、50 Hz CTC 或 CelebVDub scratch C2 时，只修改：
+
+```text
+AlignDiT_mmdit_c2_mingtok_vae/
+```
+
+该快照的 MingTok 权重只用于离线 latent 提取、训练样本日志解码和推理解码，不属于“纯音频 AlignDiT
+预训练权重”。训练入口不得调用 `Trainer_VT.finetune()`；首次训练保持模型构造时的随机/AdaLN-Zero
+初始化，实验自身 checkpoint 的恢复行为与原 C2 相同。除 MingTok 表示必需改动外，不得加入原 C2
+不存在的文本归一化、梯度监控、mask、CTC 类别映射或 checkpoint 策略变更。固定实验契约见该目录的
+`MINGTOK_C2.md`。
 
 不要使用未完成且可能含本地运行产物的 `AlignDiT_mmdit_wav_vae_base_qknorm_ca/`，也不要覆盖原 C2 mel 快照。
 
