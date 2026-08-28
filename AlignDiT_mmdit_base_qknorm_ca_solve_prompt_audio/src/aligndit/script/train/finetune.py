@@ -36,7 +36,7 @@ def main(model_cfg):
     wandb_resume_id = None
 
     # set text tokenizer
-    data_dir = getattr(model_cfg.datasets, 'data_dir', None)
+    data_dir = getattr(model_cfg.datasets, "data_dir", None)
     if data_dir and tokenizer not in ["custom", "byte"]:
         tokenizer_path = os.path.join(data_dir, f"{model_cfg.datasets.name}_{tokenizer}", "vocab.txt")
         vocab_char_map, vocab_size = get_tokenizer(tokenizer_path, "custom")
@@ -87,10 +87,7 @@ def main(model_cfg):
         rank_seed = experiment_seed + trainer.accelerator.process_index
         set_seed(rank_seed)
         if trainer.accelerator.is_main_process:
-            print(
-                f"Global experiment seed={experiment_seed}; "
-                "training RNG uses seed + process_index on each rank"
-            )
+            print(f"Global experiment seed={experiment_seed}; training RNG uses seed + process_index on each rank")
 
     train_dataset = load_dataset_mel(
         model_cfg.datasets.name,
@@ -100,14 +97,29 @@ def main(model_cfg):
         dataset_type="CustomDataset_mel_video",
         data_dir=data_dir,
     )
-    trainer.finetune(
-        model_cfg.ckpts.pretrained_path,
-        train_dataset,
-        num_workers=model_cfg.datasets.num_workers,
+    init_mode = str(getattr(model_cfg.ckpts, "init_mode", "audio_pretrained"))
+    pretrained_path = getattr(model_cfg.ckpts, "pretrained_path", None)
+    train_kwargs = {
+        "num_workers": model_cfg.datasets.num_workers,
         # Preserve historical C0-C3 ordering when no explicit global seed is
-        # configured. D0 records and reuses its experiment seed here.
-        resumable_with_seed=experiment_seed if experiment_seed is not None else 666,
-    )
+        # configured. Seeded experiments record and reuse their experiment seed here.
+        "resumable_with_seed": experiment_seed if experiment_seed is not None else 666,
+    }
+
+    if init_mode == "scratch":
+        if pretrained_path not in (None, ""):
+            raise ValueError("ckpts.pretrained_path must be null when ckpts.init_mode=scratch")
+        if trainer.accelerator.is_main_process:
+            print("Initialization mode: scratch (no pretrained AlignDiT checkpoint will be loaded)")
+        trainer.train(train_dataset, **train_kwargs)
+    elif init_mode == "audio_pretrained":
+        if not pretrained_path:
+            raise ValueError("ckpts.pretrained_path is required when ckpts.init_mode=audio_pretrained")
+        if trainer.accelerator.is_main_process:
+            print(f"Initialization mode: audio_pretrained ({pretrained_path})")
+        trainer.finetune(pretrained_path, train_dataset, **train_kwargs)
+    else:
+        raise ValueError(f"Unsupported ckpts.init_mode: {init_mode!r}")
 
 
 if __name__ == "__main__":
