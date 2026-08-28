@@ -192,7 +192,12 @@ class CustomDatasetMingTokVideo(Dataset):
             )
 
         self.data = custom_dataset.filter(
-            lambda example: min_duration <= float(example["duration"]) <= max_duration
+            lambda example: min_duration <= float(example["duration"]) <= max_duration,
+            # Every DDP rank constructs its dataset independently.  Avoid the
+            # Hugging Face default of racing on one shared cache-*.arrow file;
+            # this preserves the original C2 predicate and row order.
+            keep_in_memory=True,
+            load_from_cache_file=False,
         )
         self.durations = self.data["duration"]
         self.data_dir = data_dir
