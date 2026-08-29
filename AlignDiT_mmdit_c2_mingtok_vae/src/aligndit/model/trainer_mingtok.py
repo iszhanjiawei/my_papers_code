@@ -17,10 +17,35 @@ from f5_tts.model.utils import exists
 class Trainer_MingTok(Trainer):
     """Original C2 trainer loop with MingTok latent batches and sample decoding."""
 
-    def __init__(self, *args, mingtok_repo_path: str, mingtok_checkpoint_dir: str, **kwargs):
+    def __init__(
+        self,
+        *args,
+        mingtok_repo_path: str,
+        mingtok_checkpoint_dir: str,
+        ctc_warmup_start: int = 0,
+        ctc_warmup_end: int = 0,
+        **kwargs,
+    ):
+        if ctc_warmup_start < 0:
+            raise ValueError(f"ctc_warmup_start must be non-negative, got {ctc_warmup_start}")
+        if ctc_warmup_end < ctc_warmup_start:
+            raise ValueError(
+                f"ctc_warmup_end must be >= ctc_warmup_start, got {ctc_warmup_end} < {ctc_warmup_start}"
+            )
         self.mingtok_repo_path = mingtok_repo_path
         self.mingtok_checkpoint_dir = mingtok_checkpoint_dir
+        self.ctc_warmup_start = int(ctc_warmup_start)
+        self.ctc_warmup_end = int(ctc_warmup_end)
         super().__init__(*args, **kwargs)
+        self.ctc_lambda_target = float(self.accelerator.unwrap_model(self.model).ctc_lambda)
+
+    def _ctc_lambda_for_update(self, update: int) -> float:
+        if update <= self.ctc_warmup_start:
+            return 0.0
+        if update >= self.ctc_warmup_end or self.ctc_warmup_end == self.ctc_warmup_start:
+            return self.ctc_lambda_target
+        progress = (update - self.ctc_warmup_start) / (self.ctc_warmup_end - self.ctc_warmup_start)
+        return self.ctc_lambda_target * progress
 
     def train(self, train_dataset: Dataset, num_workers=16, resumable_with_seed: int | None = None):
         codec = None
@@ -132,6 +157,9 @@ class Trainer_MingTok(Trainer):
 
             for batch in current_dataloader:
                 with self.accelerator.accumulate(self.model):
+                    ctc_lambda = self._ctc_lambda_for_update(global_update + 1)
+                    self.accelerator.unwrap_model(self.model).ctc_lambda = ctc_lambda
+
                     text_inputs = batch["text"]
                     audio_latent = batch["audio_latent"].permute(0, 2, 1)
                     audio_latent_lengths = batch["audio_latent_lengths"]
@@ -163,16 +191,20 @@ class Trainer_MingTok(Trainer):
 
                     global_update += 1
                     progress_bar.update(1)
-                    progress_bar.set_postfix(update=str(global_update), loss=loss.item(), **loss_components)
+                    progress_bar.set_postfix(
+                        update=str(global_update), loss=loss.item(), ctc_lambda=ctc_lambda, **loss_components
+                    )
 
                 if self.accelerator.is_local_main_process:
                     self.accelerator.log(
-                        {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0]}, step=global_update
+                        {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], "ctc_lambda": ctc_lambda},
+                        step=global_update,
                     )
                     self.accelerator.log(loss_components, step=global_update)
                     if self.logger == "tensorboard":
                         self.writer.add_scalar("loss", loss.item(), global_update)
                         self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_update)
+                        self.writer.add_scalar("ctc_lambda", ctc_lambda, global_update)
                         for key, value in loss_components.items():
                             self.writer.add_scalar(key, value, global_update)
 

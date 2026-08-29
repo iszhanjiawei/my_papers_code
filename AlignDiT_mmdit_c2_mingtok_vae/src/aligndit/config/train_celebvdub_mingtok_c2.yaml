@@ -2,6 +2,8 @@ hydra:
   run:
     dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_${model.latent.name}_${datasets.name}_${model.tokenizer}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
+seed: 666
+
 datasets:
   name: CelebVDub
   data_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data
@@ -21,7 +23,7 @@ optim:
   bnb_optimizer: False
 
 model:
-  name: AlignDiT_MMDiT_qknorm_ca_c2_mingtok_64d50hz_scratch
+  name: AlignDiT_MMDiT_qknorm_ca_c2_mingtok_64d50hz_scratch_ctc001_warmup10k30k_seed666
   tokenizer: char
   tokenizer_path: null
   backbone: DiT_VT_MMDiT
@@ -57,14 +59,16 @@ model:
     repo_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/alignDiT_idea6/MingTok-VAE/paper_code/MingTok-Audio
     checkpoint_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/alignDiT_idea6/MingTok-VAE/checkpoint/MingTok-Audio
 
-  ctc_lambda: 0.1
+  ctc_lambda: 0.01
+  ctc_warmup_start: 10000
+  ctc_warmup_end: 30000
 
 ema:
   beta: 0.999
 
 ckpts:
   logger: tensorboard
-  log_samples: True
+  log_samples: False
   save_per_updates: 50000
   keep_last_n_checkpoints: -1
   last_per_updates: 5000

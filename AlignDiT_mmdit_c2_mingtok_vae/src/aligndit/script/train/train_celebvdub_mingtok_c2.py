@@ -4,6 +4,7 @@ import os
 from importlib.resources import files
 
 import hydra
+from accelerate.utils import set_seed
 from omegaconf import OmegaConf
 
 from aligndit.model.cfm_mingtok import CFM_MingTok
@@ -17,6 +18,11 @@ os.chdir(str(files("aligndit").joinpath("../..")))
 
 @hydra.main(version_base="1.3", config_path=str(files("aligndit").joinpath("config")), config_name=None)
 def main(model_cfg):
+    experiment_seed = int(model_cfg.seed)
+    # Construct identical scratch-initialized parameters on every rank. After
+    # Accelerate initializes, switch each rank to its own reproducible stream.
+    set_seed(experiment_seed)
+
     model_cls = hydra.utils.get_class(f"aligndit.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
     tokenizer = model_cfg.model.tokenizer
@@ -75,9 +81,15 @@ def main(model_cfg):
         ema_kwargs=model_cfg.ema,
         mingtok_repo_path=model_cfg.model.codec.repo_path,
         mingtok_checkpoint_dir=model_cfg.model.codec.checkpoint_dir,
+        ctc_warmup_start=model_cfg.model.ctc_warmup_start,
+        ctc_warmup_end=model_cfg.model.ctc_warmup_end,
     )
 
+    rank_seed = experiment_seed + trainer.accelerator.process_index
+    set_seed(rank_seed)
+
     if trainer.accelerator.is_main_process:
+        print(f"Global experiment seed={experiment_seed}; training RNG uses seed + process_index on each rank")
         print(
             "Initialization policy: no audio-only pretrained checkpoint is loaded; "
             "start fresh unless this experiment save directory contains a resumable C2 checkpoint."
@@ -96,7 +108,7 @@ def main(model_cfg):
     trainer.train(
         train_dataset,
         num_workers=model_cfg.datasets.num_workers,
-        resumable_with_seed=666,
+        resumable_with_seed=experiment_seed,
     )
 
 

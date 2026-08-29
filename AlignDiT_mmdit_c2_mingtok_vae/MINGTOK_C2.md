@@ -30,10 +30,11 @@ it independently combines the original C2 architecture with MingTok's raw
 | CTC frame rate | 50 Hz (`ctc_sampling_ratios: [1, 1]`) |
 | Training data | All 79,613 CelebVDub training records; no CTC-based filtering |
 | Cache selection | Exact `CelebVDub_char/raw.arrow` `audio_path` rows, not a directory scan |
-| Latent sampling seed | 666, used only to make each cached VAE posterior sample deterministic |
+| Experiment seed | 666 for model initialization, rank-specific training RNG, and dynamic-batch ordering |
+| Latent sampling seed | 666, used to make each cached VAE posterior sample deterministic |
 | Dynamic batch | 4,500 latent frames/GPU (about 90 seconds/GPU) |
 | Optimizer | AdamW, one learning rate of 5e-5, 20k warmup, max grad norm 1.0 |
-| Auxiliary loss | Fixed CTC weight 0.1 |
+| Auxiliary loss | CTC weight 0 through update 10k, then linearly ramped to 0.01 at update 30k |
 | EMA | beta 0.999 |
 
 The local codec is pinned by these hashes:
@@ -81,10 +82,9 @@ raw-arrow ordering, no normalization, and the released MingTok config/model
 hashes.  A same-shaped posterior-mean or differently sampled cache is rejected.
 
 The optimization path reads the latent cache and never instantiates the full
-MingTok VAE or its 1280D semantic branch.  Because the original C2 setting
-keeps `log_samples=true`, the local main process does load the frozen acoustic
-decoder only, outside DDP, to write a waveform sample every 50k updates.  No
-codec parameter enters the optimizer, EMA, or AlignDiT checkpoints.
+MingTok VAE or its 1280D semantic branch.  This scratch experiment uses
+`log_samples=false`, so training does not load the frozen acoustic decoder.
+No codec parameter enters the optimizer, EMA, or AlignDiT checkpoints.
 
 The local Transformers 4.51 runtime prints a generic warning that sliding
 window attention is not implemented for eager attention.  Its Qwen2 model
@@ -126,8 +126,18 @@ bash src/aligndit/run/misc/extract_mingtok_latents_celebvdub_4x4090.sh
 PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u \
   src/aligndit/script/misc/smoke_test_mingtok_c2.py
 
-# 4. Start strict C2 training from CelebVDub (or resume this experiment only).
-bash src/aligndit/run/train/train_celebvdub_mingtok_c2_4x4090.sh
+# 4. Start C2 training from CelebVDub (or resume this experiment only).
+# Long runs must be detached from the controlling terminal.  Keep the PID and
+# verify that SID equals PID and TTY is "?" before reporting a successful start.
+run_id="$(date +%Y%m%d_%H%M%S)"
+log="logs/train_celebvdub_mingtok_c2_ctc001_warmup10k30k_seed666_4x4090_${run_id}.log"
+pid_file="${log%.log}.pid"
+setsid env PYTHONUNBUFFERED=1 \
+  bash src/aligndit/run/train/train_celebvdub_mingtok_c2_4x4090.sh \
+  > "$log" 2>&1 < /dev/null &
+train_pid=$!
+printf '%s\n' "$train_pid" > "$pid_file"
+ps -o pid,ppid,sid,tty,stat,cmd -p "$train_pid"
 
 # 5. After a checkpoint exists, run four-GPU Setting-1 EMA inference.
 bash src/aligndit/run/eval/infer_celebvdub_mingtok_s1_4x4090.sh \
