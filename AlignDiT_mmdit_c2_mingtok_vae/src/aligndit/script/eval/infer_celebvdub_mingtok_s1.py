@@ -213,7 +213,11 @@ def run(args: argparse.Namespace) -> None:
 
     accelerator = Accelerator()
     device = accelerator.device
-    torch.cuda.set_device(device)
+    # Accelerate's single-process launcher may return an indexless ``cuda``
+    # device, while distributed ranks use explicit devices such as ``cuda:0``.
+    # Select the sole/current GPU in the former case without changing DDP rank
+    # placement in the latter.
+    torch.cuda.set_device(device.index if device.index is not None else torch.cuda.current_device())
 
     config_path = args.config.expanduser().resolve(strict=True)
     checkpoint_path = args.checkpoint.expanduser().resolve(strict=True)
