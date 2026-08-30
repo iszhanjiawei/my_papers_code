@@ -9,16 +9,12 @@ import sys
 sys.path.append(os.getcwd())
 
 import multiprocessing as mp
-from importlib.resources import files
 
 import numpy as np
 from jiwer import compute_measures
 
 from aligndit.script.eval.utils import get_celebvdub_test, run_asr_wer, run_avsync, run_emosim
 from f5_tts.eval.utils_eval import run_sim
-
-
-rel_path = str(files("aligndit").joinpath("../../"))
 
 
 def get_args():
@@ -37,9 +33,29 @@ def get_args():
         type=str,
         default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/alignDiT_pretrain_models/wavlm_large_s3prl.pt",
     )
-    parser.add_argument("--asr_ckpt", type=str, default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/alignDiT_pretrain_models/large-v3.pt")
-    parser.add_argument("--emo_ckpt", type=str, default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/projects/data/emotion2vec_plus_large")
+    parser.add_argument(
+        "--asr_ckpt",
+        type=str,
+        default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/alignDiT_pretrain_models/large-v3.pt",
+    )
+    parser.add_argument(
+        "--emo_ckpt",
+        type=str,
+        default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/projects/data/emotion2vec_plus_large",
+    )
     parser.add_argument("--gt_av_feat", type=str, default="data/CelebVDub/avhubert_feat")
+    parser.add_argument(
+        "--test-list",
+        type=str,
+        default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/projects/data/celebvdub_test_s1.lst",
+        help="CelebV-Dub Setting-1 list. Defaults to the shared paper-experiment data root.",
+    )
+    parser.add_argument(
+        "--dataset-root",
+        type=str,
+        default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/projects/data/CelebVDub",
+        help="CelebV-Dub root containing audio/, text/, and evaluation features.",
+    )
     parser.add_argument("--eval_ground_truth", action="store_true", help="Evaluate GT audio (sanity check)")
     return parser.parse_args()
 
@@ -50,8 +66,12 @@ def main():
     lang = args.lang
     gen_wav_dir = args.gen_wav_dir
 
-    metalst = rel_path + "/data/celebvdub_test_s1.lst"
-    celebvdub_path = rel_path + "/data/CelebVDub"
+    metalst = os.path.abspath(os.path.expanduser(args.test_list))
+    celebvdub_path = os.path.abspath(os.path.expanduser(args.dataset_root))
+    if not os.path.isfile(metalst):
+        raise FileNotFoundError(f"CelebV-Dub test list not found: {metalst}")
+    if not os.path.isdir(celebvdub_path):
+        raise FileNotFoundError(f"CelebV-Dub dataset root not found: {celebvdub_path}")
 
     gpus = list(range(args.gpu_nums))
     test_set = get_celebvdub_test(metalst, gen_wav_dir, gpus, celebvdub_path, eval_ground_truth=args.eval_ground_truth)
@@ -72,16 +92,14 @@ def main():
         hypos = [r["hypo"] for r in full_results]
         metric = compute_measures(refs, hypos)["wer"]
         with open(result_path, "w") as f:
-            for line in full_results:
-                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            f.writelines(json.dumps(line, ensure_ascii=False) + "\n" for line in full_results)
             metric = round(metric, 5)
             f.write(f"\n{eval_task.upper()}: {metric}\n")
 
     elif eval_task == "sim":
         with mp.Pool(processes=len(gpus)) as pool:
             pool_args = [
-                (rank, sub_test_set, args.wavlm_ckpt, args.wavlm_base_ckpt)
-                for (rank, sub_test_set) in test_set
+                (rank, sub_test_set, args.wavlm_ckpt, args.wavlm_base_ckpt) for (rank, sub_test_set) in test_set
             ]
             results = pool.map(run_sim, pool_args)
             for r in results:
