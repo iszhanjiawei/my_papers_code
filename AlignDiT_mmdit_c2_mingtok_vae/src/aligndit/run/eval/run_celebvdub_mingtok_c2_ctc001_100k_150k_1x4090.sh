@@ -151,7 +151,7 @@ for step in $STEPS; do
             PYTHONPATH="src:${AVHUBERT_FAIRSEQ}" \
             "$PYTHON_BIN" -u src/aligndit/script/misc/extract_avhubert.py \
             --nshard 1 --rank 0 \
-            --v-input-dir "${DATASET_ROOT}/video_mouth/test" \
+            --v-input-dir "${DATASET_ROOT}/video_mouth/test/test" \
             --a-input-dir "${result_dir}/test" \
             --output-dir "${generated_av_feat}/test" \
             --ckpt-path "$AVHUBERT_CKPT" \
