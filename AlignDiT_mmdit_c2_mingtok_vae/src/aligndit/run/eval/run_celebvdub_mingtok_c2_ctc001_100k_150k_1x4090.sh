@@ -45,6 +45,10 @@ mkdir -p logs "$OUTPUT_ROOT"
 count_files() {
     local root="$1"
     local pattern="$2"
+    if [ ! -d "$root" ]; then
+        echo 0
+        return 0
+    fi
     find "$root" -type f -name "$pattern" 2>/dev/null | wc -l
 }
 
