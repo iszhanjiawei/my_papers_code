@@ -26,8 +26,8 @@ WAVLM_BASE_CKPT="${ROOT_PREFIX}/zjw524/alignDiT_pretrain_models/wavlm_large_s3pr
 ASR_CKPT="${ROOT_PREFIX}/zjw524/projects/data/faster-whisper-large-v3"
 EMO_CKPT="${ROOT_PREFIX}/zjw524/projects/data/emotion2vec_plus_large"
 AVHUBERT_CKPT="${ROOT_PREFIX}/zjw524/projects/data/large_vox_iter5.pt"
-AVHUBERT_USER_DIR="${ROOT_PREFIX}/zjw524/projects/data/av_hubert/avhubert"
-AVHUBERT_FAIRSEQ="${ROOT_PREFIX}/zjw524/projects/data/av_hubert/fairseq"
+AVHUBERT_USER_DIR="${ROOT_PREFIX}/zjw524/projects/data/av_hubert/avhubert/avhubert"
+AVHUBERT_FAIRSEQ="${ROOT_PREFIX}/zjw524/projects/data/av_hubert/fairseq/fairseq"
 GT_AV_FEAT="${DATASET_ROOT}/avhubert_feat"
 
 for required in \
