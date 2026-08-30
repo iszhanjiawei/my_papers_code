@@ -145,8 +145,10 @@ bash src/aligndit/run/eval/infer_celebvdub_mingtok_s1_4x4090.sh \
 
 # 6. On a single 24-GB GPU, run the full 213-item Setting-1 inference and
 # SPKSIM/WER/EMOSIM/AVSync evaluation for the stable 100k and 150k checkpoints.
+# Set SWAY=-1 to match the official C2-Mel evaluation schedule. The default
+# remains SWAY=1.0 for reproducing the original MingTok evaluation.
 # Run this long task through setsid as required by my_papers_code/AGENTS.md.
-GPU_ID=0 bash \
+SWAY=-1 GPU_ID=0 bash \
   src/aligndit/run/eval/run_celebvdub_mingtok_c2_ctc001_100k_150k_1x4090.sh
 ```
 
