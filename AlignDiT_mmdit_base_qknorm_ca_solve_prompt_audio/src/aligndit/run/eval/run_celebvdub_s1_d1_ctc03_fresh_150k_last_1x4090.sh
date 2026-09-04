@@ -24,6 +24,7 @@ EMO_CKPT="${ROOT_PREFIX}/zjw524/projects/data/emotion2vec_plus_large"
 AVHUBERT_CKPT="${ROOT_PREFIX}/zjw524/projects/data/large_vox_iter5.pt"
 AVHUBERT_USER_DIR="${ROOT_PREFIX}/zjw524/projects/data/av_hubert/avhubert/avhubert"
 AVHUBERT_FAIRSEQ="${ROOT_PREFIX}/zjw524/projects/data/av_hubert/fairseq/fairseq"
+VOCODER_PATH="${ROOT_PREFIX}/zjw524/projects/alignDiT_idea6/my_papers_code/hifigan_16k_LRS3/g_01000000"
 GT_AV_FEAT=data/CelebVDub/avhubert_feat
 
 count_files() {
@@ -110,6 +111,7 @@ evaluate_checkpoint() {
             -c "$result_step" \
             --cfg_t 5 \
             --cfg_v 2 \
+            --vocoder-path "$VOCODER_PATH" \
             --ckpt-path "$checkpoint_path"
     fi
 
