@@ -19,6 +19,7 @@ AVHUBERT_CKPT=/zjw524/projects/data/large_vox_iter5.pt
 AVHUBERT_USER_DIR=/zjw524/projects/data/av_hubert/avhubert/avhubert
 AVHUBERT_FAIRSEQ=/zjw524/projects/data/av_hubert/fairseq/fairseq
 GT_AV_FEAT=data/CelebVDub/avhubert_feat
+VOCODER_PATH=/zjw524/projects/alignDiT_idea6/my_papers_code/hifigan_16k_LRS3/g_01000000
 
 count_files() {
     local dir="$1"
@@ -104,7 +105,8 @@ evaluate_checkpoint() {
             -c "$result_step" \
             --cfg_t 5 \
             --cfg_v 2 \
-            --ckpt-path "$checkpoint_path"
+            --ckpt-path "$checkpoint_path" \
+            --vocoder-path "$VOCODER_PATH"
     fi
 
     wav_count="$(count_files "$result_dir/test" '*.wav')"
