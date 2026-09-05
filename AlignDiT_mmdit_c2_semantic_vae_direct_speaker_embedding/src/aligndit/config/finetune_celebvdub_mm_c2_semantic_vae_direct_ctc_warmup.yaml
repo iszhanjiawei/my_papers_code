@@ -1,0 +1,15 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct
+  - _self_
+
+# Direct-C2 control with only the requested CTC schedule changed.  All other
+# data, architecture, optimizer and EMA settings are inherited from the
+# original Direct-C2 configuration, including the global learning rate 5e-5.
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_c2_ctc001_warmup10k30k
+  ctc_lambda: 0.01
+  ctc_warmup_start: 10000
+  ctc_warmup_end: 30000
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_c2_ctc001_warmup10k30k_40hz_CelebVDub_char
