@@ -51,6 +51,7 @@ eval = [
     "funasr",
     "jiwer<4.0.0",
     "modelscope",
+    "pystoi==0.4.1",
     "zhconv",
     "zhon",
 ]
