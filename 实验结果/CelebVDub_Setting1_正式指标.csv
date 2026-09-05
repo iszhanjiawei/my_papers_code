@@ -21,5 +21,7 @@ D_ablation,D1_6MM_12Audio_dual_CTC6_12,4x4090,150000,213,0.63591,0.06308,0.76239
 D_ablation,D1_6MM_12Audio_dual_CTC6_12,4x4090,200000,213,0.63633,0.05257,0.76011,0.52453,5dp,user_recorded,用户保存的D1_D2汇总表
 D_ablation,D2_6MM_6Text_6Audio_dual_CTC6_12,4x4090,150000,213,0.63172,0.05677,0.76691,0.51057,5dp,user_recorded,用户保存的D1_D2汇总表
 D_ablation,D2_6MM_6Text_6Audio_dual_CTC6_12,4x4090,200000,213,0.62712,0.05677,0.76950,0.51384,5dp,user_recorded,用户保存的D1_D2汇总表
+D_ablation,D1_6MM_12Audio_dual_CTC6_12_ctc_lambda_0.3_fresh,4x4090,150000,213,0.60345,0.05929,0.72959,0.51381,5dp,artifact_verified,AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/results/finetune_celebvdub_mm_d1_6mm12audio_dual_ctc6_12_ctc03_fresh_150000
+D_ablation,D1_6MM_12Audio_dual_CTC6_12_ctc_lambda_0.3_fresh,4x4090,185000,213,0.60312,0.05635,0.75147,0.49958,5dp,artifact_verified,AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/results/finetune_celebvdub_mm_d1_6mm12audio_dual_ctc6_12_ctc03_fresh_185000
 semantic_vae,SemanticVAE_C2_minimal_fix_v2,1x4090,150000,213,0.37617,0.39529,0.62847,0.47884,5dp,artifact_verified,/zjw524/projects/data/eval_results/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v2_setting1/metrics_summary.json
 semantic_vae,SemanticVAE_C2_minimal_fix_v2,1x4090,200000,213,0.14321,0.68419,0.45488,0.32316,5dp,artifact_verified,/zjw524/projects/data/eval_results/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v2_setting1/metrics_summary.json
