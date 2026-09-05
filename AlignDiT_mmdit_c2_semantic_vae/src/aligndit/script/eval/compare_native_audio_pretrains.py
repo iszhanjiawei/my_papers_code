@@ -45,6 +45,11 @@ GRID_SAMPLES = 800  # LCM(160,400): exactly five mel frames and two VAE frames.
 SEEDS = (666, 667, 668)
 MEL_SHA256 = "4a9fc0e526ce47745aee839348406ca99597d32f5ed028bda42a3de3ec900fcd"
 SVAE_SHA256 = "02e35cf3e0de2a10573fb6efd8e5b7cdf0c59a18ea07807f34e5c7bf9c1395c4"
+SVAE_CHECKPOINTS = {
+    50000: "6e0eb847ca11a728e81191a46a39f64e6a038b2f60cf3f3bf1b9bf67a09c16f8",
+    60000: "f4160d941c473c141628352ad6bbdca8a78fef46e0e0c89dc2f523c60a464147",
+    70000: SVAE_SHA256,
+}
 NORM_SHA256 = "65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6"
 COMMON_COUNT = 50
 
@@ -546,12 +551,15 @@ def generate(args: argparse.Namespace) -> None:
     else:
         from aligndit.script.eval.eval_semantic_vae_warmstart_dev import build_and_load_ema
 
-        checked_hash(args.svae_checkpoint, SVAE_SHA256)
+        expected_sha = SVAE_CHECKPOINTS[args.svae_update]
+        checked_hash(args.svae_checkpoint, expected_sha)
         model, metadata = build_and_load_ema(
             checkpoint_path=args.svae_checkpoint,
             contract_path=args.svae_checkpoint.parent / "training_contract.json",
             device=device,
         )
+        if metadata["validation"]["update"] != args.svae_update:
+            raise RuntimeError("Requested S2c update does not match checkpoint metadata")
         expected_cache = {
             "hubert_40hz": common["dataset"]["hubert_completion_sha256"],
             "latents": common["dataset"]["latent_completion_sha256"],
@@ -561,7 +569,7 @@ def generate(args: argparse.Namespace) -> None:
             raise RuntimeError("S2c training cache differs from prepared evaluation cache")
         checkpoint = {
             "path": str(args.svae_checkpoint.resolve()),
-            "sha256": SVAE_SHA256,
+            "sha256": expected_sha,
             "weights": "ema",
             "validation": metadata["validation"],
             "contract_sha256": sha256_file(args.svae_checkpoint.parent / "training_contract.json"),
@@ -681,7 +689,7 @@ def decode_svae(args: argparse.Namespace) -> None:
     if (
         generation.get("protocol") != common["protocol"]
         or generation.get("common_complete_sha256") != sha256_file(args.output_dir / "common/complete.json")
-        or generation.get("checkpoint", {}).get("sha256") != SVAE_SHA256
+        or generation.get("checkpoint", {}).get("sha256") != SVAE_CHECKPOINTS[args.svae_update]
         or generation.get("canary_limit") != args.limit
     ):
         raise RuntimeError("Semantic-VAE latent generation contract differs")
@@ -789,6 +797,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--svae-update", type=int, choices=tuple(SVAE_CHECKPOINTS), default=70000)
     parser.add_argument("--limit", type=int, help="Separate canary output; common fixture always contains 50 records")
     parser.add_argument(
         "--cache-root",
@@ -802,8 +811,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--svae-checkpoint",
         type=Path,
-        default=user_root
-        / "projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/model_70000.pt",
+        help="Defaults to the pinned checkpoint for --svae-update",
     )
     parser.add_argument(
         "--hifigan-checkpoint", type=Path, default=workspace / "my_papers_code/hifigan_16k_LRS3/g_01000000"
@@ -813,6 +821,10 @@ def parse_args() -> argparse.Namespace:
         "--semantic-vae-checkpoint", type=Path, default=workspace / "Semantic-VAE/Semantic-VAE/semantic_vae_1000k"
     )
     args = parser.parse_args()
+    if args.svae_checkpoint is None:
+        args.svae_checkpoint = user_root / (
+            f"projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/model_{args.svae_update}.pt"
+        )
     if args.limit is not None and not 1 <= args.limit < COMMON_COUNT:
         parser.error("--limit must be 1..49; omit it for the formal 50-utterance run")
     args.output_dir = args.output_dir.resolve()

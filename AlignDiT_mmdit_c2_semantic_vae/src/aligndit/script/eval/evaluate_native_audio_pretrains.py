@@ -25,6 +25,7 @@ import numpy as np
 import soundfile as sf
 import torch
 
+from aligndit.script.eval.compare_native_audio_pretrains import SVAE_CHECKPOINTS
 from aligndit.script.misc.svae_cache_utils import atomic_write_json, atomic_write_jsonl, safe_join, sha256_file
 
 
@@ -97,9 +98,14 @@ def checked_wave(root: Path, info: dict[str, Any], expected_samples: int, cache:
     return cache[key]
 
 
-def load_run(root: Path, canary_limit: int | None = None) -> tuple[list[dict], dict[str, list[dict]], dict, dict]:
+def load_run(
+    root: Path, canary_limit: int | None = None, svae_update: int = 70000
+) -> tuple[list[dict], dict[str, list[dict]], dict, dict]:
     """Reject partial runs, duplicate draws, stale WAVs, or mismatched physical spans."""
     common_complete = read_object(root / "common/complete.json")
+    # The immutable common fixture records the ORIGINAL mel/70k comparison.
+    # A longitudinal candidate changes only its explicit branch identity.
+    expected_checkpoints = {**CHECKPOINTS, "svae": SVAE_CHECKPOINTS[svae_update]}
     common, common_sha = bound_manifest(root, common_complete, "manifest")
     if common_complete.get("schema_version") != 1 or common_complete.get("checkpoints") != CHECKPOINTS:
         raise ValueError("Unexpected source checkpoint identities")
@@ -162,7 +168,7 @@ def load_run(root: Path, canary_limit: int | None = None) -> tuple[list[dict], d
             or complete.get("protocol") != common_complete["protocol"]
             or complete.get("waveform_complete") is not True
             or complete.get("canary_limit") != canary_limit
-            or complete.get("checkpoint", {}).get("sha256") != CHECKPOINTS[branch]
+            or complete.get("checkpoint", {}).get("sha256") != expected_checkpoints[branch]
         ):
             raise ValueError(f"Unbound branch completion: {branch}")
         expected = {(key, seed) for key in by_key for seed in SEEDS}
@@ -460,13 +466,15 @@ def summarize_paired(rows: list[dict], *, generated: bool, bootstrap_samples: in
     return result
 
 
-def write_listening_page(output: Path, root: Path, common: list[dict], branches: dict) -> None:
+def write_listening_page(
+    output: Path, root: Path, common: list[dict], branches: dict, svae_update: int = 70000
+) -> None:
     indexed = {
         branch: {(row["utterance_key"], row["sampling_seed"]): row for row in rows} for branch, rows in branches.items()
     }
     parts = [
         "<!doctype html><meta charset='utf-8'><title>Native audio pretrained model comparison</title><style>body{font-family:sans-serif;margin:2rem;max-width:1500px}table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:8px}audio{width:250px}summary{cursor:pointer}p{line-height:1.5}</style>",
-        "<h1>Original mel500k vs Semantic-VAE S2c70k</h1><p>Named, non-blind listening page. No human listening scores have been collected. Players below contain only the missing region. No transcript was supplied to either model. Compare codec controls before attributing differences to the flow model.</p>",
+        f"<h1>Original mel500k vs Semantic-VAE S2c{svae_update // 1000}k</h1><p>Named, non-blind listening page. No human listening scores have been collected. Players below contain only the missing region. No transcript was supplied to either model. Compare codec controls before attributing differences to the flow model.</p>",
     ]
     if len(common) != 50:
         parts.append(
@@ -497,7 +505,7 @@ def write_listening_page(output: Path, root: Path, common: list[dict], branches:
             + "</tr></table>"
         )
         parts.append(
-            "<table><tr><th>Seed</th><th>Original mel500k generated</th><th>Semantic-VAE S2c70k generated</th></tr>"
+            f"<table><tr><th>Seed</th><th>Original mel500k generated</th><th>Semantic-VAE S2c{svae_update // 1000}k generated</th></tr>"
         )
         for seed in SEEDS:
             parts.append(
@@ -519,7 +527,7 @@ def write_markdown(output: Path, summary: dict) -> None:
         f"{count} LibriSpeech dev utterances, one per speaker, 3 sampling seeds per model. No text or video conditioning.",
         f"Evaluation scope: {summary['scope']}.",
         "",
-        "Each utterance is equally weighted after averaging its 3 seed results. Delta = Semantic-VAE S2c70k minus original mel500k. 95% intervals use utterance-paired, subset-stratified bootstrap.",
+        f"Each utterance is equally weighted after averaging its 3 seed results. Delta = Semantic-VAE S2c{summary.get('svae_update', 70000) // 1000}k minus original mel500k. 95% intervals use utterance-paired, subset-stratified bootstrap.",
         "",
     ]
     for section in ("generated", "codec_controls"):
@@ -562,6 +570,7 @@ def main() -> None:
     parser.add_argument("--output-name", default="metrics")
     parser.add_argument("--canary-limit", type=int, help="Evaluate only matching *_canaryN branches as a smoke check")
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--svae-update", type=int, choices=tuple(SVAE_CHECKPOINTS), default=70000)
     parser.add_argument(
         "--speaker-model", type=Path, default=Path(f"{prefix}/zjw524/alignDiT_pretrain_models/wavlm_large_finetune.pth")
     )
@@ -585,7 +594,7 @@ def main() -> None:
         parser.error("Canary output directory name must contain 'canary'")
     started = time.time()
     root = args.run_root.resolve(strict=True)
-    common, branches, provenance, waves = load_run(root, args.canary_limit)
+    common, branches, provenance, waves = load_run(root, args.canary_limit, args.svae_update)
     print(
         f"Validated {len(common)} shared utterances, {len(common) * 3} draws per branch, and all source/WAV hashes",
         flush=True,
@@ -609,6 +618,7 @@ def main() -> None:
     bootstrap = {"bootstrap_samples": args.bootstrap_samples, "bootstrap_seed": args.bootstrap_seed}
     summary = {
         "schema_version": 1,
+        "svae_update": args.svae_update,
         "scope": "formal_50_utterance_pilot" if args.canary_limit is None else "canary_only_not_experimental_evidence",
         "run_root": str(root),
         "generated": summarize_paired(generated, generated=True, **bootstrap),
@@ -633,7 +643,7 @@ def main() -> None:
     }
     atomic_write_json(output / "summary.json", summary)
     write_markdown(output, summary)
-    write_listening_page(output, root, common, branches)
+    write_listening_page(output, root, common, branches, args.svae_update)
     atomic_write_json(
         output / "complete.json",
         {

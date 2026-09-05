@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from aligndit.script.eval.compare_native_audio_pretrains import SVAE_CHECKPOINTS
 from aligndit.script.eval.evaluate_native_audio_pretrains import (
     BRANCHES,
     CHECKPOINTS,
@@ -179,6 +180,20 @@ class BoundWaveformsTest(unittest.TestCase):
         common, branches, _, _ = load_run(self.root)
         self.assertEqual(len(common), 50)
         self.assertEqual(len(branches["mel"]), 150)
+
+    def test_intermediate_checkpoints_require_explicit_pinned_identity(self):
+        original_common = (self.root / "common/complete.json").read_bytes()
+        for update in (50000, 60000):
+            self.branch_completes["svae"]["checkpoint"]["sha256"] = SVAE_CHECKPOINTS[update]
+            self.json("svae/generation_complete.json", self.branch_completes["svae"])
+            common, branches, _, _ = load_run(self.root, svae_update=update)
+            self.assertEqual(len(common), 50)
+            self.assertEqual(len(branches["svae"]), 150)
+            self.assertEqual((self.root / "common/complete.json").read_bytes(), original_common)
+            with self.assertRaisesRegex(ValueError, "Unbound branch"):
+                load_run(self.root)
+        with self.assertRaisesRegex(ValueError, "Unbound branch"):
+            load_run(self.root, svae_update=50000)
 
     def test_canary_uses_explicit_matching_marker_and_only_selected_utterances(self):
         for branch in BRANCHES:
