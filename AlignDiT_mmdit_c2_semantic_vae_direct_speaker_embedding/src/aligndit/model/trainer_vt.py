@@ -137,7 +137,7 @@ class Trainer_VT(Trainer):
                 collate_fn=train_dataset.collate_fn,
                 num_workers=num_workers,
                 pin_memory=True,
-                persistent_workers=True,
+                persistent_workers=num_workers > 0,
                 batch_size=self.batch_size_per_gpu,
                 shuffle=True,
                 generator=generator,
@@ -157,7 +157,7 @@ class Trainer_VT(Trainer):
                 collate_fn=train_dataset.collate_fn,
                 num_workers=num_workers,
                 pin_memory=True,
-                persistent_workers=True,
+                persistent_workers=num_workers > 0,
                 batch_sampler=batch_sampler,
             )
         else:
@@ -242,6 +242,9 @@ class Trainer_VT(Trainer):
                     text_lengths = batch["text_lengths"]
                     video = batch["video"]
                     video_lengths = batch["video_lengths"]
+                    speaker_kwargs = (
+                        {"speaker_embedding": batch["speaker_embedding"]} if "speaker_embedding" in batch else {}
+                    )
 
                     loss, loss_components, cond, pred = self.model(
                         mel_spec,
@@ -251,6 +254,7 @@ class Trainer_VT(Trainer):
                         video=video,
                         video_lens=video_lengths,
                         noise_scheduler=self.noise_scheduler,
+                        **speaker_kwargs,
                     )
                     diagnostics = self._forward_diagnostics(loss, loss_components)
                     self.accelerator.backward(loss)
@@ -270,7 +274,7 @@ class Trainer_VT(Trainer):
                     progress_bar.update(1)
                     progress_bar.set_postfix(update=str(global_update), loss=loss.item(), **loss_components)
 
-                if self.accelerator.is_local_main_process:
+                if self.is_main:
                     scalar_log = {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], **diagnostics}
                     if grad_norm is not None:
                         scalar_log["grad_norm/global"] = grad_norm
@@ -327,4 +331,7 @@ class Trainer_VT(Trainer):
 
         self.save_checkpoint(global_update, last=True)
 
+        if self.logger == "tensorboard" and self.is_main:
+            self.writer.flush()
+            self.writer.close()
         self.accelerator.end_training()

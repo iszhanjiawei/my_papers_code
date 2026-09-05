@@ -1,3 +1,9 @@
+# Current experiment
+
+This snapshot adds frozen CAM++ speaker conditioning to Semantic-VAE Direct-C2
+with CTC lambda 0.03. See [SEMANTIC_VAE_SPEAKER_C2.md](SEMANTIC_VAE_SPEAKER_C2.md)
+for this experiment's configuration, training, TensorBoard and inference commands.
+
 # AlignDiT
 
 Official PyTorch implementation for the following paper:

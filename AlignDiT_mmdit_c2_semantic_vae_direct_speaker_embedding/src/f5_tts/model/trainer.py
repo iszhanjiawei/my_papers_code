@@ -93,10 +93,10 @@ class Trainer:
                 config=model_cfg_dict,
             )
 
-        elif self.logger == "tensorboard":
+        elif self.logger == "tensorboard" and self.is_main:
             from torch.utils.tensorboard import SummaryWriter
 
-            self.writer = SummaryWriter(log_dir=f"runs/{wandb_run_name}")
+            self.writer = SummaryWriter(log_dir=f"runs/{wandb_run_name}", flush_secs=10)
 
         self.model = model
 

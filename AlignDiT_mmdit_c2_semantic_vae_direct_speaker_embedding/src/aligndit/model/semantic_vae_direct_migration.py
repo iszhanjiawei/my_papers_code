@@ -170,6 +170,19 @@ def migrate_s2c_ema_into_model(
     shape_mismatches = sorted(
         key for key in common_keys if tuple(source_state[key].shape) != tuple(target_state[key].shape)
     )
+    # The speaker snapshot adds exactly one zero-initialized tensor. Keep the
+    # original strict S2c contract for all other keys and for non-speaker configs.
+    speaker_key = "transformer.speaker_proj.weight"
+    has_speaker = getattr(model.transformer, "speaker_proj", None) is not None
+    if has_speaker:
+        speaker = target_state.get(speaker_key)
+        if (
+            speaker is None
+            or speaker_key not in new_target
+            or tuple(speaker.shape) != (768, 192)
+            or torch.count_nonzero(speaker).item() != 0
+        ):
+            raise RuntimeError("S2c speaker migration requires a new, zero-initialized Linear(192, 768) weight")
     actual_counts = (
         len(source_state),
         len(target_state),
@@ -179,10 +192,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS,
+        EXPECTED_TARGET_KEYS + int(has_speaker),
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS,
+        EXPECTED_NEW_TARGET_KEYS + int(has_speaker),
     )
     if actual_counts != expected_counts:
         raise RuntimeError(
