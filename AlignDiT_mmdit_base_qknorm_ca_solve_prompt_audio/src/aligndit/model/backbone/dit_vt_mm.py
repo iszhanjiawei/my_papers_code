@@ -12,6 +12,9 @@ MM-DiT backbone for multimodal dubbing:
   `n_mm_layers` blocks, with aligned RoPE across the two frame rates
 - text is injected via cross-attention in the first `n_text_layers` blocks;
   `prompt_isolated_ca` controls whether only synthesized frames receive it
+- `text_attention_mode="hunyuan_dual"` lets both MM streams query text with
+  separate projections, per-head QK RMSNorm and all-head ordinal CA RoPE;
+  the default `"audio_only"` preserves the original C2/D1 checkpoint layout
 - blocks after `n_mm_layers` stop video interaction; blocks after
   `n_text_layers` are text-free audio-only DiT blocks
 - audio-stream parameter names are kept identical to DiTBlock so
@@ -152,6 +155,95 @@ class AudioTextDiTBlock(DiTCrossBlock):
         return x
 
 
+class HunyuanDualTextCrossAttention(nn.Module):
+    """Hunyuan-style independent A/V queries over shared text keys and values.
+
+    The one-dimensional CA RoPE matches Hunyuan's ``build_rope_for_text``
+    and real-valued ``apply_rotary_emb``: adjacent channel pairs, theta=10000,
+    float32 rotation, all heads, and positions starting at zero independently
+    for each sequence. This is deliberately separate from AV joint attention's
+    frame-rate-scaled RoPE, and does not perform AV interleaving.
+
+    Unlike the fixed-length Foley text interface, dubbing batches contain
+    padded character sequences, so ``text_mask`` explicitly masks text keys.
+    Modulation, residual gating and query masks belong to the parent block.
+    """
+
+    def __init__(self, dim, heads, text_dim):
+        super().__init__()
+        if dim % heads != 0 or (dim // heads) % 2 != 0:
+            raise ValueError("dual text CA requires dim divisible by heads and an even head dimension")
+        self.heads = heads
+        self.head_dim = dim // heads
+        text_dim = dim if text_dim is None else text_dim
+        # Official Hunyuan XL/XXL configs use qkv_bias=True. Keep stream
+        # projections independent and share only the text K/V projections.
+        self.audio_cross_q = nn.Linear(dim, dim)
+        self.v_cond_cross_q = nn.Linear(dim, dim)
+        self.text_cross_kv = nn.Linear(text_dim, dim * 2)
+        self.audio_cross_q_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
+        self.v_cond_cross_q_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
+        self.text_cross_k_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
+        self.audio_cross_proj = nn.Linear(dim, dim)
+        self.v_cond_cross_proj = nn.Linear(dim, dim)
+
+    @staticmethod
+    def apply_rope(x):
+        """Rotate B,H,N,D Q/K tensors using Hunyuan's adjacent-pair layout."""
+        seq_len, head_dim = x.shape[-2:]
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            positions = torch.arange(seq_len, device=x.device, dtype=torch.float32)
+            inv_freq = 1.0 / (
+                10000.0 ** (torch.arange(0, head_dim, 2, device=x.device, dtype=torch.float32) / head_dim)
+            )
+            angles = torch.outer(positions, inv_freq)
+            cos = angles.cos().repeat_interleave(2, dim=-1)[None, None]
+            sin = angles.sin().repeat_interleave(2, dim=-1)[None, None]
+            x_float = x.float()
+            real, imag = x_float.reshape(*x.shape[:-1], -1, 2).unbind(-1)
+            rotated_pairs = torch.stack((-imag, real), dim=-1).flatten(-2)
+            return (x_float * cos + rotated_pairs * sin).to(x.dtype)
+
+    def _split_heads(self, x):
+        return x.reshape(x.shape[0], x.shape[1], self.heads, self.head_dim).transpose(1, 2)
+
+    def forward(self, audio, video, text, text_mask=None):
+        if text.shape[1] == 0:
+            raise ValueError("dual text CA requires at least one text token, including for dropped text")
+        if text_mask is not None:
+            if text_mask.dtype != torch.bool or text_mask.shape != text.shape[:2]:
+                raise ValueError("text_mask must be bool with shape [batch, text_length]")
+            # Do not let arbitrary padded text values enter the projections.
+            text = text.masked_fill(~text_mask.unsqueeze(-1), 0.0)
+
+        q_a = self.audio_cross_q_norm(self._split_heads(self.audio_cross_q(audio)))
+        q_v = self.v_cond_cross_q_norm(self._split_heads(self.v_cond_cross_q(video)))
+        key, value = self.text_cross_kv(text).chunk(2, dim=-1)
+        key = self.text_cross_k_norm(self._split_heads(key))
+        value = self._split_heads(value)
+        q_a = self.apply_rope(q_a).to(value.dtype)
+        q_v = self.apply_rope(q_v).to(value.dtype)
+        key = self.apply_rope(key).to(value.dtype)
+
+        # Query order does not mix streams: each query independently attends
+        # to the same text keys/values, then receives its own output projection.
+        query = torch.cat((q_a, q_v), dim=2)
+        attn_mask = text_mask[:, None, None, :] if text_mask is not None else None
+        output = F.scaled_dot_product_attention(
+            query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False
+        )
+        output = output.transpose(1, 2).reshape(audio.shape[0], -1, self.heads * self.head_dim)
+        audio_output = self.audio_cross_proj(output[:, : audio.shape[1]])
+        video_output = self.v_cond_cross_proj(output[:, audio.shape[1] :])
+        if text_mask is not None:
+            # SDPA returns zero for an all-masked row; also suppress the output
+            # projection bias, so an empty condition supplies no CA residual.
+            empty_text = ~text_mask.any(dim=-1)
+            audio_output = audio_output.masked_fill(empty_text[:, None, None], 0.0)
+            video_output = video_output.masked_fill(empty_text[:, None, None], 0.0)
+        return audio_output, video_output
+
+
 class MMDiTBlock_VT(DiTCrossBlock):
     """Dual-stream MM-DiT block.
 
@@ -173,7 +265,10 @@ class MMDiTBlock_VT(DiTCrossBlock):
         attn_mask_enabled=True,
         text_dim=512,
         prompt_isolated_ca=True,
+        text_attention_mode="audio_only",
     ):
+        if text_attention_mode not in {"audio_only", "hunyuan_dual"}:
+            raise ValueError(f"unsupported text_attention_mode: {text_attention_mode!r}")
         super().__init__(
             dim=dim,
             heads=heads,
@@ -192,6 +287,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         self.pe_attn_head = pe_attn_head
         self.attn_mask_enabled = attn_mask_enabled
         self.prompt_isolated_ca = prompt_isolated_ca
+        self.text_attention_mode = text_attention_mode
 
         # video stream 视频流独立参数
         self.v_attn_norm = AdaLayerNorm(dim)
@@ -210,11 +306,17 @@ class MMDiTBlock_VT(DiTCrossBlock):
         self.v_ff_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
         self.v_ff = FeedForward(dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh")
 
-        # text cross-attention AdaLN modulation + gate (audio stream only)
+        # Preserve the legacy audio CA modulation names for checkpoint loading.
         # 文本 cross-attention 的 AdaLN 调制(shift/scale) + 门控(gate)，条件于时间步 t
         # 与 HunyuanVideo-Foley 的 cross-attn 一致：调制输入、门控输出，训练更稳定
         self.cross_attn_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
         self.cross_attn_ada = nn.Linear(dim, dim * 3)  # -> shift_ca, scale_ca, gate_ca
+        if text_attention_mode == "hunyuan_dual":
+            # Replace, rather than retain, the inherited legacy MHA: unused
+            # legacy parameters would otherwise pollute checkpoints and DDP.
+            self.cross_attn = HunyuanDualTextCrossAttention(dim, heads, text_dim)
+            self.v_cross_attn_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+            self.v_cross_attn_ada = nn.Linear(dim, dim * 3)
 
     def _qkv(self, attn, x):
         batch_size = x.shape[0]
@@ -310,14 +412,23 @@ class MMDiTBlock_VT(DiTCrossBlock):
         x = x + x_gate_msa.unsqueeze(1) * attn_x # gate 控制音频流接受的信息量
         v = v + v_gate_msa.unsqueeze(1) * attn_v # gate 控制视频流接受的信息量
 
-        # text cross attention (audio stream as query) 3、文本 cross-attention 只有音频流作为query，文本不进入视频流
+        # Text CA follows AV joint attention. The optional Hunyuan mode updates
+        # both streams using independent queries, modulation and output gates.
         # 3.1 用时间步 t 生成 cross-attn 专属的 shift/scale/gate（AdaLN-zero，零初始化）
         ca_shift, ca_scale, ca_gate = self.cross_attn_ada(F.silu(t)).chunk(3, dim=-1)
         # 3.2 调制 cross-attn 的输入
         norm_ca = self.cross_attn_norm(x) * (1 + ca_scale[:, None]) + ca_shift[:, None]
-        ca_output, _ = self.cross_attn(
-            norm_ca, text, text, key_padding_mask=~text_mask if text_mask is not None else None, need_weights=False
-        )
+        if self.text_attention_mode == "hunyuan_dual":
+            v_ca_shift, v_ca_scale, v_ca_gate = self.v_cross_attn_ada(F.silu(t)).chunk(3, dim=-1)
+            norm_v_ca = self.v_cross_attn_norm(v) * (1 + v_ca_scale[:, None]) + v_ca_shift[:, None]
+            ca_output, v_ca_output = self.cross_attn(norm_ca, norm_v_ca, text, text_mask=text_mask)
+            if v_mask is not None:
+                v_ca_output = v_ca_output.masked_fill(~v_mask.unsqueeze(-1), 0.0)
+            v = v + v_ca_gate.unsqueeze(1) * v_ca_output
+        else:
+            ca_output, _ = self.cross_attn(
+                norm_ca, text, text, key_padding_mask=~text_mask if text_mask is not None else None, need_weights=False
+            )
         # 3.3 In the isolated variants, only synthesized audio queries receive
         # the text residual; C2 deliberately leaves the residual global.
         if self.prompt_isolated_ca:
@@ -364,7 +475,10 @@ class DiT_VT_MMDiT(DiT):
         audio_video_ratio=4,
         video_dim=1024,
         video_rope_scaled=True,
+        text_attention_mode="audio_only",
     ):
+        if text_attention_mode not in {"audio_only", "hunyuan_dual"}:
+            raise ValueError(f"unsupported text_attention_mode: {text_attention_mode!r}")
         super().__init__(
             dim=dim,
             depth=depth,
@@ -388,6 +502,7 @@ class DiT_VT_MMDiT(DiT):
         self.audio_video_ratio = audio_video_ratio
         self.video_rope_scaled = video_rope_scaled
         self.prompt_isolated_ca = prompt_isolated_ca
+        self.text_attention_mode = text_attention_mode
         self.n_mm_layers = n_mm_layers
         self.n_text_layers = n_mm_layers if n_text_layers is None else n_text_layers
         if not 0 <= self.n_mm_layers <= self.n_text_layers <= depth:
@@ -432,7 +547,7 @@ class DiT_VT_MMDiT(DiT):
         }
         self.transformer_blocks = nn.ModuleList(
             [
-                MMDiTBlock_VT(**text_block_kwargs)
+                MMDiTBlock_VT(**text_block_kwargs, text_attention_mode=text_attention_mode)
                 if i < self.n_mm_layers
                 else AudioTextDiTBlock(**text_block_kwargs)
                 if i < self.n_text_layers
@@ -460,6 +575,9 @@ class DiT_VT_MMDiT(DiT):
             # cross_attn.out_proj and v_attn.to_out normally initialized.
             nn.init.constant_(block.cross_attn_ada.weight, 0)
             nn.init.constant_(block.cross_attn_ada.bias, 0)
+            if block.text_attention_mode == "hunyuan_dual":
+                nn.init.constant_(block.v_cross_attn_ada.weight, 0)
+                nn.init.constant_(block.v_cross_attn_ada.bias, 0)
             nn.init.constant_(block.v_attn_norm.linear.weight, 0)
             nn.init.constant_(block.v_attn_norm.linear.bias, 0)
         for block in self.transformer_blocks[self.n_mm_layers : self.n_text_layers]:
