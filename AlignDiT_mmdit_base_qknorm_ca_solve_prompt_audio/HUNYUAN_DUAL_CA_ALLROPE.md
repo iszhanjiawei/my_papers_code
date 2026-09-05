@@ -59,6 +59,14 @@ setsid env PYTHONUNBUFFERED=1 \
 The launcher accepts Hydra overrides for explicitly named smoke runs. Never
 use the production checkpoint path for a canary with changed training settings.
 
+The C2 four-GPU launcher is:
+
+```bash
+setsid env PYTHONUNBUFFERED=1 \
+  bash src/aligndit/run/train/finetune_celebvdub_mm_c2_hunyuan_dual_ca_allrope_4x4090.sh \
+  > logs/train_c2_hunyuan_dual_ca_allrope.log 2>&1 < /dev/null &
+```
+
 The formal run's TensorBoard directory is:
 
 `runs/AlignDiT_MMDiT_D1_HunyuanDualCA_AllRoPE_6MM12A_CTC6_12_finetune_hifigan_16k_char_CelebVDub`
