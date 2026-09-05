@@ -233,7 +233,7 @@ class Trainer_VT(Trainer):
                     progress_bar.update(1)
                     progress_bar.set_postfix(update=str(global_update), loss=loss.item(), **loss_components)
 
-                if self.accelerator.is_local_main_process:
+                if self.is_main:
                     self.accelerator.log(
                         {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0]}, step=global_update
                     )

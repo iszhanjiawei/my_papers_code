@@ -93,10 +93,12 @@ class Trainer:
                 config=model_cfg_dict,
             )
 
-        elif self.logger == "tensorboard":
+        elif self.logger == "tensorboard" and self.is_main:
             from torch.utils.tensorboard import SummaryWriter
 
-            self.writer = SummaryWriter(log_dir=f"runs/{wandb_run_name}")
+            # Only the global main rank owns event files. Flush promptly so a
+            # newly launched run can be verified from the live dashboard.
+            self.writer = SummaryWriter(log_dir=f"runs/{wandb_run_name}", flush_secs=15)
 
         self.model = model
 
