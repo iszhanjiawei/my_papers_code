@@ -18,6 +18,14 @@ from f5_tts.model.utils import exists
 
 # trainer
 class Trainer_VT(Trainer):
+    def _before_update(self, global_update: int) -> None:
+        """Optional hook called with completed optimizer updates, including on resume."""
+
+    def _forward_diagnostics(self, loss, loss_components) -> dict[str, float]:
+        """Additional scalar diagnostics for experiment-specific trainers."""
+
+        return {}
+
     def load_pretrained(self, pretrained_path):
         self.accelerator.wait_for_everyone()
         checkpoint = torch.load(pretrained_path, weights_only=True, map_location="cpu")
@@ -199,6 +207,7 @@ class Trainer_VT(Trainer):
             )
 
             for batch in current_dataloader:
+                self._before_update(global_update)
                 with self.accelerator.accumulate(self.model):
                     text_inputs = batch["text"]
                     mel_spec = batch["mel"].permute(0, 2, 1)
@@ -216,6 +225,7 @@ class Trainer_VT(Trainer):
                         video_lens=video_lengths,
                         noise_scheduler=self.noise_scheduler,
                     )
+                    diagnostics = self._forward_diagnostics(loss, loss_components)
                     self.accelerator.backward(loss)
 
                     if self.max_grad_norm > 0 and self.accelerator.sync_gradients:
@@ -235,12 +245,14 @@ class Trainer_VT(Trainer):
 
                 if self.is_main:
                     self.accelerator.log(
-                        {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0]}, step=global_update
+                        {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], **diagnostics}, step=global_update
                     )
                     self.accelerator.log(loss_components, step=global_update)
                     if self.logger == "tensorboard":
                         self.writer.add_scalar("loss", loss.item(), global_update)
                         self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_update)
+                        for k, v in diagnostics.items():
+                            self.writer.add_scalar(k, v, global_update)
                         for k, v in loss_components.items():
                             self.writer.add_scalar(k, v, global_update)
 

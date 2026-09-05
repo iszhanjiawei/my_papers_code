@@ -468,6 +468,7 @@ class DiT_VT_MMDiT(DiT):
         checkpoint_activations=False,
         use_conformer=True,
         layer_indices_ctc=[6, 12],
+        ctc_sampling_ratios=(2, 1),
         projector_dim=None,
         n_mm_layers=12,
         n_text_layers=None,
@@ -525,6 +526,13 @@ class DiT_VT_MMDiT(DiT):
                 f"layer_indices_ctc must use zero-based indices in [0, {depth}), got {ctc_layer_indices}"
             )
         self.layer_indices_ctc = ctc_layer_indices
+        try:
+            ctc_sampling_ratios = tuple(ctc_sampling_ratios)
+        except TypeError as error:
+            raise TypeError("ctc_sampling_ratios must be an iterable of positive integers") from error
+        if not ctc_sampling_ratios or any(type(ratio) is not int or ratio <= 0 for ratio in ctc_sampling_ratios):
+            raise ValueError(f"ctc_sampling_ratios must contain positive integers, got {ctc_sampling_ratios}")
+        self.ctc_sampling_ratios = ctc_sampling_ratios
 
         self.input_embed = AudioInputEmbedding_MM(mel_dim, dim)
         self.video_embed = VideoInputEmbedding_MM(video_dim, dim, use_conformer=use_conformer)
@@ -560,7 +568,10 @@ class DiT_VT_MMDiT(DiT):
         z_dim = self.text_embed.text_embed.num_embeddings + 1
         self.layer_map_ctc = {v: i for i, v in enumerate(self.layer_indices_ctc)}
         self.projectors_ctc = nn.ModuleList(
-            [DownsampleLayer([2, 1], self.dim, projector_dim, z_dim) for _ in self.layer_map_ctc]
+            [
+                DownsampleLayer(self.ctc_sampling_ratios, self.dim, projector_dim, z_dim)
+                for _ in self.layer_map_ctc
+            ]
         )
 
         # Initialize the re-created blocks without double-zeroing a gated branch.
