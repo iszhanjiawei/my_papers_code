@@ -7,6 +7,7 @@
 
 - `实验结果总汇.md`：实验定义、完整结果表、跨实验分析、权重选择和未完成事项。
 - `CelebVDub_Setting1_正式指标.csv`：CelebV-Dub Setting 1、213 条样本的机器可读结果。
+- `D1_CTC_lambda_0.2_评测结果.md`：D1、CTC 权重 0.2 的 150k 与 185k 完整评测记录。
 - `D1_CTC_lambda_0.3_评测结果.md`：D1、CTC 权重 0.3 的 150k 与 185k 完整评测记录。
 - `Codec重建上限指标.csv`：同一测试集上的 codec 重建上限，不属于生成模型结果。
 - `训练阶段与状态.csv`：Semantic-VAE scratch、warm-start、旧 S3 事故和新 S3 的状态。
