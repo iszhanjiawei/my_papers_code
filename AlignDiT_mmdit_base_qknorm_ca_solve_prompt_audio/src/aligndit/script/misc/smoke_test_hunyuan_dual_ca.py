@@ -332,6 +332,37 @@ def test_legacy_mode(device):
     print("[OK] legacy audio-only CA mode strict-loads; native audio-only parameter structure unchanged")
 
 
+def test_config_scope():
+    """Only the requested architecture and isolated output identity may differ."""
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
+    config_dir = str(Path(__file__).resolve().parents[2] / "config")
+    pairs = (
+        ("finetune_celebvdub_mm_c2", "finetune_celebvdub_mm_c2_hunyuan_dual_ca_allrope"),
+        (
+            "finetune_celebvdub_mm_d1_6mm12audio_dual_ctc6_12",
+            "finetune_celebvdub_mm_d1_hunyuan_dual_ca_allrope",
+        ),
+    )
+    with initialize_config_dir(version_base="1.3", config_dir=config_dir):
+        for base_name, new_name in pairs:
+            base = OmegaConf.to_container(compose(config_name=base_name), resolve=True)
+            new = OmegaConf.to_container(compose(config_name=new_name), resolve=True)
+            assert new["model"]["arch"].pop("text_attention_mode") == "hunyuan_dual"
+            assert new["model"]["arch"].pop("pe_attn_head") is None
+            assert base["model"]["arch"].pop("pe_attn_head") == 1
+            assert new["model"]["name"] != base["model"]["name"]
+            assert new["ckpts"]["save_dir"] != base["ckpts"]["save_dir"]
+            for config in (base, new):
+                del config["model"]["name"]
+                del config["ckpts"]["save_dir"]
+            assert base == new, f"Unrequested training/configuration change in {new_name}"
+            assert new["model"]["arch"]["checkpoint_activations"] is False
+            assert new["ckpts"]["log_samples"] is True
+    print("[OK] C2/D1 configs inherit every non-architecture training setting unchanged")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", default="cpu", help="Defaults to CPU; optional example: cuda:0")
@@ -339,6 +370,7 @@ def main():
     device = torch.device(args.device)
     torch.manual_seed(20260905)
     torch.set_num_threads(2)
+    test_config_scope()
     test_ca_reference_and_text_mask(device)
     test_gate_liveness_and_all_head_joint_rope(device)
     test_legacy_mode(device)

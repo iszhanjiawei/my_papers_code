@@ -37,8 +37,13 @@ configs below to use the revised network. It is not a complete Hunyuan model.
   - New run name: `AlignDiT_MMDiT_C2_HunyuanDualCA_AllRoPE_12MM6A_finetune`.
 - Both inherit the original LibriSpeech 500k pure-audio warm start and base
   optimization settings. They do not load old C2/D1 multimodal checkpoints.
-- Activation checkpointing is enabled to preserve the frame budget on 24-GiB
-  GPUs. Training-time sample synthesis is disabled; evaluation is separate.
+- All non-architecture training settings are inherited unchanged from the
+  corresponding baseline, including `checkpoint_activations=False` and
+  `log_samples=True`. Do not silently adjust them to fit memory.
+- The initial 2026-09-05 launch incorrectly overrode those two settings. That
+  run was stopped before its first checkpoint; its logs/events/Hydra output
+  are archived separately. The corrected formal run restarts at update zero
+  from the same LibriSpeech pretrained checkpoint, not from the aborted run.
 
 ## D1 launch and telemetry
 

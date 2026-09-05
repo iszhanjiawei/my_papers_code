@@ -8,8 +8,5 @@ model:
   arch:
     text_attention_mode: hunyuan_dual
     pe_attn_head: null
-    checkpoint_activations: True
-
-ckpts:
-  init_mode: audio_pretrained
-  log_samples: False
+    # Inherit all other settings from C2; do not override checkpointing or
+    # training-time sample generation for this architecture-only comparison.

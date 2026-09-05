@@ -10,11 +10,5 @@ model:
     # All heads in both AV joint attention and native audio-only attention.
     # Text CA uses its own all-head, ordinal Hunyuan RoPE independently.
     pe_attn_head: null
-    # Recompute activations to retain D1's 9000-frame/GPU budget on 4090s.
-    checkpoint_activations: True
-
-ckpts:
-  init_mode: audio_pretrained
-  # Inherit the LibriSpeech 500k checkpoint and all optimizer/CTC settings.
-  # Evaluation is run separately; do not hold a vocoder on rank 0 during training.
-  log_samples: False
+    # All remaining settings are inherited unchanged from D1, including
+    # checkpoint_activations=False, log_samples=True and audio pretraining.
