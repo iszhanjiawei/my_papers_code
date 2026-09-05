@@ -1,4 +1,9 @@
-"""CelebV-Dub Setting 1 inference for the 64-D/40-Hz Semantic-VAE D1 model."""
+"""CelebV-Dub Setting 1 inference for the 64-D/40-Hz D1 model with CAM++.
+
+Setting 1 uses the same clip's full GT audio as reference prompt and target.
+Speaker conditioning comes from that exact reference waveform; this is not an
+independent-reference speaker evaluation.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +24,11 @@ from tqdm import tqdm
 
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
+from aligndit.model.speaker_embedding import (
+    load_speaker_embedding,
+    speaker_embedding_path,
+    validate_speaker_cache_metadata,
+)
 from aligndit.script.eval.semantic_vae_decoder import (
     HOP_LENGTH,
     LATENT_DIM,
@@ -133,6 +143,10 @@ def build_model(config, checkpoint_path: Path, expected_step: int | None, device
 
     if sha256_file(config.datasets.vocab_path) != config.datasets.expected_vocab_sha256:
         raise RuntimeError("The vocabulary differs from the training configuration")
+    if arch.get("speaker_dim") is not None and (
+        int(arch.speaker_dim) != 192 or int(arch.speaker_condition_start_layer) != 6
+    ):
+        raise RuntimeError("D1 speaker conditioning requires 192-D CAM++ at all audio-only blocks [6, 18)")
     vocab_char_map, vocab_size = get_tokenizer(config.datasets.vocab_path, "custom")
     model_cls = get_class(f"aligndit.model.{config.model.backbone}")
     model = CFM_VT(
@@ -198,6 +212,78 @@ def historical_setting1_text(text: str) -> str:
     return prompt_text + " " + text
 
 
+def load_setting1_speaker_embeddings(
+    config,
+    records: list[dict[str, Any]],
+) -> tuple[list[torch.Tensor | None], dict[str, Any] | None]:
+    """Validate all selected vectors and bind them to the exact S1 prompt.
+
+    No speaker extractor is run during inference. The frozen cache is read
+    from original reference waveforms, never generated/VAE-reconstructed audio.
+    """
+    speaker_dim = config.model.arch.get("speaker_dim")
+    if speaker_dim is None:
+        return [None] * len(records), None
+    datasets = config.datasets
+    expected_dim = int(datasets.get("speaker_embedding_dim", 192))
+    if int(speaker_dim) != expected_dim:
+        raise ValueError("model speaker_dim and dataset speaker_embedding_dim must agree")
+    configured_cache = datasets.get("speaker_embedding_cache_dir")
+    if not configured_cache:
+        raise ValueError("speaker_embedding_cache_dir is required for speaker-conditioned inference")
+    cache_dir = Path(configured_cache).resolve(strict=True)
+    metadata = validate_speaker_cache_metadata(
+        cache_dir,
+        expected_dim=expected_dim,
+        model_id=datasets.get("speaker_embedding_model_id"),
+        checkpoint_sha256=datasets.get("speaker_embedding_checkpoint_sha256"),
+    )
+    audio_root = Path(
+        datasets.get(
+            "speaker_audio_root",
+            f"{os.environ.get('ROOT_PREFIX', '')}/zjw524/projects/data/CelebVDub/audio",
+        )
+    ).resolve(strict=True)
+    embeddings = []
+    sources = []
+    for row in records:
+        audio_relative_path = Path(str(row["audio_relative_path"]))
+        expected_relative = Path(str(row["utterance_key"]).removeprefix("celebvdub/") + ".wav")
+        if (
+            audio_relative_path != expected_relative
+            or audio_relative_path.is_absolute()
+            or ".." in audio_relative_path.parts
+            or not audio_relative_path.parts
+            or audio_relative_path.parts[0] != "test"
+        ):
+            raise ValueError(f"S1 reference audio does not match its prompt: {row['utterance_key']}")
+        prompt_waveform = audio_root / audio_relative_path
+        if not prompt_waveform.is_file():
+            raise FileNotFoundError(f"S1 reference waveform is missing: {prompt_waveform}")
+        embeddings.append(
+            load_speaker_embedding(prompt_waveform, cache_dir, expected_dim=expected_dim, audio_root=audio_root)
+        )
+        sources.append(
+            {
+                "utterance_key": row["utterance_key"],
+                "prompt_audio": str(prompt_waveform),
+                "speaker_cache": str(speaker_embedding_path(prompt_waveform, cache_dir, audio_root=audio_root)),
+            }
+        )
+    return embeddings, {
+        "cache_dir": str(cache_dir),
+        "metadata_sha256": sha256_file(cache_dir / "metadata.json"),
+        "model_id": metadata["model_id"],
+        "checkpoint_sha256": metadata["checkpoint_sha256"],
+        "dim": expected_dim,
+        "source_audio": metadata["source_audio"],
+        "reference_protocol": "CelebV-Dub Setting 1: prompt and target are the same GT clip",
+        "conditioning": "full/TTS branches keep prompt speaker; null branch drops prompt and speaker jointly",
+        "conditioned_blocks_zero_based": list(range(6, 18)),
+        "sources": sources,
+    }
+
+
 def run(args: argparse.Namespace) -> None:
     config_path = args.config.resolve(strict=True)
     config = load_composed_config(config_path)
@@ -222,6 +308,7 @@ def run(args: argparse.Namespace) -> None:
         records = records[: args.max_items]
     mean, std, normalization = load_normalization(args.normalization.resolve(strict=True))
     cache_spec = read_json_object(cache_root / "state/latents/spec.json")
+    speaker_embeddings, speaker_metadata = load_setting1_speaker_embeddings(config, records)
 
     output_dir = args.output_dir.resolve()
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -241,12 +328,19 @@ def run(args: argparse.Namespace) -> None:
     mean_tensor = torch.from_numpy(mean).to(device)
     std_tensor = torch.from_numpy(std).to(device)
     with torch.inference_mode():
-        for row in tqdm(records, desc=f"Semantic-VAE D1 S1 {checkpoint_step}"):
+        for row, speaker_embedding in tqdm(
+            zip(records, speaker_embeddings), total=len(records), desc=f"Semantic-VAE D1 speaker S1 {checkpoint_step}"
+        ):
             normalized, video = validate_record_arrays(row, cache_root, mean, std)
             frames = int(row["latent_frames"])
             cond = torch.from_numpy(normalized).unsqueeze(0).to(device)
             target_video = torch.from_numpy(video).to(device)
             total_video = torch.cat((torch.zeros_like(target_video), target_video), dim=0).unsqueeze(0)
+            speaker_kwargs = {}
+            if speaker_embedding is not None:
+                speaker_kwargs["speaker_embedding"] = speaker_embedding.unsqueeze(0).to(
+                    device=device, dtype=torch.float32
+                )
             generated, _ = model.sample(
                 cond=cond,
                 text=[historical_setting1_text(str(row["text"]))],
@@ -259,6 +353,7 @@ def run(args: argparse.Namespace) -> None:
                 sway_sampling_coef=args.sway,
                 seed=args.seed,
                 use_epss=True,
+                **speaker_kwargs,
             )
             generated_normalized = generated[:, frames : 2 * frames].float()
             if generated_normalized.shape != (1, frames, LATENT_DIM) or not torch.isfinite(generated_normalized).all():
@@ -300,6 +395,7 @@ def run(args: argparse.Namespace) -> None:
             "test_list_sha256": sha256_file(args.test_list),
         },
         "decoder": decoder_metadata,
+        "speaker_embedding": speaker_metadata,
         "config": {
             "path": str(config_path),
             "sha256": sha256_file(config_path),
@@ -339,7 +435,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path(__file__).parents[2] / "config/finetune_celebvdub_mm_d1_semantic_vae_direct.yaml",
+        default=Path(__file__).parents[2]
+        / "config/finetune_celebvdub_mm_d1_semantic_vae_direct_speaker_ctc003_warmup.yaml",
     )
     parser.add_argument(
         "--cache-root",

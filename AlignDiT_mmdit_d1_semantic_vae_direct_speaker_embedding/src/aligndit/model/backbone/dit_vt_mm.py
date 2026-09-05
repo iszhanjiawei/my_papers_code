@@ -17,6 +17,8 @@ MM-DiT backbone for multimodal dubbing:
   the default `"audio_only"` preserves the original C2/D1 checkpoint layout
 - blocks after `n_mm_layers` stop video interaction; blocks after
   `n_text_layers` are text-free audio-only DiT blocks
+- optional speaker identity is added to timestep conditioning only from
+  `speaker_condition_start_layer` in the text-free audio tail
 - audio-stream parameter names are kept identical to DiTBlock so
   that the audio-only pretrained checkpoint loads directly by key matching
 """
@@ -477,6 +479,8 @@ class DiT_VT_MMDiT(DiT):
         video_dim=1024,
         video_rope_scaled=True,
         text_attention_mode="audio_only",
+        speaker_dim=None,
+        speaker_condition_start_layer=None,
     ):
         if text_attention_mode not in {"audio_only", "hunyuan_dual"}:
             raise ValueError(f"unsupported text_attention_mode: {text_attention_mode!r}")
@@ -511,6 +515,28 @@ class DiT_VT_MMDiT(DiT):
                 "expected 0 <= n_mm_layers <= n_text_layers <= depth, got "
                 f"n_mm_layers={self.n_mm_layers}, n_text_layers={self.n_text_layers}, depth={depth}"
             )
+        self.speaker_dim = speaker_dim
+        if self.speaker_dim is None:
+            if speaker_condition_start_layer is not None:
+                raise ValueError("speaker_condition_start_layer requires speaker_dim")
+            self.speaker_condition_start_layer = None
+        else:
+            if type(self.speaker_dim) is not int or self.speaker_dim <= 0:
+                raise ValueError(f"speaker_dim must be a positive integer, got {self.speaker_dim}")
+            self.speaker_condition_start_layer = (
+                self.n_text_layers
+                if speaker_condition_start_layer is None
+                else speaker_condition_start_layer
+            )
+            if (
+                type(self.speaker_condition_start_layer) is not int
+                or not self.n_text_layers <= self.speaker_condition_start_layer < depth
+            ):
+                raise ValueError(
+                    "speaker conditioning is restricted to the text-free audio tail; expected "
+                    f"n_text_layers <= speaker_condition_start_layer < depth, got "
+                    f"{self.n_text_layers} <= {self.speaker_condition_start_layer} < {depth}"
+                )
         try:
             ctc_layer_indices = tuple(layer_indices_ctc)
         except TypeError as error:
@@ -573,6 +599,9 @@ class DiT_VT_MMDiT(DiT):
                 for _ in self.layer_map_ctc
             ]
         )
+        self.speaker_proj = (
+            nn.Linear(self.speaker_dim, self.dim, bias=False) if self.speaker_dim is not None else None
+        )
 
         # Initialize the re-created blocks without double-zeroing a gated branch.
         #
@@ -597,6 +626,31 @@ class DiT_VT_MMDiT(DiT):
             # still giving that projection a gradient on the first update.
             nn.init.constant_(block.cross_attn.out_proj.weight, 0)
             nn.init.constant_(block.cross_attn.out_proj.bias, 0)
+
+        if self.speaker_proj is not None:
+            # Preserve the pretrained D1 audio path at initialization. Do not
+            # add a second zero gate, which would block projection gradients.
+            nn.init.constant_(self.speaker_proj.weight, 0)
+
+    def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
+        if self.speaker_proj is None:
+            if speaker_embedding is not None:
+                raise ValueError("speaker_embedding was provided, but this backbone has no speaker_dim")
+            return None
+        if speaker_embedding is None:
+            raise ValueError("speaker_embedding is required when speaker_dim is configured")
+        if speaker_embedding.ndim != 2 or speaker_embedding.shape != (t.shape[0], self.speaker_dim):
+            raise ValueError(
+                f"speaker_embedding must have shape {(t.shape[0], self.speaker_dim)}, "
+                f"got {tuple(speaker_embedding.shape)}"
+            )
+        speaker_embedding_fp32 = speaker_embedding.to(device=t.device, dtype=torch.float32)
+        # Cached vectors are validated on CPU; avoid synchronizing CUDA in
+        # every flow step. Normalize in float32 before the learned projection.
+        speaker_embedding_normalized = F.normalize(speaker_embedding_fp32, dim=-1)
+        if drop_speaker:
+            speaker_embedding_normalized = torch.zeros_like(speaker_embedding_normalized)
+        return self.speaker_proj(speaker_embedding_normalized.to(dtype=t.dtype))
 
     def get_input_embed(
         self,
@@ -651,6 +705,8 @@ class DiT_VT_MMDiT(DiT):
         drop_audio_cond: bool = False,  # cfg for cond audio
         drop_text: bool = False,  # cfg for text
         drop_video: bool = False,  # cfg for video
+        speaker_embedding: float["b ds"] | None = None,  # complete, unmasked reference waveform
+        drop_speaker: bool | None = None,
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
     ):
@@ -671,6 +727,9 @@ class DiT_VT_MMDiT(DiT):
 
         # t: conditioning time, x: noised input audio (stream 1), v: video (stream 2)
         t = self.time_embed(time)
+        if drop_speaker is None:
+            # Couple speaker identity to the final prompt-audio dropout.
+            drop_speaker = drop_audio_cond
 
         embed_kwargs = {
             "x": x,
@@ -686,27 +745,39 @@ class DiT_VT_MMDiT(DiT):
 
         if cfg_infer:  # pack cond & uncond forward: b n d -> 2b/3b n d
             x_list, text_embed_list, v_list = [], [], []
+            speaker_delta_list = []
+            speaker_delta_cond = self.get_speaker_delta(speaker_embedding, t, drop_speaker=drop_speaker)
             if not (drop_text or drop_video):
-                x_cond, text_embed_cond, v_cond = self.get_input_embed(**embed_kwargs)
+                x_cond, text_embed_cond, v_cond = self.get_input_embed(
+                    **embed_kwargs, drop_audio_cond=drop_audio_cond
+                )
                 x_list.append(x_cond)
                 text_embed_list.append(text_embed_cond)
                 v_list.append(v_cond)
+                if speaker_delta_cond is not None:
+                    speaker_delta_list.append(speaker_delta_cond)
                 x_tts, text_embed_tts, v_tts = self.get_input_embed(
                     **embed_kwargs,
+                    drop_audio_cond=drop_audio_cond,
                     drop_video=True,
                 )
                 x_list.append(x_tts)
                 text_embed_list.append(text_embed_tts)
                 v_list.append(v_tts)
+                if speaker_delta_cond is not None:
+                    speaker_delta_list.append(speaker_delta_cond)
             else:
                 x_cond, text_embed_cond, v_cond = self.get_input_embed(
                     **embed_kwargs,
+                    drop_audio_cond=drop_audio_cond,
                     drop_text=drop_text,
                     drop_video=drop_video,
                 )
                 x_list.append(x_cond)
                 text_embed_list.append(text_embed_cond)
                 v_list.append(v_cond)
+                if speaker_delta_cond is not None:
+                    speaker_delta_list.append(speaker_delta_cond)
 
             x_uncond, text_embed_uncond, v_uncond = self.get_input_embed(
                 **embed_kwargs,
@@ -717,11 +788,15 @@ class DiT_VT_MMDiT(DiT):
             x_list.append(x_uncond)
             text_embed_list.append(text_embed_uncond)
             v_list.append(v_uncond)
+            speaker_delta_null = self.get_speaker_delta(speaker_embedding, t, drop_speaker=True)
+            if speaker_delta_null is not None:
+                speaker_delta_list.append(speaker_delta_null)
 
             rep_n = len(x_list)
             x = torch.cat(x_list, dim=0)
             v = torch.cat(v_list, dim=0)
-            t = t.repeat_interleave(rep_n, dim=0)
+            # Match the branch-major torch.cat ordering for batch > 1.
+            t = t.repeat((rep_n, 1))
             text_embed = torch.cat(text_embed_list, dim=0)
             masks_to_repeat = [mask, text_mask, video_mask, complementary_mask]
             (
@@ -729,8 +804,12 @@ class DiT_VT_MMDiT(DiT):
                 text_mask,
                 video_mask,
                 complementary_mask,
-            ) = [m.repeat_interleave(rep_n, dim=0) if m is not None else None for m in masks_to_repeat]
+            ) = [
+                m.repeat((rep_n,) + (1,) * (m.ndim - 1)) if m is not None else None
+                for m in masks_to_repeat
+            ]
             generation_mask = generation_mask.repeat(rep_n, 1) if generation_mask is not None else None
+            speaker_delta = torch.cat(speaker_delta_list, dim=0) if speaker_delta_list else None
 
         else:
             x, text_embed, v = self.get_input_embed(
@@ -739,6 +818,8 @@ class DiT_VT_MMDiT(DiT):
                 drop_text=drop_text,
                 drop_video=drop_video,
             )
+
+            speaker_delta = self.get_speaker_delta(speaker_embedding, t, drop_speaker=drop_speaker)
 
         lens = (
             mask.sum(dim=1)
@@ -773,6 +854,11 @@ class DiT_VT_MMDiT(DiT):
             has_tail_text = isinstance(block, AudioTextDiTBlock)
             block_mask = None if self.training else mask  # memory issue
             block_v_mask = None if self.training else v_mask
+            block_t = (
+                t + speaker_delta
+                if speaker_delta is not None and layer_i >= self.speaker_condition_start_layer
+                else t
+            )
             if self.checkpoint_activations:
                 # https://pytorch.org/docs/stable/checkpoint.html#torch.utils.checkpoint.checkpoint
                 if is_mm:
@@ -780,7 +866,7 @@ class DiT_VT_MMDiT(DiT):
                         self.ckpt_wrapper(block),
                         x,
                         v,
-                        t,
+                        block_t,
                         block_mask,
                         block_v_mask,
                         rope,
@@ -794,7 +880,7 @@ class DiT_VT_MMDiT(DiT):
                     x = torch.utils.checkpoint.checkpoint(
                         self.ckpt_wrapper(block),
                         x,
-                        t,
+                        block_t,
                         block_mask,
                         rope,
                         text_embed,
@@ -806,7 +892,7 @@ class DiT_VT_MMDiT(DiT):
                     x = torch.utils.checkpoint.checkpoint(
                         self.ckpt_wrapper(block),
                         x,
-                        t,
+                        block_t,
                         block_mask,
                         rope,
                         use_reentrant=False,
@@ -816,7 +902,7 @@ class DiT_VT_MMDiT(DiT):
                     x, v = block(
                         x,
                         v,
-                        t,
+                        block_t,
                         mask=block_mask,
                         v_mask=block_v_mask,
                         rope=rope,
@@ -828,7 +914,7 @@ class DiT_VT_MMDiT(DiT):
                 elif has_tail_text:
                     x = block(
                         x,
-                        t,
+                        block_t,
                         mask=block_mask,
                         rope=rope,
                         text=text_embed,
@@ -838,7 +924,7 @@ class DiT_VT_MMDiT(DiT):
                 else:
                     x = block(
                         x,
-                        t,
+                        block_t,
                         mask=block_mask,
                         rope=rope,
                     )

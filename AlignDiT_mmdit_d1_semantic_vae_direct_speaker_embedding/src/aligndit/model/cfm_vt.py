@@ -57,6 +57,7 @@ class CFM_VT(CFM):
         text: int["b nt"] | list[str],  # noqa: F722
         duration: int | int["b"],  # noqa: F821
         video: float["b nv d"],  # noqa: F722
+        speaker_embedding: float["b ds"] | None = None,
         *,
         lens: int["b"] | None = None,  # noqa: F821
         steps=32,
@@ -85,6 +86,8 @@ class CFM_VT(CFM):
         video = video.to(next(self.parameters()).dtype)
 
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
+        if speaker_embedding is not None:
+            speaker_embedding = speaker_embedding.to(device=device, dtype=torch.float32)
         if not exists(lens):
             lens = torch.full((batch,), cond_seq_len, device=device, dtype=torch.long)
 
@@ -140,14 +143,14 @@ class CFM_VT(CFM):
 
         if batch > 1:
             mask = duration_mask
-            video_mask = mask.repeat_interleave(self.audio_video_ratio, dim=-1)
+            video_mask = mask[:, :: self.audio_video_ratio][:, : video.shape[1]]
         else:  # save memory and speed up, as single inference need no mask currently
             mask = None
             video_mask = None
         text_mask = lens_to_mask(text_lens)
 
         # complementary masking
-        complementary_mask = cond_mask.squeeze(-1)[:, :: self.audio_video_ratio]
+        complementary_mask = cond_mask.squeeze(-1)[:, :: self.audio_video_ratio][:, : video.shape[1]]
         if exists(video_mask):
             complementary_mask &= video_mask
 
@@ -172,6 +175,8 @@ class CFM_VT(CFM):
                     drop_text=ignore_modality == "text",
                     generation_mask=generation_mask,
                     drop_video=ignore_modality == "video",
+                    speaker_embedding=speaker_embedding,
+                    drop_speaker=no_ref_audio,
                     cache=True,
                 )
                 return pred
@@ -190,6 +195,8 @@ class CFM_VT(CFM):
                 drop_text=ignore_modality == "text",
                 generation_mask=generation_mask,
                 drop_video=ignore_modality == "video",
+                speaker_embedding=speaker_embedding,
+                drop_speaker=no_ref_audio,
                 cfg_infer=True,
                 cache=True,
             )
@@ -248,6 +255,7 @@ class CFM_VT(CFM):
         inp: float["b n d"] | float["b nw"],  # mel or raw wave  # noqa: F722
         text: int["b nt"] | list[str],  # noqa: F722
         video: float["b nv d"],  # noqa: F722
+        speaker_embedding: float["b ds"] | None = None,
         *,
         lens: int["b"] | None = None,  # noqa: F821
         text_lens: int["b"] | None = None,  # noqa: F821
@@ -358,6 +366,9 @@ class CFM_VT(CFM):
             video_mask=video_mask,
             complementary_mask=complementary_mask,
             generation_mask=rand_span_mask,
+            speaker_embedding=speaker_embedding,
+            # Include all-condition dropout in the coupled speaker dropout.
+            drop_speaker=drop_audio_cond,
         )
 
         # flow matching loss

@@ -1,6 +1,6 @@
 # AlignDiT
 
-本目录是独立的 **D1 + Semantic-VAE** 实验快照。CelebVDub 的配置、训练与推理入口见 [SEMANTIC_VAE_DIRECT_D1.md](SEMANTIC_VAE_DIRECT_D1.md)。下方保留上游 README；其中 mel/LRS3 入口不用于本次 VAE 实验。
+本目录是独立的 **D1 + Semantic-VAE + CAM++ speaker embedding** 实验快照。请使用 [SEMANTIC_VAE_SPEAKER_D1.md](SEMANTIC_VAE_SPEAKER_D1.md) 中的新配置与入口。无 speaker 的父实验说明 [SEMANTIC_VAE_DIRECT_D1.md](SEMANTIC_VAE_DIRECT_D1.md) 和下方上游 README 仅为历史参考；旧入口不用于本次 speaker 实验。
 
 Official PyTorch implementation for the following paper:
 > **AlignDiT: Multimodal Aligned Diffusion Transformer for Synchronized Speech Generation**<br>

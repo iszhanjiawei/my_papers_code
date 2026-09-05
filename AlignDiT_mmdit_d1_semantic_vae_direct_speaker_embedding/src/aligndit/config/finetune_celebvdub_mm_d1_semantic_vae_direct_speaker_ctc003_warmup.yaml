@@ -1,0 +1,29 @@
+defaults:
+  - finetune_celebvdub_mm_d1_semantic_vae_direct
+  - _self_
+
+# Keep the isolated D1 VAE architecture, seed, optimizer and pinned S2c parent.
+datasets:
+  speaker_embedding_cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/campplus_spk_emb_zh_en_16k
+  speaker_embedding_dim: 192
+  speaker_embedding_model_id: iic/speech_campplus_sv_zh_en_16k-common_advanced
+  speaker_embedding_checkpoint_sha256: 92f29b94e6948786a26778c9e302525d185bb08c8b9f5252ed98776902840199
+
+optim:
+  # Match the reference speaker experiment's comparison endpoint without
+  # shortening D1's original 200-epoch learning-rate schedule.
+  run_until_update: 200000
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_d1_semantic_vae_direct_speaker_ctc003_warmup10k30k
+  arch:
+    speaker_dim: 192
+    # Follow D1's audio-only region: blocks 6..17, NOT C2's blocks 12..17.
+    # CTC taps [5, 11] stay unchanged; the second is inside this region.
+    speaker_condition_start_layer: 6
+  ctc_lambda: 0.03
+  ctc_warmup_start: 10000
+  ctc_warmup_end: 30000
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_40hz_CelebVDub_char

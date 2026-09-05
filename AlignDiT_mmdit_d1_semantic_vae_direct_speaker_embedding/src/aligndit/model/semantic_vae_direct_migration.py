@@ -182,6 +182,24 @@ def migrate_s2c_ema_into_model(
     shape_mismatches = sorted(
         key for key in common_keys if tuple(source_state[key].shape) != tuple(target_state[key].shape)
     )
+    # Speaker conditioning adds exactly one zero-initialized tensor; the
+    # inherited non-speaker D1 migration contract remains unchanged.
+    speaker_key = "transformer.speaker_proj.weight"
+    has_speaker = getattr(transformer, "speaker_proj", None) is not None
+    if has_speaker:
+        speaker = target_state.get(speaker_key)
+        if (
+            speaker is None
+            or speaker_key not in new_target
+            or tuple(speaker.shape) != (768, 192)
+            or torch.count_nonzero(speaker).item() != 0
+            or transformer.speaker_proj.bias is not None
+            or transformer.speaker_condition_start_layer != 6
+        ):
+            raise RuntimeError(
+                "S2c speaker migration requires a new, zero-initialized bias-free Linear(192, 768) "
+                "conditioning the D1 audio-only blocks 6..17"
+            )
     actual_counts = (
         len(source_state),
         len(target_state),
@@ -191,10 +209,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS,
+        EXPECTED_TARGET_KEYS + int(has_speaker),
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS,
+        EXPECTED_NEW_TARGET_KEYS + int(has_speaker),
     )
     if actual_counts != expected_counts:
         raise RuntimeError(
