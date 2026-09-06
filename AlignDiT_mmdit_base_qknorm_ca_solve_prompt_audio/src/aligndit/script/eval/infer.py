@@ -11,8 +11,8 @@ from importlib.resources import files
 import torch
 import torchaudio
 from accelerate import Accelerator
-from hydra import compose, initialize_config_dir
 from hydra.utils import get_class
+from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from aligndit.model import CFM_VT
@@ -71,10 +71,7 @@ def main():
     use_truth_duration = True
     no_ref_audio = False
 
-    # Match training's Hydra defaults composition, including inherited arch
-    # settings in Hunyuan Dual-CA / all-head RoPE experiment configs.
-    with initialize_config_dir(version_base="1.3", config_dir=str(files("aligndit").joinpath("config"))):
-        model_cfg = compose(config_name=exp_name)
+    model_cfg = OmegaConf.load(str(files("aligndit").joinpath(f"config/{exp_name}.yaml")))
     model_cls = get_class(f"aligndit.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
 
