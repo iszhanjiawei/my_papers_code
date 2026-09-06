@@ -150,4 +150,3 @@ evaluate_checkpoint 150000 model_150000.pt
 evaluate_checkpoint 200000 model_200000.pt
 
 echo "CelebV-Dub Setting-1 evaluation completed for model_150000.pt and model_200000.pt (update 200000)."
-
