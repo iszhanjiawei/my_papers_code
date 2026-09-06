@@ -87,3 +87,26 @@ TensorBoard defaults to port 6006, and DDP rendezvous to 29593. Open the client
 bottom panel's Ports tab and use the **actual forwarded address** for port 6006.
 The launcher prints a server-local address, not a claim that client forwarding
 has already been configured. Runtime logs/events/checkpoints are not committed.
+
+## Launch verification — 2026-09-07 06:21 CST
+
+Implementation commit: `0b5b585` (pushed to `origin/main`).
+
+- Training launcher PID 11245; workers 11388/11389/11390/11391.
+- TensorBoard PID 11244, port 6006. All service/worker TTYs are `?` and have
+  independent sessions. Launcher and TensorBoard have been reparented to PID 1.
+- Training log: `logs/train_20260907_062120.log`.
+- TensorBoard log: `logs/tensorboard_20260907_062120.log`.
+- Confirmed worker cwd points to this new snapshot, not the source project.
+- Original mel/MM-DiT regression smoke passed. New fixed-CTC CPU/CUDA checks
+  passed. Full-size real-data bf16 loss/gradients and latent sampling passed;
+  the 303 migrated parent tensors were bit-identical.
+- Bound VAE decoder test passed: 40 latent frames decode to 16,000 finite samples.
+- By update 63, all four loss/LR tags were available through TensorBoard HTTP.
+  Across those steps, maximum discrepancy from `diff_loss + 0.03 * ctc_loss`
+  was below `1e-7`. Early throughput was 3.34 updates/s (not a long-run estimate).
+- TensorBoard root and Scalars API returned HTTP 200. The client-side forwarded
+  URL is not exposed to the available tools; it was requested from the user and
+  must still be verified separately. No forwarded URL is fabricated here.
+
+These are launch checks, not a convergence or generated-speech quality claim.
