@@ -1,0 +1,12 @@
+defaults:
+  - finetune_celebvdub_mm_c2
+  - _self_
+
+# C2 keeps its own 12-MM + 6-audio split and historical CTC positions.
+model:
+  name: AlignDiT_MMDiT_C2_HunyuanDualCA_AllRoPE_12MM6A_finetune
+  arch:
+    text_attention_mode: hunyuan_dual
+    pe_attn_head: null
+    # Inherit all other settings from C2; do not override checkpointing or
+    # training-time sample generation for this architecture-only comparison.
