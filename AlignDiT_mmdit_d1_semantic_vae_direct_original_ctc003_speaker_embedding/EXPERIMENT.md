@@ -127,3 +127,38 @@ address. A server-local URL is not a verified client forwarding URL.
 No forwarding URL is fabricated in this document.
 
 Runtime logs, events, caches, generated samples and weights are not committed.
+
+## Launch verification — 2026-09-07 06:44 CST
+
+- Active implementation commit: `b0b2afe` (pushed to origin/main). This includes
+  the source D1 warmup update, not the earlier unlaunched fixed-CTC copy.
+- Launcher PID **19396**, workers **19511/19512/19514/19516**. TensorBoard PID
+  **19395**, port **6007**. Launcher/TensorBoard are reparented to PID 1;
+  workers and services have independent sessions and TTY `?`.
+- Training log: `logs/train_20260907_064438.log`.
+  TensorBoard log: `logs/tensorboard_20260907_064438.log`.
+  Worker cwd and the single rank-0 event file belong to this speaker snapshot.
+- All 79,613 train and 213 test speaker vectors passed shape/dtype/finiteness/
+  unit-norm checks; original batch features remain identical without the added
+  field. Audit: `logs/speaker_cache_audit.json`.
+- CPU warmup boundaries/resume-contract/CFG/speaker-gradient checks passed.
+  Real-data full-size CUDA bf16 checks passed at CTC weights 0, 0.015 and 0.03,
+  including nonzero speaker gradients and a finite two-step latent sample.
+  The 303 inherited parent tensors were bit-identical after migration.
+  Log: `logs/smoke_warmup_real_data_prelaunch.log`.
+- Live migration confirms source 313 / target 560 / loaded 303 / new 257,
+  parent EMA update 70k, fresh child update 1; `ctc_schedule.json` confirms
+  target 0.03 with boundaries 10000/30000.
+- At the update-65 dashboard check, all ten active scalar tags were finite;
+  `ctc_lambda`, `ctc_active`, `ctc_weighted_loss` were exactly zero, and total
+  loss exactly matched diffusion loss. Speaker projection norm increased from
+  zero to 0.0005290203, with finite/nonzero gradients on conditioned updates.
+  Raw `ctc_loss` is intentionally absent until CTC becomes active after 10k.
+- Four GPUs were computing with approximately 11.3–11.8 GiB each at an early
+  snapshot, with activation checkpointing OFF. Startup throughput around
+  3 updates/s is not a long-run ETA or convergence claim.
+- TensorBoard root and Scalars API returned HTTP 200. Exact logdir is this
+  project's `runs/AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Warmup10k30k_Speaker_semantic_vae_40hz_CelebVDub_char`.
+  Server-local address: `http://127.0.0.1:6007`. Client forwarding is not exposed
+  to the available tools; the actual Ports-panel URL was requested from the
+  user and remains unverified. Do not substitute an invented forwarded URL.
