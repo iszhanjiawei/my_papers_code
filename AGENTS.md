@@ -2,6 +2,15 @@
 
 本文件适用于 `my_papers_code/` 及其全部子目录。这里保存的是 AlignDiT 论文实验的多个独立快照，目标是保持实验可复现，而不是把它们逐步合并成一个统一代码库。
 
+## 模型推理与四指标评测
+
+1. 确认目标实验、配置、checkpoint/update 和 EMA；在目标项目中使用 `PYTHONPATH=src`，优先复用 `src/aligndit/run/eval/` 的对应入口。VAE/speaker 分支同时核对 decoder、latent 标准化和说话人缓存。
+2. 沿用该实验的测试协议；历史 CelebV-Dub Setting 1 通常为 213 条、seed 0、EMA、Euler/EPSS、32 NFE、sway=-1、CFG text/video=5/2、真实时长，用户指定参数优先。各权重/CFG 使用独立输出目录和日志。
+3. 流程：生成 WAV → SPKSIM（WavLM）→ WER（既有 ASR）→ EMOSIM（emotion2vec）→ 用生成音频和对应嘴部视频提取 AV-HuBERT 特征 → AVSync。指标入口通常为 `src/aligndit/script/eval/eval_celebvdub_test.py`，任务参数 `-e sim/wer/emosim/avsync`；特征提取用 `src/aligndit/script/misc/extract_avhubert.py`。
+4. 检查实际可用显存，允许按用户授权与其他进程共享 GPU；本机后台评测用 `setsid`，单卡指标计算用 `-n 1`。监控日志、子进程和 GPU 至全部阶段结束；失败时保留已验证产物，补跑失败阶段。
+5. 按测试列表逐项核验 WAV、特征和四份 JSONL 的覆盖与有效值。JSONL 末尾汇总行不算样本；跨视频同名 clip 应用完整相对路径区分。SPKSIM/EMOSIM/AVSync 取样本均值，WER 用各句词级编辑距离之和除以参考词总数，不能平均逐句 WER；复算结果与日志核对，展示五位小数。
+6. 交付四指标表、权重对比和产物路径；按用户要求写入 `实验结果/实验结果总汇.md`，记录实际配置、样本数、参考音频协议及 checkpoint。不同测试协议/独立训练的差值只作描述性对照；文档按本仓库 Git 规则提交，运行产物不提交。
+
 ## 仓库结构
 
 - `AlignDiT_mmdit_base/`：MM-DiT 基线实验。
