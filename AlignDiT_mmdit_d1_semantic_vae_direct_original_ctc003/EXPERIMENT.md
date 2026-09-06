@@ -126,3 +126,23 @@ Implementation commit: `0b5b585` (pushed to `origin/main`).
   must still be verified separately. No forwarded URL is fabricated here.
 
 These are launch checks, not a convergence or generated-speech quality claim.
+
+## Warmup restart — 2026-09-07 06:39 CST
+
+- Implementation commit: `ff0f14a`, pushed to origin/main.
+- Training launcher PID 24020, workers 24297/24298/24299/24300;
+  TensorBoard PID 24019 on port 6006. All have independent sessions and no TTY.
+- Training log: `logs/train_20260907_063911.log`;
+  TensorBoard log: `logs/tensorboard_20260907_063911.log`.
+- Run/logdir/checkpoint paths are the **Warmup10k30k** paths above, not the stopped
+  fixed-CTC run. Initial child update is 1; the S2c EMA parent is loaded afresh.
+- CPU and real-data CUDA bf16 smoke passed at weights 0, 0.015 and 0.03;
+  schedule boundary/resume-hook/contract mismatch tests passed.
+- Structured config comparison verified that only the run name and two CTC
+  warmup boundaries changed. Architecture, data, optimizer, LR warmup, batch,
+  precision, activation checkpointing and save settings remain unchanged.
+- Live TensorBoard root/Scalars HTTP checks passed. CTC lambda/active/weighted
+  loss are all zero in the initial phase, and total loss equals diffusion loss.
+  Raw CTC loss is intentionally not evaluated until the weight becomes positive.
+- Client-side forwarded URL remains unavailable to these tools. Open the bottom
+  Ports panel, find 6006, and use its actual forwarded-address link.
