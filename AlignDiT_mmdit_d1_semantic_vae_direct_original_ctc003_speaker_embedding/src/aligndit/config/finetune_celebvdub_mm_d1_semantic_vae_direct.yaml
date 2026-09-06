@@ -34,7 +34,7 @@ optim:
   bnb_optimizer: False
 
 model:
-  name: AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_Speaker
+  name: AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Warmup10k30k_Speaker
   tokenizer: char
   tokenizer_path: null
   backbone: DiT_VT_MMDiT
@@ -73,6 +73,9 @@ model:
     hop_length: 400
 
   ctc_lambda: 0.03
+  # Same CTC schedule as the updated source D1; child optimizer updates.
+  ctc_warmup_start: 10000
+  ctc_warmup_end: 30000
 
 ema:
   beta: 0.999

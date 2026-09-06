@@ -43,8 +43,8 @@ class SemanticVaeDirectD1Trainer(Trainer_VT):
         if not math.isfinite(total) or any(not math.isfinite(float(v)) for v in loss_components.values()):
             raise FloatingPointError(f"Non-finite training loss: total={total}, components={loss_components}")
         model = self.accelerator.unwrap_model(self.model)
-        if model.ctc_lambda != 0.03:
-            raise RuntimeError("This D1 experiment requires fixed CTC lambda 0.03 from the first update")
+        if not math.isfinite(model.ctc_lambda) or not 0.0 <= model.ctc_lambda <= 0.03:
+            raise RuntimeError("This D1 experiment requires CTC weight in [0, 0.03]")
         weighted_ctc = float(loss_components.get("ctc_loss", 0.0)) * model.ctc_lambda
         return {
             "ctc_lambda": model.ctc_lambda,

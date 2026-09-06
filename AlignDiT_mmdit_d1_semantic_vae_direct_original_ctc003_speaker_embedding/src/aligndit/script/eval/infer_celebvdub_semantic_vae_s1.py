@@ -1,4 +1,4 @@
-"""Setting 1 inference: Original D1 + Semantic-VAE + CAM++, fixed CTC 0.03.
+"""Setting 1 inference: Original D1 + Semantic-VAE + CAM++, CTC 10k/30k warmup.
 
 Setting 1 uses the same clip's full GT audio as the reference prompt. CAM++
 conditioning is read from that exact waveform, not an independent speaker clip.
@@ -131,8 +131,12 @@ def build_model(config, checkpoint_path: Path, expected_step: int | None, device
         or int(arch.get("speaker_condition_start_layer", -1)) != 6
     ):
         raise RuntimeError("Expected D1: 6 MM / 12 audio-only, dual CTC at [5, 11], 192-D speaker in layers 6-17")
-    if float(config.model.ctc_lambda) != 0.03 or "ctc_warmup_start" in config.model or "ctc_warmup_end" in config.model:
-        raise RuntimeError("This isolated Original-D1 experiment requires fixed ctc_lambda=0.03 without CTC warmup")
+    if (
+        float(config.model.ctc_lambda) != 0.03
+        or int(config.model.get("ctc_warmup_start", -1)) != 10000
+        or int(config.model.get("ctc_warmup_end", -1)) != 30000
+    ):
+        raise RuntimeError("This Original-D1 speaker experiment requires target CTC 0.03 with 10k/30k warmup")
     if (
         representation.name != "semantic_vae_40hz"
         or int(arch.audio_video_ratio) != 1

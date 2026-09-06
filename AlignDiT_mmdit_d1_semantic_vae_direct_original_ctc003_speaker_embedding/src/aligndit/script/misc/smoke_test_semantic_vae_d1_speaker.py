@@ -150,13 +150,15 @@ def test_tail_cfg_and_dropout():
 
 
 def test_first_backward_and_cfm_dropout():
-    for checkpoint_activations in (False, True):
+    for checkpoint_activations, ctc_weight in (
+        (False, 0.0), (False, 0.015), (False, 0.03), (True, 0.0), (True, 0.03)
+    ):
         _, transformer = make_warmstarted_pair(checkpoint_activations=checkpoint_activations)
         model = CFM_VT(
             transformer=transformer,
             num_channels=64,
             audio_video_ratio=1,
-            ctc_lambda=0.03,
+            ctc_lambda=ctc_weight,
             audio_drop_prob=0.0,
             cond_drop_prob=0.0,
             text_drop_prob=0.0,
@@ -174,11 +176,18 @@ def test_first_backward_and_cfm_dropout():
         }
         with patch("aligndit.model.cfm_vt.random", return_value=0.5):
             loss, components, _, _ = model(**kwargs)
-        assert torch.isfinite(loss) and "ctc_loss" in components
+        assert torch.isfinite(loss) and ("ctc_loss" in components) == (ctc_weight > 0)
         loss.backward()
         gradient = transformer.speaker_proj.weight.grad
         assert gradient is not None and torch.isfinite(gradient).all()
         assert torch.count_nonzero(gradient), "zero speaker projection must receive the first warm-started gradient"
+        for projector in transformer.projectors_ctc:
+            ctc_gradient = projector.model[-1].weight.grad
+            if ctc_weight == 0:
+                assert ctc_gradient is None, "first 10k updates must not train CTC projectors"
+            else:
+                assert ctc_gradient is not None and torch.isfinite(ctc_gradient).all()
+                assert torch.count_nonzero(ctc_gradient)
         for drop_name in ("audio_drop_prob", "cond_drop_prob"):
             model.zero_grad(set_to_none=True)
             setattr(model, drop_name, 1.0)
@@ -187,7 +196,7 @@ def test_first_backward_and_cfm_dropout():
             dropped_loss.backward()
             assert not torch.count_nonzero(transformer.speaker_proj.weight.grad)
             setattr(model, drop_name, 0.0)
-    print("[OK] first speaker gradient is finite/nonzero, checkpointing works, CFG dropout removes identity gradient")
+    print("[OK] first speaker gradient is nonzero at CTC zero/ramp/target; checkpointing and CFG dropout work")
 
 
 def test_no_front_leak_and_packed_cfg():
@@ -270,7 +279,7 @@ def main():
     test_first_backward_and_cfm_dropout()
     test_no_front_leak_and_packed_cfg()
     test_cfm_inference()
-    print("All Original-D1 Semantic-VAE speaker model contracts passed (6 MM + 12 audio, fixed CTC 0.03).")
+    print("All Original-D1 Semantic-VAE speaker model contracts passed (6 MM + 12 audio, target CTC 0.03).")
 
 
 if __name__ == "__main__":

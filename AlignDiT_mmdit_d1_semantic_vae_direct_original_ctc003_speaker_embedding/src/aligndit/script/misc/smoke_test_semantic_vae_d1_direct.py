@@ -1,4 +1,4 @@
-"""Original D1 Semantic-VAE + speaker fixed-CTC checks, including optional real data.
+"""Original D1 Semantic-VAE + speaker CTC-warmup checks, including optional real data.
 
 Run from this snapshot with PYTHONPATH=src. The default is a short CPU check;
 ``--device cuda`` exercises the same assertions on an available GPU.
@@ -13,6 +13,8 @@ import gc
 import math
 import random
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
@@ -21,12 +23,62 @@ from omegaconf import OmegaConf
 
 from aligndit.model.backbone.dit_vt_mm import DiT_VT_MMDiT
 from aligndit.model.cfm_vt import CFM_VT
+from aligndit.model.trainer_semantic_vae_direct import SemanticVaeDirectD1Trainer
+from aligndit.model.trainer_semantic_vae_direct_ctc_warmup import (
+    SemanticVaeDirectD1CtcWarmupTrainer,
+    ctc_lambda_for_update,
+)
 from aligndit.script.train.finetune_semantic_vae_d1_direct import build_model
 
 
 def assert_close(actual: float, expected: float, *, name: str) -> None:
     if not math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-7):
         raise AssertionError(f"{name}: expected {expected}, got {actual}")
+
+
+def check_schedule(model: CFM_VT) -> None:
+    # Use a real instance: the warmup diagnostics call the speaker-aware base
+    # implementation, without allocating an optimizer or distributed process.
+    trainer = object.__new__(SemanticVaeDirectD1CtcWarmupTrainer)
+    trainer.model = model
+    trainer.accelerator = SimpleNamespace(unwrap_model=lambda value: value)
+    trainer.ctc_target_lambda = 0.03
+    trainer.ctc_warmup_start = 10000
+    trainer.ctc_warmup_end = 30000
+    trainer.current_ctc_lambda = 0.0
+    # Keys count completed CHILD updates, not the pretrained parent's EMA step.
+    expected = {0: 0.0, 9999: 0.0, 10000: 0.0000015, 19999: 0.015, 29999: 0.03, 70000: 0.03}
+    for completed, target in expected.items():
+        actual = ctc_lambda_for_update(completed, target=0.03, warmup_start=10000, warmup_end=30000)
+        assert_close(actual, target, name=f"schedule for next update after {completed}")
+        trainer._before_update(completed)
+        assert_close(model.ctc_lambda, target, name="hook updates unwrapped model")
+        diagnostics = trainer._forward_diagnostics(torch.tensor(3.0), {"ctc_loss": 2.0})
+        assert_close(diagnostics["ctc_weighted_loss"], 2 * target, name="weighted CTC diagnostic")
+        assert_close(diagnostics["ctc_active"], float(target > 0), name="CTC active diagnostic")
+        assert "speaker_proj_weight_norm" in diagnostics
+    trainer._before_update(20000)
+    assert_close(model.ctc_lambda, 0.0150015, name="resume uses next child update")
+
+    # Exercise contract creation, compatible resume and rejection of a changed schedule.
+    with TemporaryDirectory(prefix="d1_speaker_ctc_schedule_") as temporary:
+        contract_trainer = object.__new__(SemanticVaeDirectD1CtcWarmupTrainer)
+        contract_trainer.checkpoint_path = temporary
+        contract_trainer.accelerator = SimpleNamespace(is_main_process=True, wait_for_everyone=lambda: None)
+        contract_trainer.ctc_target_lambda = 0.03
+        contract_trainer.ctc_warmup_start = 10000
+        contract_trainer.ctc_warmup_end = 30000
+        with patch.object(SemanticVaeDirectD1Trainer, "load_checkpoint", return_value=20000):
+            assert contract_trainer.load_checkpoint() == 20000
+            assert contract_trainer.load_checkpoint() == 20000
+            contract_trainer.ctc_warmup_end = 40000
+            try:
+                contract_trainer.load_checkpoint()
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("A changed CTC schedule must not silently resume")
+    print("CTC schedule boundaries, speaker diagnostics, resumed child update and schedule contract passed")
 
 
 def check_forward_backward(model: CFM_VT, device: torch.device, *, weight: float) -> dict[str, float]:
@@ -200,7 +252,7 @@ def check_real_data(config, device: torch.device) -> None:
     del source, state
     gc.collect()
     model.to(device).train()
-    for weight in (0.03,):
+    for weight in (0.0, 0.015, 0.03):
         set_seed(666)
         model.zero_grad(set_to_none=True)
         model.ctc_lambda = weight
@@ -279,11 +331,12 @@ def main() -> None:
     config.model.arch.update(dim=48, heads=3, dim_head=16, text_dim=32, conv_layers=0, use_conformer=False)
     vocabulary = {" ": 0, "a": 1, "b": 2, "c": 3, "d": 4}
     model = build_model(config, vocabulary, 27)
-    assert_close(model.ctc_lambda, 0.03, name="fixed CTC from the first update")
-    assert "ctc_warmup_start" not in config.model and "ctc_warmup_end" not in config.model
-    results = check_forward_backward(model, device, weight=0.03)
-    assert_close(model.ctc_lambda, 0.03, name="CTC remains fixed after backward")
-    print(f"original D1 fixed lambda=0.03: {results}")
+    assert_close(model.ctc_lambda, 0.03, name="configured CTC target")
+    assert config.model.ctc_warmup_start == 10000 and config.model.ctc_warmup_end == 30000
+    check_schedule(model)
+    for weight in (0.0, 0.015, 0.03):
+        results = check_forward_backward(model, device, weight=weight)
+        print(f"original D1 + speaker CTC warmup phase lambda={weight}: {results}")
 
     arch = OmegaConf.to_container(config.model.arch, resolve=True)
     arch.pop("ctc_sampling_ratios")
@@ -292,7 +345,7 @@ def main() -> None:
     del legacy
     print(
         f"Original D1 Semantic-VAE + speaker smoke passed on {device}: 6 MM + 12 audio, original Audio-to-Text CA, "
-        "first-head RoPE, 40-Hz shapes, both CTC gradients and fixed 0.03 weighted losses"
+        "first-head RoPE, 40-Hz shapes, speaker conditioning, CTC warmup boundaries and zero/ramp/target gradients"
     )
     if args.real_data:
         del model

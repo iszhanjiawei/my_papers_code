@@ -1,8 +1,13 @@
-# Original D1 + Semantic-VAE + speaker embedding, fixed CTC 0.03
+# Original D1 + Semantic-VAE + speaker embedding, CTC warmup 10k->30k
 
 This is an isolated source copy of
 `AlignDiT_mmdit_d1_semantic_vae_direct_original_ctc003` at `9503f14`.
-The unmodified copy is committed as `524e496`. Neither the original D1 project
+The unmodified copy is committed as `524e496`; speaker implementation was
+initially added in `b649aa3` before any training launch. The source D1 was then
+updated in `ff0f14a` to CTC warmup (documented at `376ca78`). This speaker
+snapshot now inherits that current schedule rather than its initial fixed-CTC
+copy. The old fixed-speaker version was never launched as a training run.
+Neither the original D1 project
 nor the reference `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding` is
 modified. Logs, events, results, checkpoints and data were not copied.
 There are no shared-source symlinks or changes to the environment's editable install.
@@ -38,8 +43,12 @@ There are no shared-source symlinks or changes to the environment's editable ins
   depth 18, 12 attention heads. Audio/video joint attention followed by
   **Audio-only** text cross-attention, original Q/K RMSNorm, first-head RoPE.
   No Hunyuan dual-stream text CA, CA RoPE or all-head RoPE.
-- CTC taps `[5, 11]`, 40-Hz sampling strides `[1, 1]`, fixed lambda **0.03
-  from update 1**. The C2 reference's CTC warmup is deliberately not imported.
+- CTC taps `[5, 11]`, 40-Hz sampling strides `[1, 1]`; the current source
+  D1's CTC warmup is preserved: child updates 1..10000 have weight **0**,
+  updates 10001..30000 ramp linearly to **0.03**, and later retain **0.03**.
+  The 20k learning-rate warmup is independent and unchanged.
+  At zero CTC weight, raw CTC loss is not evaluated and CTC heads do not train;
+  speaker conditioning is still trained through the diffusion loss.
 - All 79,613 CelebVDub training records, including the original 105
   CTC-infeasible records handled by `zero_infinity=True`.
 - Fixed Semantic-VAE posterior-sample cache: 64D / 40 Hz / 16 kHz / hop 400;
@@ -57,7 +66,7 @@ There are no shared-source symlinks or changes to the environment's editable ins
 - `model_last.pt` every 5k, numbered checkpoints every 50k. No new
   stop-at-200k override is imported from C2; the original 200-epoch schedule remains.
 
-The config diff against source D1 consists only of four speaker-cache fields,
+The config diff against the current source D1 at `376ca78` consists only of four speaker-cache fields,
 two speaker architecture fields, and the isolated model/run name.
 
 ## Entry points
@@ -80,7 +89,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u 
   src/aligndit/script/misc/smoke_test_semantic_vae_d1_direct.py --real-data --device cuda
 
 # Detached training on GPUs 0..3 and an independent TensorBoard service
-bash scripts/start_d1_svae_fixed_ctc003.sh
+bash scripts/start_d1_svae_ctc003_warmup.sh
 
 # After a child checkpoint exists: Setting-1 inference and four metrics
 setsid env PYTHONUNBUFFERED=1 bash \
@@ -95,17 +104,19 @@ Never launch a second group while this experiment is already running.
 ## Runtime locations
 
 Run name:
-`AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_Speaker_semantic_vae_40hz_CelebVDub_char`.
+`AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Warmup10k30k_Speaker_semantic_vae_40hz_CelebVDub_char`.
 
 TensorBoard logdir: this project's `runs/` followed by the exact run name.
 Only global rank 0 writes events. Tags: `loss`, `diff_loss`, `ctc_loss`, `lr`,
-`ctc_lambda`, `ctc_weighted_loss`, `ctc_fraction_of_total`, `grad_norm`,
+`ctc_lambda`, `ctc_active`, `ctc_weighted_loss`, `ctc_fraction_of_total`, `grad_norm`,
 `speaker_proj_weight_norm`, `speaker_proj_grad_norm`.
 
 Checkpoints:
-`${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_Speaker_40hz_CelebVDub_char`.
+`${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Warmup10k30k_Speaker_40hz_CelebVDub_char`.
 `parent_migration.json` records strict migration; `speaker_training_contract.json`
-records speaker/config/init semantics; Hydra saves a resolved config under `outputs/`.
+records speaker/config/init semantics; `ctc_schedule.json` pins the warmup for
+resume (incompatible or missing contracts cannot reuse existing checkpoints).
+Hydra saves a resolved config under `outputs/`.
 
 Speaker cache (read-only reuse):
 `${ROOT_PREFIX}/zjw524/projects/data/CelebVDub/campplus_spk_emb_zh_en_16k`.

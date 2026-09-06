@@ -18,6 +18,9 @@ from f5_tts.model.utils import exists
 
 # trainer
 class Trainer_VT(Trainer):
+    def _before_update(self, global_update: int) -> None:
+        """Optional schedule hook; global_update counts completed child updates."""
+
     def _forward_diagnostics(self, loss, loss_components):
         return {}
 
@@ -207,6 +210,7 @@ class Trainer_VT(Trainer):
             )
 
             for batch in current_dataloader:
+                self._before_update(global_update)
                 with self.accelerator.accumulate(self.model):
                     text_inputs = batch["text"]
                     mel_spec = batch["mel"].permute(0, 2, 1)
@@ -251,7 +255,7 @@ class Trainer_VT(Trainer):
 
                 if self.is_main:
                     self.accelerator.log(
-                        {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0]}, step=global_update
+                        {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], **diagnostics}, step=global_update
                     )
                     self.accelerator.log(loss_components, step=global_update)
                     if self.logger == "tensorboard":

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Original D1 Semantic-VAE + CAM++ / fixed CTC 0.03: inference and the historical four metrics.
+# Original D1 Semantic-VAE + CAM++ / CTC 0.03 warmup 10k/30k: inference and the historical four metrics.
 # Usage: bash this_script.sh [150000|last|/path/to/model.pt] [new_output_directory]
 # Long runs: setsid env PYTHONUNBUFFERED=1 bash this_script.sh ... > logs/eval.log 2>&1 &
 set -euo pipefail
@@ -13,7 +13,7 @@ export PYTHONUNBUFFERED=1
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
 config="${CONFIG:-src/aligndit/config/finetune_celebvdub_mm_d1_semantic_vae_direct.yaml}"
-checkpoint_dir="${CHECKPOINT_DIR:-${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_Speaker_40hz_CelebVDub_char}"
+checkpoint_dir="${CHECKPOINT_DIR:-${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Warmup10k30k_Speaker_40hz_CelebVDub_char}"
 selector="${1:-last}"
 step_args=()
 if [[ "$selector" =~ ^[0-9]+$ ]]; then

@@ -1,4 +1,4 @@
-"""Fine-tune isolated original D1 + CAM++ on Semantic-VAE with fixed CTC 0.03."""
+"""Fine-tune isolated original D1 + CAM++ with the source D1's CTC warmup."""
 
 import json
 import math
@@ -14,7 +14,7 @@ from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
-from aligndit.model.trainer_semantic_vae_direct import SemanticVaeDirectD1Trainer
+from aligndit.model.trainer_semantic_vae_direct_ctc_warmup import SemanticVaeDirectD1CtcWarmupTrainer
 from f5_tts.model.utils import get_tokenizer
 
 
@@ -57,8 +57,8 @@ def validate_experiment_config(model_cfg) -> None:
     ctc_lambda = float(model_cfg.model.ctc_lambda)
     if not math.isfinite(ctc_lambda) or ctc_lambda != 0.03:
         raise RuntimeError("Semantic-VAE D1 requires the requested ctc_lambda=0.03")
-    if "ctc_warmup_start" in model_cfg.model or "ctc_warmup_end" in model_cfg.model:
-        raise RuntimeError("This experiment fixes CTC lambda at 0.03 from the first update; no CTC warmup")
+    if model_cfg.model.get("ctc_warmup_start") != 10000 or model_cfg.model.get("ctc_warmup_end") != 30000:
+        raise RuntimeError("This experiment preserves source D1 CTC warmup from child update 10000 to 30000")
     if bool(model_cfg.ckpts.log_samples):
         raise RuntimeError("Semantic-VAE training requires log_samples=False; use the dedicated VAE inference entry")
 
@@ -108,7 +108,7 @@ def main(model_cfg):
     exp_name = f"{model_cfg.model.name}_{audio_cfg.name}_{model_cfg.datasets.name}_{model_cfg.model.tokenizer}"
     model = build_model(model_cfg, vocab_char_map, vocab_size)
 
-    trainer = SemanticVaeDirectD1Trainer(
+    trainer = SemanticVaeDirectD1CtcWarmupTrainer(
         model,
         epochs=model_cfg.optim.epochs,
         learning_rate=model_cfg.optim.learning_rate,
@@ -138,6 +138,9 @@ def main(model_cfg):
         expected_parent_size=model_cfg.ckpts.expected_parent_size,
         expected_parent_contract_sha256=model_cfg.ckpts.expected_parent_contract_sha256,
         expected_parent_update=model_cfg.ckpts.expected_parent_update,
+        ctc_target_lambda=model_cfg.model.ctc_lambda,
+        ctc_warmup_start=model_cfg.model.ctc_warmup_start,
+        ctc_warmup_end=model_cfg.model.ctc_warmup_end,
     )
     set_seed(experiment_seed + trainer.accelerator.process_index)
     if trainer.is_main:
@@ -151,7 +154,7 @@ def main(model_cfg):
             "initialization": "S2c-70k audio EMA; fresh optimizer and update 0; zero speaker projection",
             "speaker_conditioning": "L2-normalized CAM++ 192D -> zero Linear(192,768); time condition of blocks 6..17 only",
             "speaker_dropout": "Shares audio-prompt CFG dropout; removed in the unconditional inference branch",
-            "ctc": "Fixed lambda 0.03 from update 1; no CTC warmup",
+            "ctc": "Child updates 1..10000: zero; 10001..30000: linear ramp to 0.03; later: 0.03",
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
         contract_path = Path(model_cfg.ckpts.save_dir) / "speaker_training_contract.json"
@@ -182,10 +185,11 @@ def main(model_cfg):
     )
     if trainer.is_main:
         print(
-            "Original D1 Semantic-VAE fixed-CTC dataset validated: "
+            "Original D1 Semantic-VAE speaker/CTC-warmup dataset validated: "
             f"records={len(train_dataset)}, CTC feasible={train_dataset.ctc_feasible_count}, "
             f"CTC zero_infinity-only={train_dataset.ctc_infeasible_count}; "
-            f"ctc_lambda={model_cfg.model.ctc_lambda} from update 1 (no CTC warmup)",
+            f"CTC=0 through child update {model_cfg.model.ctc_warmup_start}, "
+            f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}",
             flush=True,
         )
     trainer.finetune(
