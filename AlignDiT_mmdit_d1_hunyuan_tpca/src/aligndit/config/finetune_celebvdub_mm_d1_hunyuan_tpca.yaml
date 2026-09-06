@@ -1,0 +1,24 @@
+defaults:
+  - finetune_celebvdub_mm_d1_hunyuan_dual_ca_allrope
+  - _self_
+
+# Separate identity prevents automatic checkpoint resume from another D1 run.
+# Default TensorBoard logdir, relative to this experiment root:
+# runs/AlignDiT_MMDiT_D1_HunyuanDualCA_AllRoPE_TPCA_6MM12A_CTC6_12_finetune_hifigan_16k_char_CelebVDub
+# Seed, LibriSpeech initialization, batching, activation checkpointing,
+# optimization, sample logging and existing audio CTC are inherited unchanged.
+model:
+  name: AlignDiT_MMDiT_D1_HunyuanDualCA_AllRoPE_TPCA_6MM12A_CTC6_12_finetune
+  arch:
+    tpca_enabled: true
+    tpca_layers: [3, 4, 5]  # Zero-based MM block indices.
+    tpca_local_heads: 4
+    tpca_visual_hidden_dim: 256
+    tpca_ctc_upsample_factor: 2
+    tpca_bias_strength: 1.0
+    tpca_prior_smoothing: 0.1
+    tpca_warmup_steps: 2000
+    tpca_ramp_steps: 8000
+    tpca_query_chunk_size: 128
+  tpca_visual_ctc_lambda: 0.03
+  tpca_path_lambda: 0.01
