@@ -476,9 +476,18 @@ class DiT_VT_MMDiT(DiT):
         video_dim=1024,
         video_rope_scaled=True,
         text_attention_mode="audio_only",
+        avhubert_rep_layer=None,
+        avhubert_rep_dim=1024,
     ):
         if text_attention_mode not in {"audio_only", "hunyuan_dual"}:
             raise ValueError(f"unsupported text_attention_mode: {text_attention_mode!r}")
+        if avhubert_rep_layer is not None:
+            if type(avhubert_rep_layer) is not int or not 0 <= avhubert_rep_layer < depth:
+                raise ValueError("avhubert_rep_layer must be None or a zero-based layer index within depth")
+            if type(avhubert_rep_dim) is not int or avhubert_rep_dim <= 0:
+                raise ValueError("avhubert_rep_dim must be a positive integer")
+            if audio_video_ratio != 4:
+                raise ValueError("AV-HuBERT supervision requires the 100 Hz audio / 25 Hz teacher ratio of 4")
         super().__init__(
             dim=dim,
             depth=depth,
@@ -500,6 +509,7 @@ class DiT_VT_MMDiT(DiT):
             checkpoint_activations=checkpoint_activations,
         )
         self.audio_video_ratio = audio_video_ratio
+        self.avhubert_rep_layer = avhubert_rep_layer
         self.video_rope_scaled = video_rope_scaled
         self.prompt_isolated_ca = prompt_isolated_ca
         self.text_attention_mode = text_attention_mode
@@ -587,6 +597,14 @@ class DiT_VT_MMDiT(DiT):
             nn.init.constant_(block.cross_attn.out_proj.weight, 0)
             nn.init.constant_(block.cross_attn.out_proj.bias, 0)
 
+        # Register only for the representation-supervised experiment, after
+        # initializing the original D1 parameters. No teacher is part of the
+        # generator state dict, optimizer, EMA, or inference graph.
+        if self.avhubert_rep_layer is not None:
+            self.avhubert_rep_projector = nn.Sequential(
+                nn.Linear(dim, dim), nn.SiLU(), nn.Linear(dim, avhubert_rep_dim)
+            )
+
     def get_input_embed(
         self,
         x,  # b n d
@@ -642,9 +660,17 @@ class DiT_VT_MMDiT(DiT):
         drop_video: bool = False,  # cfg for video
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
+        return_audio_features: bool = False,
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
+        if return_audio_features:
+            if self.avhubert_rep_layer is None:
+                raise ValueError("return_audio_features requires a configured avhubert_rep_layer")
+            if cache or cfg_infer:
+                raise ValueError("audio representation outputs are only supported on uncached training forwards")
+            if seq_len % self.audio_video_ratio != 0:
+                raise ValueError("audio length must be divisible by 4 for fixed-rate AV-HuBERT supervision")
         if generation_mask is None:
             raise ValueError("generation_mask is required to separate prompt and synthesized audio regions")
         if generation_mask.dtype != torch.bool:
@@ -757,6 +783,7 @@ class DiT_VT_MMDiT(DiT):
             residual = x
 
         intermediates_ctc = {}
+        audio_features = None
         for layer_i, block in enumerate(self.transformer_blocks):
             is_mm = isinstance(block, MMDiTBlock_VT)
             has_tail_text = isinstance(block, AudioTextDiTBlock)
@@ -832,6 +859,15 @@ class DiT_VT_MMDiT(DiT):
                         rope=rope,
                     )
 
+            if return_audio_features and layer_i == self.avhubert_rep_layer:
+                # Consecutive groups of four mel frames share one 25 Hz
+                # timestamp. Pool by this fixed ratio, never stretch a clip
+                # according to its padded or valid sequence length.
+                pooled_audio = x.reshape(
+                    x.shape[0], seq_len // self.audio_video_ratio, self.audio_video_ratio, x.shape[-1]
+                ).mean(dim=2)
+                audio_features = self.avhubert_rep_projector(pooled_audio)
+
             if not cache and layer_i in self.layer_map_ctc:  # hack
                 projector = self.projectors_ctc[self.layer_map_ctc[layer_i]]
                 z_tilde, z_lens = projector(x, lens)
@@ -843,4 +879,6 @@ class DiT_VT_MMDiT(DiT):
         x = self.norm_out(x, t)
         output = self.proj_out(x)
 
+        if return_audio_features:
+            return output, intermediates_ctc, audio_features
         return output, intermediates_ctc

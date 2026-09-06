@@ -170,6 +170,28 @@ class CustomDataset_mel_video(CustomDataset_mel):
         return ret
 
 
+class CustomDataset_mel_video_teacher(CustomDataset_mel_video):
+    """Keep GT waveform identities for a frozen, training-only audio teacher.
+
+    Fail on unreadable samples rather than silently changing pairing between
+    transcript, mel, lip features and teacher audio in a distributed batch.
+    """
+
+    def __getitem__(self, index):
+        item = super().__getitem__(index)
+        if item is None:
+            raise RuntimeError(f"Cannot load audio-teacher training sample {index}")
+        return item
+
+    @staticmethod
+    def collate_fn(batch):
+        if not batch or any(item is None for item in batch):
+            raise ValueError("Audio-teacher batches must contain valid paired samples")
+        result = CustomDataset_mel_video.collate_fn(batch)
+        result["audio_paths"] = [item["audio_path"] for item in batch]
+        return result
+
+
 # Load dataset
 
 
@@ -189,7 +211,7 @@ def load_dataset_mel(
 
     print("Loading dataset ...")
 
-    if dataset_type in ["CustomDataset", "CustomDataset_mel", "CustomDataset_mel_rep", "CustomDataset_mel_video"]:
+    if dataset_type in ["CustomDataset", "CustomDataset_mel", "CustomDataset_mel_rep", "CustomDataset_mel_video", "CustomDataset_mel_video_teacher"]:
         if data_dir:
             rel_data_path = os.path.join(data_dir, f"{dataset_name}_{tokenizer}") if tokenizer else os.path.join(data_dir, dataset_name)
         elif tokenizer:
@@ -217,6 +239,8 @@ def load_dataset_mel(
             dataset_cls = CustomDataset_mel_rep
         elif dataset_type == "CustomDataset_mel_video":
             dataset_cls = CustomDataset_mel_video
+        elif dataset_type == "CustomDataset_mel_video_teacher":
+            dataset_cls = CustomDataset_mel_video_teacher
 
         train_dataset = dataset_cls(
             train_dataset,

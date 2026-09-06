@@ -54,6 +54,7 @@ def main(model_cfg):
         mel_spec_kwargs={k: v for k, v in model_cfg.model.mel_spec.items() if k != "mel_spec_type"},  # hack
         vocab_char_map=vocab_char_map,
         ctc_lambda=model_cfg.model.ctc_lambda,
+        avhubert_rep_lambda=float(getattr(model_cfg.model, "avhubert_rep_lambda", 0.0)),
     )
 
     # init trainer
@@ -82,6 +83,11 @@ def main(model_cfg):
         local_vocoder_path=model_cfg.model.vocoder.local_path,
         model_cfg_dict=OmegaConf.to_container(model_cfg, resolve=True),
         ema_kwargs=model_cfg.ema,
+        audio_teacher_config=(
+            OmegaConf.to_container(model_cfg.audio_teacher, resolve=True)
+            if float(getattr(model_cfg.model, "avhubert_rep_lambda", 0.0)) > 0
+            else None
+        ),
     )
     if experiment_seed is not None:
         rank_seed = experiment_seed + trainer.accelerator.process_index
@@ -94,7 +100,11 @@ def main(model_cfg):
         tokenizer,
         mel_spec_module=MelSpec_tacotron(**model_cfg.model.mel_spec),
         mel_spec_kwargs={k: v for k, v in model_cfg.model.mel_spec.items() if k != "mel_spec_type"},  # hack
-        dataset_type="CustomDataset_mel_video",
+        dataset_type=(
+            "CustomDataset_mel_video_teacher"
+            if float(getattr(model_cfg.model, "avhubert_rep_lambda", 0.0)) > 0
+            else "CustomDataset_mel_video"
+        ),
         data_dir=data_dir,
     )
     init_mode = str(getattr(model_cfg.ckpts, "init_mode", "audio_pretrained"))

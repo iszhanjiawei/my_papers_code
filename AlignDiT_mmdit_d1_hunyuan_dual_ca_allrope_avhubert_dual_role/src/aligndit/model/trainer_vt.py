@@ -18,6 +18,16 @@ from f5_tts.model.utils import exists
 
 # trainer
 class Trainer_VT(Trainer):
+    def __init__(self, *args, audio_teacher_config=None, **kwargs):
+        # The frozen teacher is deliberately outside the trainable model,
+        # optimizer, DDP wrapper, EMA and generator checkpoint state_dict.
+        self.audio_teacher_config = audio_teacher_config
+        self.audio_teacher = None
+        super().__init__(*args, **kwargs)
+        enabled = getattr(self.accelerator.unwrap_model(self.model), "avhubert_rep_lambda", 0) > 0
+        if enabled != bool(audio_teacher_config):
+            raise ValueError("Positive avhubert_rep_lambda and audio_teacher_config must be enabled together")
+
     def load_pretrained(self, pretrained_path):
         self.accelerator.wait_for_everyone()
         checkpoint = torch.load(pretrained_path, weights_only=True, map_location="cpu")
@@ -162,6 +172,15 @@ class Trainer_VT(Trainer):
         start_update = self.load_checkpoint()
         global_update = start_update
 
+        if self.audio_teacher_config:
+            from aligndit.model.avhubert_teacher import AVHubertAudioTeacher
+
+            self.audio_teacher = AVHubertAudioTeacher(
+                **self.audio_teacher_config, device=self.accelerator.device
+            )
+            if self.is_main:
+                print("AV-HuBERT dual-role supervision: frozen audio-only teacher; targets enter loss only")
+
         if exists(resumable_with_seed):
             orig_epoch_step = len(train_dataloader)
             start_step = start_update * self.grad_accumulation_steps
@@ -199,6 +218,13 @@ class Trainer_VT(Trainer):
             )
 
             for batch in current_dataloader:
+                teacher_kwargs = {}
+                if self.audio_teacher is not None:
+                    teacher_features, teacher_lengths = self.audio_teacher.encode(batch["audio_paths"])
+                    teacher_kwargs = dict(
+                        audio_teacher_features=teacher_features,
+                        audio_teacher_lengths=teacher_lengths,
+                    )
                 with self.accelerator.accumulate(self.model):
                     text_inputs = batch["text"]
                     mel_spec = batch["mel"].permute(0, 2, 1)
@@ -215,7 +241,14 @@ class Trainer_VT(Trainer):
                         video=video,
                         video_lens=video_lengths,
                         noise_scheduler=self.noise_scheduler,
+                        **teacher_kwargs,
                     )
+                    # DDP must fail on every rank if one rank sees a bad loss.
+                    if self.audio_teacher is not None:
+                        finite = torch.isfinite(loss.detach()).to(dtype=torch.int32)
+                        all_finite = self.accelerator.reduce(finite, reduction="sum")
+                        if int(all_finite.item()) != self.accelerator.num_processes:
+                            raise FloatingPointError("Non-finite AV-HuBERT D1 loss; stopping all ranks")
                     self.accelerator.backward(loss)
 
                     if self.max_grad_norm > 0 and self.accelerator.sync_gradients:

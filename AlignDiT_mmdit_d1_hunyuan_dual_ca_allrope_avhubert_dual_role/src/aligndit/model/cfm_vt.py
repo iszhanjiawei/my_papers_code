@@ -10,6 +10,7 @@ d - dimension
 
 from __future__ import annotations
 
+import math
 from random import random
 from typing import Callable
 
@@ -29,6 +30,48 @@ from f5_tts.model.utils import (
 )
 
 
+def _masked_audio_representation_loss(student, teacher, teacher_lengths, generation_mask):
+    """Cosine supervision on valid generated 25 Hz frames, with a frozen target.
+
+    A teacher clip may differ slightly in length from the video-aligned mel
+    sequence. Match their shared fixed-rate timeline by index and mask the
+    remainder; interpolation would move phonetic events in time.
+    """
+    if student.ndim != 3 or teacher.ndim != 3:
+        raise ValueError("student and audio_teacher_features must have shape [batch, frames, channels]")
+    if student.shape[0] != teacher.shape[0] or student.shape[-1] != teacher.shape[-1]:
+        raise ValueError("student and audio teacher must have matching batch and feature dimensions")
+    if not student.is_floating_point() or not teacher.is_floating_point():
+        raise TypeError("audio representations must be floating-point tensors")
+    if generation_mask.dtype != torch.bool or generation_mask.shape != student.shape[:2]:
+        raise ValueError("generation_mask must be bool with the student's [batch, frames] shape")
+    if teacher_lengths.shape != (student.shape[0],):
+        raise ValueError("audio_teacher_lengths must have shape [batch]")
+    if teacher_lengths.dtype not in (torch.int32, torch.int64):
+        raise TypeError("audio_teacher_lengths must use an integer dtype")
+    if any(tensor.device != student.device for tensor in (teacher, teacher_lengths, generation_mask)):
+        raise ValueError("audio representations, lengths, and generation mask must share a device")
+    if ((teacher_lengths < 0) | (teacher_lengths > teacher.shape[1])).any():
+        raise ValueError("audio_teacher_lengths must lie between zero and the padded teacher length")
+
+    shared_frames = min(student.shape[1], teacher.shape[1])
+    positions = torch.arange(shared_frames, device=student.device)
+    valid = generation_mask[:, :shared_frames] & (positions[None, :] < teacher_lengths[:, None])
+    valid_frames = int(valid.sum().item())
+    if valid_frames == 0:
+        # Keep the projector in the graph even for a batch with no overlapping
+        # generated/valid teacher frames (e.g. an empty synthetic test target).
+        return student.float().sum() * 0.0, 0
+
+    # Select before computing similarity: arbitrary padded target values never
+    # enter the loss, and explicit float32 avoids low-precision cosine errors.
+    with torch.autocast(device_type=student.device.type, enabled=False):
+        student_valid = student[:, :shared_frames][valid].float()
+        teacher_valid = teacher.detach()[:, :shared_frames][valid].float()
+        loss = (1.0 - F.cosine_similarity(student_valid, teacher_valid, dim=-1, eps=1e-8)).mean()
+    return loss, valid_frames
+
+
 class CFM_VT(CFM):
     def __init__(
         self,
@@ -37,6 +80,7 @@ class CFM_VT(CFM):
         video_drop_prob=0.2,
         audio_video_ratio=4,
         ctc_lambda=0.1,
+        avhubert_rep_lambda=0.0,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -49,6 +93,14 @@ class CFM_VT(CFM):
 
         # ctc loss
         self.ctc_lambda = ctc_lambda
+        if not math.isfinite(avhubert_rep_lambda) or avhubert_rep_lambda < 0:
+            raise ValueError("avhubert_rep_lambda must be finite and non-negative")
+        self.avhubert_rep_lambda = float(avhubert_rep_lambda)
+        if self.avhubert_rep_lambda > 0:
+            if getattr(self.transformer, "avhubert_rep_layer", None) is None:
+                raise ValueError("positive avhubert_rep_lambda requires transformer.avhubert_rep_layer")
+            if audio_video_ratio != 4 or self.transformer.audio_video_ratio != audio_video_ratio:
+                raise ValueError("AV-HuBERT representation supervision requires matching 100/25 Hz frame rates")
 
     @torch.no_grad()
     def sample(
@@ -253,7 +305,11 @@ class CFM_VT(CFM):
         text_lens: int["b"] | None = None,  # noqa: F821
         video_lens: int["b"] | None = None,  # noqa: F821
         noise_scheduler: str | None = None,
+        audio_teacher_features: torch.Tensor | None = None,
+        audio_teacher_lengths: torch.Tensor | None = None,
     ):
+        if self.avhubert_rep_lambda > 0 and (audio_teacher_features is None or audio_teacher_lengths is None):
+            raise ValueError("AV-HuBERT supervision requires audio_teacher_features and audio_teacher_lengths")
         # handle raw wave
         if inp.ndim == 2:
             inp = self.mel_spec(inp)
@@ -344,7 +400,8 @@ class CFM_VT(CFM):
             drop_video = True
 
         # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
-        pred, intermediates_ctc = self.transformer(
+        representation_kwargs = {"return_audio_features": True} if self.avhubert_rep_lambda > 0 else {}
+        transformer_outputs = self.transformer(
             x=φ,
             cond=cond,
             text=text,
@@ -358,7 +415,12 @@ class CFM_VT(CFM):
             video_mask=video_mask,
             complementary_mask=complementary_mask,
             generation_mask=rand_span_mask,
+            **representation_kwargs,
         )
+        if self.avhubert_rep_lambda > 0:
+            pred, intermediates_ctc, audio_features = transformer_outputs
+        else:
+            pred, intermediates_ctc = transformer_outputs
 
         # flow matching loss
         loss = F.mse_loss(pred, flow, reduction="none")
@@ -389,5 +451,15 @@ class CFM_VT(CFM):
             ctc_loss /= len(intermediates_ctc)
             loss += ctc_loss * self.ctc_lambda
             component_losses["ctc_loss"] = ctc_loss.item()
+
+        if self.avhubert_rep_lambda > 0:
+            rep_loss, rep_valid_frames = _masked_audio_representation_loss(
+                audio_features, audio_teacher_features, audio_teacher_lengths, rand_span_video_mask
+            )
+            weighted_rep_loss = self.avhubert_rep_lambda * rep_loss
+            loss = loss + weighted_rep_loss
+            component_losses["avhubert_rep_loss"] = rep_loss.detach().item()
+            component_losses["avhubert_rep_weighted_loss"] = weighted_rep_loss.detach().item()
+            component_losses["avhubert_rep_valid_frames"] = rep_valid_frames
 
         return loss, component_losses, cond, pred

@@ -1,0 +1,22 @@
+defaults:
+  - finetune_celebvdub_mm_d1_hunyuan_dual_ca_allrope
+  - _self_
+
+# Independent run: inherit the user-selected D1 architecture, optimizer,
+# CTC, frame budget, audio pretraining, sample logging and checkpoint policy.
+model:
+  name: AlignDiT_MMDiT_D1_HunyuanDualCA_AllRoPE_AVHuBERTDualRole_L6_W01_finetune
+  arch:
+    # Zero-based block index, immediately after the last MM block.
+    avhubert_rep_layer: 5
+    avhubert_rep_dim: 1024
+  # Initial experimental choice, not a tuned/best weight.
+  avhubert_rep_lambda: 0.1
+
+audio_teacher:
+  checkpoint_path: ${oc.env:ROOT_PREFIX,''}/zjw524/alignDiT_pretrain_models/large_vox_iter5.pt
+  avhubert_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/av_hubert
+  microbatch_size: 4
+  # Targets are computed on first use and reused across epochs. The teacher
+  # implementation namespaces cached files by checkpoint/preprocessing identity.
+  cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/avhubert_audio_teacher_cache
