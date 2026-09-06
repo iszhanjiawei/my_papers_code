@@ -1,10 +1,14 @@
-# Original D1 + Semantic-VAE, fixed CTC 0.03
+# Original D1 + Semantic-VAE, CTC 0.03 with 10k->30k warmup
 
 This is an independent source copy of the restored original
 `AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio` (restoration commit `f1fc9f2`).
 The source-copy commit is `40cef80`. Neither that project nor the existing
 `AlignDiT_mmdit_d1_semantic_vae_direct` warmup experiment is modified.
 Historical logs, results, datasets and checkpoints were not copied.
+
+On 2026-09-07, the user requested stopping the fixed-CTC run and adding warmup.
+This project directory keeps its original name, but the current config/run uses
+`Warmup10k30k`. The fixed run's artifacts are preserved in their old directories.
 
 ## Architecture and training contract
 
@@ -13,7 +17,9 @@ Historical logs, results, datasets and checkpoints were not copied.
   No Hunyuan dual-stream text CA, CA RoPE or all-head RoPE is introduced.
 - Self-attention RoPE remains on head 1; Q/K RMSNorm is retained.
 - CTC heads remain at zero-based block indices `[5, 11]`.
-- `ctc_lambda = 0.03` from the first child optimizer update, with **no CTC warmup**.
+- `ctc_lambda = 0.03` is the target: updates 1..10000 use zero CTC;
+  updates 10001..30000 ramp linearly to 0.03; later updates retain 0.03.
+  The 20k learning-rate warmup is independent and unchanged.
 - CelebVDub: all 79,613 training examples, including 105 CTC-infeasible examples
   whose CTC loss is zeroed by the inherited `zero_infinity=True` behavior.
 - Fixed Semantic-VAE posterior-sample cache: 64D, 40 Hz, 16 kHz / hop 400;
@@ -35,9 +41,10 @@ Historical logs, results, datasets and checkpoints were not copied.
   generated latents after reversing normalization with the pinned VAE decoder.
 - Saves: `model_last.pt` every 5k, numbered checkpoints every 50k.
 
-The shared `cfm_vt.py`, `trainer_vt.py` and audio-only DiT implementations remain
-unchanged. The only edits to original core model files are the identity frontend
-and configurable CTC sampling ratios (the mel default is still `[2, 1]`).
+The `cfm_vt.py` and audio-only DiT implementations remain unchanged.
+Core model changes are the identity frontend and configurable CTC sampling
+ratios (mel default `[2, 1]`). The trainer now calls an optional pre-forward
+schedule hook and writes diagnostics; its optimizer and LR schedule are unchanged.
 
 ## Entry points
 
@@ -49,7 +56,7 @@ Configuration:
 `src/aligndit/config/finetune_celebvdub_mm_d1_semantic_vae_direct.yaml`.
 
 ```bash
-# CPU architecture / fixed-loss check
+# CPU architecture / CTC schedule, resume contract and gradient checks
 PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u \
   src/aligndit/script/misc/smoke_test_semantic_vae_d1_direct.py
 
@@ -58,7 +65,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u 
   src/aligndit/script/misc/smoke_test_semantic_vae_d1_direct.py --real-data --device cuda
 
 # Start detached four-GPU training and TensorBoard; prints PIDs and logs
-bash scripts/start_d1_svae_fixed_ctc003.sh
+bash scripts/start_d1_svae_ctc003_warmup.sh
 
 # After a checkpoint exists: inference and four historical Setting-1 metrics
 setsid env PYTHONUNBUFFERED=1 bash \
@@ -73,22 +80,31 @@ Do not start a second process group on top of a running job.
 
 ## Artifact locations
 
-Run: `AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_semantic_vae_40hz_CelebVDub_char`.
+Run: `AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Warmup10k30k_semantic_vae_40hz_CelebVDub_char`.
 
 TensorBoard: `runs/` followed by that run name. Loss tags are `loss`, `diff_loss`,
-`ctc_loss`, plus `lr`; only global rank 0 writes events.
+`ctc_lambda`, `ctc_active`, `ctc_weighted_loss`, plus `lr`; only global rank 0 writes
+events. Raw `ctc_loss` starts when CTC becomes active after 10k. During the first
+10k it is not evaluated: weighted CTC=0 and total loss equals diffusion loss.
 
 Checkpoints:
-`${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_40hz_CelebVDub_char`.
+`${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Warmup10k30k_40hz_CelebVDub_char`.
 `parent_migration.json` records the verified parent, loaded counts and new/ignored parameter names;
 Hydra saves the resolved configuration in its timestamped `outputs/` directory.
+`ctc_schedule.json` pins the schedule; incompatible/missing contracts cannot resume
+existing weights. This restart loads S2c-70k EMA afresh and begins child update 1.
 
 TensorBoard defaults to port 6006, and DDP rendezvous to 29593. Open the client
 bottom panel's Ports tab and use the **actual forwarded address** for port 6006.
 The launcher prints a server-local address, not a claim that client forwarding
 has already been configured. Runtime logs/events/checkpoints are not committed.
 
-## Launch verification — 2026-09-07 06:21 CST
+## Historical fixed-CTC launch — stopped on user request
+
+The run launched at 2026-09-07 06:21 CST was stopped around update 2881 before
+the first 5k checkpoint. No child checkpoint existed. Logs, events, Hydra config
+and `parent_migration.json` remain in the old `CTC003_Fixed` directories.
+Its launcher, four workers and TensorBoard service have all exited.
 
 Implementation commit: `0b5b585` (pushed to `origin/main`).
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Original D1 (6 MM + 12 audio blocks), Semantic-VAE, fixed CTC lambda 0.03.
+# Original D1 (6 MM + 12 audio blocks), Semantic-VAE, CTC warmup 10k -> 30k.
 # Start long runs with setsid and provide TensorBoard as described in AGENTS.md.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$script_dir"
@@ -43,7 +43,7 @@ while IFS=',' read -r gpu_index memory_free; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits)
 
-echo "Launching original D1 + Semantic-VAE: LR=5e-5, fixed CTC=0.03, activation checkpointing OFF" >&2
+echo "Launching original D1 + Semantic-VAE: LR=5e-5, CTC 0@10k -> 0.03@30k, activation checkpointing OFF" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     OMP_NUM_THREADS=1 \

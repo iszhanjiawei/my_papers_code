@@ -30,7 +30,7 @@ optim:
   bnb_optimizer: False
 
 model:
-  name: AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed
+  name: AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Warmup10k30k
   tokenizer: char
   tokenizer_path: null
   backbone: DiT_VT_MMDiT
@@ -66,6 +66,9 @@ model:
     hop_length: 400
 
   ctc_lambda: 0.03
+  # Child updates 1..10000: zero CTC; 10001..30000: linear ramp to 0.03.
+  ctc_warmup_start: 10000
+  ctc_warmup_end: 30000
 
 ema:
   beta: 0.999

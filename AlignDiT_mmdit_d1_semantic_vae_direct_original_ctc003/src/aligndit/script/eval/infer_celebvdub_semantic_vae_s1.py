@@ -1,4 +1,4 @@
-"""CelebV-Dub Setting 1 inference for Original D1 + Semantic-VAE, fixed CTC 0.03."""
+"""CelebV-Dub Setting 1 inference for Original D1 + Semantic-VAE, CTC warmup."""
 
 from __future__ import annotations
 
@@ -120,8 +120,12 @@ def build_model(config, checkpoint_path: Path, expected_step: int | None, device
         or arch.get("text_attention_mode", "audio_only") != "audio_only"
     ):
         raise RuntimeError("Expected D1: 6 MM / 6 text / 12 audio-only blocks with dual CTC at [5, 11]")
-    if float(config.model.ctc_lambda) != 0.03 or "ctc_warmup_start" in config.model or "ctc_warmup_end" in config.model:
-        raise RuntimeError("This isolated Original-D1 experiment requires fixed ctc_lambda=0.03 without CTC warmup")
+    if (
+        float(config.model.ctc_lambda) != 0.03
+        or config.model.get("ctc_warmup_start") != 10000
+        or config.model.get("ctc_warmup_end") != 30000
+    ):
+        raise RuntimeError("This isolated Original-D1 experiment requires target CTC=0.03 with 10k->30k warmup")
     if (
         representation.name != "semantic_vae_40hz"
         or int(arch.audio_video_ratio) != 1
