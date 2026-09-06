@@ -1,4 +1,4 @@
-"""Original D1 Semantic-VAE fixed-CTC checks, with optional real-data integration checks.
+"""Original D1 Semantic-VAE + speaker fixed-CTC checks, including optional real data.
 
 Run from this snapshot with PYTHONPATH=src. The default is a short CPU check;
 ``--device cuda`` exercises the same assertions on an available GPU.
@@ -13,6 +13,7 @@ import gc
 import math
 import random
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 import torch.nn.functional as F
@@ -38,6 +39,7 @@ def check_forward_backward(model: CFM_VT, device: torch.device, *, weight: float
     assert [type(block).__name__ for block in backbone.transformer_blocks] == ["MMDiTBlock_VT"] * 6 + ["DiTBlock"] * 12
     assert backbone.layer_indices_ctc == (5, 11)
     assert backbone.n_mm_layers == backbone.n_text_layers == 6
+    assert backbone.speaker_dim == 192 and backbone.speaker_condition_start_layer == 6
     assert all(block.pe_attn_head == 1 for block in backbone.transformer_blocks[:6])
     assert all(block.attn.processor.pe_attn_head == 1 for block in backbone.transformer_blocks[6:])
     assert all(isinstance(block.cross_attn, torch.nn.MultiheadAttention) for block in backbone.transformer_blocks[:6])
@@ -64,6 +66,7 @@ def check_forward_backward(model: CFM_VT, device: torch.device, *, weight: float
             text_lens=text_lengths,
             video=video,
             video_lens=lengths.clone(),
+            speaker_embedding=torch.randn(2, 192, device=device),
         )
     finally:
         for handle in handles:
@@ -128,6 +131,10 @@ def check_real_data(config, device: torch.device) -> None:
         "expected_normalization_sha256",
         "expected_vocab_sha256",
         "expected_record_count",
+        "speaker_embedding_cache_dir",
+        "speaker_embedding_dim",
+        "speaker_embedding_model_id",
+        "speaker_embedding_checkpoint_sha256",
     )
     dataset = SemanticVaeCelebVDubDataset(**{key: config.datasets[key] for key in dataset_keys})
     print(
@@ -183,6 +190,8 @@ def check_real_data(config, device: torch.device) -> None:
     state = model.state_dict()
     common = set(state) & set(source)
     assert len(common) == 303 and all(torch.equal(state[key], source[key]) for key in common)
+    assert report.target_key_count == 560 and len(report.new_target_keys) == 257
+    assert not torch.count_nonzero(model.transformer.speaker_proj.weight)
     print(
         f"S2c migration bit-exact: loaded={report.loaded_key_count}, "
         f"new={len(report.new_target_keys)}, target={report.target_key_count}",
@@ -195,7 +204,9 @@ def check_real_data(config, device: torch.device) -> None:
         set_seed(666)
         model.zero_grad(set_to_none=True)
         model.ctc_lambda = weight
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        # Exercise the speaker gradient on a kept-condition validation branch;
+        # do not change any configured training dropout probability.
+        with patch("aligndit.model.cfm_vt.random", return_value=0.99), torch.autocast("cuda", dtype=torch.bfloat16):
             loss, components, _, prediction = model(
                 batch["mel"].transpose(1, 2).to(device),
                 text=batch["text"],
@@ -203,6 +214,7 @@ def check_real_data(config, device: torch.device) -> None:
                 text_lens=batch["text_lengths"].to(device),
                 video=batch["video"].to(device),
                 video_lens=batch["video_lengths"].to(device),
+                speaker_embedding=batch["speaker_embedding"].to(device),
             )
         assert torch.isfinite(loss) and torch.isfinite(prediction).all()
         assert_close(
@@ -213,6 +225,9 @@ def check_real_data(config, device: torch.device) -> None:
         loss.backward()
         gradients = [parameter.grad for parameter in model.parameters() if parameter.grad is not None]
         assert gradients and all(torch.isfinite(gradient).all() for gradient in gradients)
+        speaker_gradient = model.transformer.speaker_proj.weight.grad
+        assert speaker_gradient is not None and torch.isfinite(speaker_gradient).all()
+        assert torch.count_nonzero(speaker_gradient), "speaker projection must receive a first-step warm-started gradient"
         for head in model.transformer.projectors_ctc:
             gradient = head.model[-1].weight.grad
             assert (gradient is not None and torch.count_nonzero(gradient) > 0) if weight else gradient is None
@@ -237,6 +252,7 @@ def check_real_data(config, device: torch.device) -> None:
             sway_sampling_coef=-1,
             seed=0,
             use_epss=True,
+            speaker_embedding=item["speaker_embedding"][None].to(device),
         )
     assert generated.shape == (1, 2 * frames, 64) and torch.isfinite(generated).all()
     assert torch.equal(generated[:, :frames], condition)
@@ -275,7 +291,7 @@ def main() -> None:
     assert legacy.ctc_sampling_ratios == (2, 1), "The inherited mel backbone default must remain unchanged"
     del legacy
     print(
-        f"Original D1 Semantic-VAE smoke passed on {device}: 6 MM + 12 audio, original Audio-to-Text CA, "
+        f"Original D1 Semantic-VAE + speaker smoke passed on {device}: 6 MM + 12 audio, original Audio-to-Text CA, "
         "first-head RoPE, 40-Hz shapes, both CTC gradients and fixed 0.03 weighted losses"
     )
     if args.real_data:

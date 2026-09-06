@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import json
+import math
 import os
 from pathlib import Path
 
@@ -36,6 +37,33 @@ class SemanticVaeDirectD1Trainer(Trainer_VT):
         self.expected_parent_contract_sha256 = expected_parent_contract_sha256
         self.expected_parent_update = expected_parent_update
         super().__init__(*args, **kwargs)
+
+    def _forward_diagnostics(self, loss, loss_components):
+        total = float(loss.detach())
+        if not math.isfinite(total) or any(not math.isfinite(float(v)) for v in loss_components.values()):
+            raise FloatingPointError(f"Non-finite training loss: total={total}, components={loss_components}")
+        model = self.accelerator.unwrap_model(self.model)
+        if model.ctc_lambda != 0.03:
+            raise RuntimeError("This D1 experiment requires fixed CTC lambda 0.03 from the first update")
+        weighted_ctc = float(loss_components.get("ctc_loss", 0.0)) * model.ctc_lambda
+        return {
+            "ctc_lambda": model.ctc_lambda,
+            "ctc_weighted_loss": weighted_ctc,
+            "ctc_fraction_of_total": weighted_ctc / total if total > 0 else 0.0,
+            "speaker_proj_weight_norm": model.transformer.speaker_proj.weight.detach().float().norm().item(),
+        }
+
+    def _clip_gradients(self):
+        if not self.accelerator.sync_gradients or self.max_grad_norm <= 0:
+            return None
+        projection = self.accelerator.unwrap_model(self.model).transformer.speaker_proj
+        if projection.weight.grad is None:
+            raise RuntimeError("Speaker projection has no gradient; check the dataset-to-CFM conditioning path")
+        self.speaker_grad_norm = projection.weight.grad.detach().float().norm().item()
+        norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+        if not torch.isfinite(norm) or not math.isfinite(self.speaker_grad_norm):
+            raise FloatingPointError(f"Non-finite gradients: global={norm}, speaker={self.speaker_grad_norm}")
+        return norm
 
     def load_pretrained(self, pretrained_path):
         """Load exactly the compatible S2c EMA tensors into online and EMA models."""

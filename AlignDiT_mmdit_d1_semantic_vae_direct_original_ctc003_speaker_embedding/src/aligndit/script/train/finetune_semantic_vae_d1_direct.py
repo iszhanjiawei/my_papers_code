@@ -1,8 +1,10 @@
-"""Fine-tune original D1 on Semantic-VAE latents with fixed CTC lambda 0.03."""
+"""Fine-tune isolated original D1 + CAM++ on Semantic-VAE with fixed CTC 0.03."""
 
+import json
 import math
 import os
 from importlib.resources import files
+from pathlib import Path
 
 import hydra
 from accelerate.utils import set_seed
@@ -11,6 +13,7 @@ from omegaconf import OmegaConf
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
+from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
 from aligndit.model.trainer_semantic_vae_direct import SemanticVaeDirectD1Trainer
 from f5_tts.model.utils import get_tokenizer
 
@@ -47,6 +50,10 @@ def validate_experiment_config(model_cfg) -> None:
         raise RuntimeError("Semantic-VAE D1 requires the fixed 64D/40Hz representation at 16 kHz")
     if float(model_cfg.optim.learning_rate) != 5e-5:
         raise RuntimeError("Semantic-VAE D1 preserves the global learning rate 5e-5")
+    if int(arch.get("speaker_dim", 0)) != 192 or int(arch.get("speaker_condition_start_layer", -1)) != 6:
+        raise RuntimeError("D1 speaker conditioning requires a 192D CAM++ vector in audio-only blocks 6..17")
+    if int(model_cfg.datasets.speaker_embedding_dim) != int(arch.speaker_dim):
+        raise RuntimeError("Speaker cache and model embedding dimensions must match")
     ctc_lambda = float(model_cfg.model.ctc_lambda)
     if not math.isfinite(ctc_lambda) or ctc_lambda != 0.03:
         raise RuntimeError("Semantic-VAE D1 requires the requested ctc_lambda=0.03")
@@ -88,6 +95,12 @@ def build_model(model_cfg, vocab_char_map: dict[str, int], vocab_size: int) -> C
 )
 def main(model_cfg):
     validate_experiment_config(model_cfg)
+    speaker_metadata = validate_speaker_cache_metadata(
+        model_cfg.datasets.speaker_embedding_cache_dir,
+        expected_dim=model_cfg.datasets.speaker_embedding_dim,
+        model_id=model_cfg.datasets.speaker_embedding_model_id,
+        checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
+    )
     experiment_seed = int(model_cfg.seed)
     set_seed(experiment_seed)
     vocab_char_map, vocab_size = get_tokenizer(model_cfg.datasets.vocab_path, "custom")
@@ -129,6 +142,28 @@ def main(model_cfg):
     set_seed(experiment_seed + trainer.accelerator.process_index)
     if trainer.is_main:
         print(f"Global experiment seed={experiment_seed}; training RNG uses seed + process_index on each rank")
+        contract = {
+            "schema_version": 1,
+            "experiment": exp_name,
+            "project_dir": str(Path.cwd().resolve()),
+            "config": OmegaConf.to_container(model_cfg, resolve=True),
+            "speaker_metadata": speaker_metadata,
+            "initialization": "S2c-70k audio EMA; fresh optimizer and update 0; zero speaker projection",
+            "speaker_conditioning": "L2-normalized CAM++ 192D -> zero Linear(192,768); time condition of blocks 6..17 only",
+            "speaker_dropout": "Shares audio-prompt CFG dropout; removed in the unconditional inference branch",
+            "ctc": "Fixed lambda 0.03 from update 1; no CTC warmup",
+            "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
+        }
+        contract_path = Path(model_cfg.ckpts.save_dir) / "speaker_training_contract.json"
+        contract_path.parent.mkdir(parents=True, exist_ok=True)
+        if contract_path.exists():
+            if json.loads(contract_path.read_text(encoding="utf-8")) != contract:
+                raise RuntimeError(f"Existing speaker run contract differs: {contract_path}")
+        else:
+            with contract_path.open("x", encoding="utf-8") as file:
+                json.dump(contract, file, ensure_ascii=False, indent=2, sort_keys=True)
+                file.write("\n")
+        print("Speaker conditioning: frozen CAM++ 192D; zero projection into audio-only blocks 6..17", flush=True)
 
     train_dataset = SemanticVaeCelebVDubDataset(
         manifest_path=model_cfg.datasets.manifest_path,
@@ -140,6 +175,10 @@ def main(model_cfg):
         expected_normalization_sha256=model_cfg.datasets.expected_normalization_sha256,
         expected_vocab_sha256=model_cfg.datasets.expected_vocab_sha256,
         expected_record_count=model_cfg.datasets.expected_record_count,
+        speaker_embedding_cache_dir=model_cfg.datasets.speaker_embedding_cache_dir,
+        speaker_embedding_dim=model_cfg.datasets.speaker_embedding_dim,
+        speaker_embedding_model_id=model_cfg.datasets.speaker_embedding_model_id,
+        speaker_embedding_checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
     )
     if trainer.is_main:
         print(

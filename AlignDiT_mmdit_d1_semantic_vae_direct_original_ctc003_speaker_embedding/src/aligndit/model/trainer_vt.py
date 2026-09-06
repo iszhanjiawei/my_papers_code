@@ -18,6 +18,14 @@ from f5_tts.model.utils import exists
 
 # trainer
 class Trainer_VT(Trainer):
+    def _forward_diagnostics(self, loss, loss_components):
+        return {}
+
+    def _clip_gradients(self):
+        if self.max_grad_norm > 0 and self.accelerator.sync_gradients:
+            return self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+        return None
+
     def load_pretrained(self, pretrained_path):
         self.accelerator.wait_for_everyone()
         checkpoint = torch.load(pretrained_path, weights_only=True, map_location="cpu")
@@ -206,6 +214,9 @@ class Trainer_VT(Trainer):
                     text_lengths = batch["text_lengths"]
                     video = batch["video"]
                     video_lengths = batch["video_lengths"]
+                    speaker_kwargs = {}
+                    if "speaker_embedding" in batch:
+                        speaker_kwargs["speaker_embedding"] = batch["speaker_embedding"]
 
                     loss, loss_components, cond, pred = self.model(
                         mel_spec,
@@ -215,11 +226,16 @@ class Trainer_VT(Trainer):
                         video=video,
                         video_lens=video_lengths,
                         noise_scheduler=self.noise_scheduler,
+                        **speaker_kwargs,
                     )
+                    diagnostics = self._forward_diagnostics(loss, loss_components)
                     self.accelerator.backward(loss)
 
-                    if self.max_grad_norm > 0 and self.accelerator.sync_gradients:
-                        self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                    grad_norm = self._clip_gradients()
+                    if grad_norm is not None:
+                        diagnostics["grad_norm"] = float(grad_norm)
+                    if hasattr(self, "speaker_grad_norm"):
+                        diagnostics["speaker_proj_grad_norm"] = self.speaker_grad_norm
 
                     self.optimizer.step()
                     self.scheduler.step()
@@ -242,6 +258,8 @@ class Trainer_VT(Trainer):
                         self.writer.add_scalar("loss", loss.item(), global_update)
                         self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_update)
                         for k, v in loss_components.items():
+                            self.writer.add_scalar(k, v, global_update)
+                        for k, v in diagnostics.items():
                             self.writer.add_scalar(k, v, global_update)
 
                 if global_update % self.last_per_updates == 0 and self.accelerator.sync_gradients:

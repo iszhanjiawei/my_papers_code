@@ -15,6 +15,10 @@ datasets:
   vocab_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub_char/vocab.txt
   expected_vocab_sha256: 225df7792c4ade59e3de39789b36fdf735e1b30ed96b4456d2d27df0d86a875d
   expected_record_count: 79613
+  speaker_embedding_cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/campplus_spk_emb_zh_en_16k
+  speaker_embedding_dim: 192
+  speaker_embedding_model_id: iic/speech_campplus_sv_zh_en_16k-common_advanced
+  speaker_embedding_checkpoint_sha256: 92f29b94e6948786a26778c9e302525d185bb08c8b9f5252ed98776902840199
   # 3600 / 40 Hz = 90 s per GPU, matching D1 mel's 9000 / 100 Hz.
   batch_size_per_gpu: 3600
   batch_size_type: frame
@@ -30,7 +34,7 @@ optim:
   bnb_optimizer: False
 
 model:
-  name: AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed
+  name: AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_Speaker
   tokenizer: char
   tokenizer_path: null
   backbone: DiT_VT_MMDiT
@@ -57,6 +61,9 @@ model:
     audio_video_ratio: 1
     video_dim: 1024
     video_rope_scaled: False
+    # CAM++ condition enters only the twelve native audio-only blocks (6..17).
+    speaker_dim: 192
+    speaker_condition_start_layer: 6
 
   audio_representation:
     name: semantic_vae_40hz

@@ -7,11 +7,11 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-run_name="AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_semantic_vae_40hz_CelebVDub_char"
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_40hz_CelebVDub_char"
+run_name="AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_Speaker_semantic_vae_40hz_CelebVDub_char"
+checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_D1_SemanticVAE_Original_CTC003_Fixed_Speaker_40hz_CelebVDub_char"
 tb_logdir="$project_root/runs/$run_name"
-tb_port="${TB_PORT:-6006}"
-ddp_port="${MAIN_PROCESS_PORT:-29593}"
+tb_port="${TB_PORT:-6007}"
+ddp_port="${MAIN_PROCESS_PORT:-29594}"
 if [[ -d "$checkpoint_dir" && "${RESUME:-0}" != 1 ]]; then
     echo "Existing run directory: $checkpoint_dir. Set RESUME=1 only to intentionally resume this exact run." >&2
     exit 1

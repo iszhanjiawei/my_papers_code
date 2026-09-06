@@ -12,6 +12,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+from aligndit.model.speaker_embedding import (
+    DEFAULT_SPEAKER_EMBEDDING_DIM,
+    validate_speaker_cache_metadata,
+    validate_speaker_embedding_array,
+)
+
 
 SEMANTIC_VAE_LATENT_DIM = 64
 CELEBVDUB_VIDEO_DIM = 1024
@@ -109,6 +115,10 @@ class SemanticVaeCelebVDubDataset(Dataset):
         expected_normalization_sha256: str,
         expected_vocab_sha256: str,
         expected_record_count: int = CELEBVDUB_TRAIN_COUNT,
+        speaker_embedding_cache_dir: str | Path | None = None,
+        speaker_embedding_dim: int = DEFAULT_SPEAKER_EMBEDDING_DIM,
+        speaker_embedding_model_id: str | None = None,
+        speaker_embedding_checkpoint_sha256: str | None = None,
     ):
         self.manifest_path = _regular_file(manifest_path, label="CelebV-Dub train manifest")
         if self.manifest_path.name != "train.jsonl":
@@ -260,6 +270,95 @@ class SemanticVaeCelebVDubDataset(Dataset):
         self.records = records
         self.ctc_feasible_count = feasible_count
         self.ctc_infeasible_count = infeasible_count
+        self.speaker_embedding_cache_dir: Path | None = None
+        self.speaker_embedding_dim = speaker_embedding_dim
+        self.speaker_embedding_contract: dict | None = None
+        if speaker_embedding_cache_dir is not None:
+            if speaker_embedding_dim != DEFAULT_SPEAKER_EMBEDDING_DIM:
+                raise ValueError("The frozen CAM++ cache must contain 192-D speaker embeddings")
+            if not speaker_embedding_model_id or not speaker_embedding_checkpoint_sha256:
+                raise ValueError("Speaker caching requires an expected model ID and checkpoint SHA256")
+            speaker_root = Path(speaker_embedding_cache_dir).expanduser().absolute()
+            if speaker_root.is_symlink() or not speaker_root.is_dir():
+                raise FileNotFoundError(f"Speaker cache root must be a regular directory: {speaker_root}")
+            self.speaker_embedding_cache_dir = speaker_root.resolve(strict=True)
+            metadata_path = _regular_file(speaker_root / "metadata.json", label="CAM++ cache metadata")
+            coverage_path = _regular_file(speaker_root / "coverage_report.json", label="CAM++ cache coverage")
+            metadata = validate_speaker_cache_metadata(
+                speaker_root,
+                expected_dim=speaker_embedding_dim,
+                model_id=speaker_embedding_model_id,
+                checkpoint_sha256=speaker_embedding_checkpoint_sha256,
+            )
+            coverage = _read_json(coverage_path, label="CAM++ cache coverage")
+            if (
+                metadata.get("expected_count") != CELEBVDUB_INVENTORY_COUNT
+                or coverage.get("split_counts") != {
+                    "train": expected_record_count,
+                    "test": CELEBVDUB_INVENTORY_COUNT - expected_record_count,
+                }
+            ):
+                raise RuntimeError("CAM++ cache coverage must include the complete CelebV-Dub train/test inventory")
+            self.speaker_embedding_contract = {
+                "cache_dir": str(self.speaker_embedding_cache_dir),
+                "metadata_sha256": sha256_file(metadata_path),
+                "coverage_report_sha256": sha256_file(coverage_path),
+                "model_id": speaker_embedding_model_id,
+                "checkpoint_sha256": speaker_embedding_checkpoint_sha256,
+                "dimension": speaker_embedding_dim,
+                "source_audio": metadata["source_audio"],
+                "train_count": expected_record_count,
+            }
+
+    def _load_speaker_embedding_array(self, record: dict) -> np.ndarray:
+        if self.speaker_embedding_cache_dir is None:
+            raise RuntimeError("Speaker embedding cache is not configured")
+        audio_relative_path = record.get("audio_relative_path")
+        if not isinstance(audio_relative_path, str):
+            raise TypeError(f"Missing speaker source audio path for {record['utterance_key']}")
+        audio_relative = Path(audio_relative_path)
+        if audio_relative.suffix.lower() != ".wav" or audio_relative.parts[0] != "train":
+            raise ValueError(f"Invalid speaker source audio path: {audio_relative_path!r}")
+        # Mirror the donor cache's audio/<split>/...wav -> <split>/...npy
+        # mapping without opening the original waveform or instantiating CAM++.
+        cache_path = _safe_join(
+            self.speaker_embedding_cache_dir,
+            str(audio_relative.with_suffix(".npy")),
+            label="CAM++ speaker embedding",
+        )
+        if not cache_path.is_file():
+            raise FileNotFoundError(f"Missing speaker embedding for {record['utterance_key']}: {cache_path}")
+        embedding = np.load(cache_path, allow_pickle=False)
+        validate_speaker_embedding_array(embedding, expected_dim=self.speaker_embedding_dim, source=cache_path)
+        return embedding
+
+    def audit_speaker_embedding_cache(self) -> dict:
+        """Read every training vector once before launch, outside DDP workers.
+
+        Construction checks the small completion metadata only. Per-sample
+        loading still validates shape, FP32, finiteness and unit norm so cache
+        corruption cannot silently enter training after this explicit audit.
+        """
+        if self.speaker_embedding_cache_dir is None:
+            raise RuntimeError("Speaker embedding cache is not configured")
+        min_norm, max_norm = float("inf"), 0.0
+        seen_paths: set[str] = set()
+        for record in self.records:
+            embedding = self._load_speaker_embedding_array(record)
+            audio_path = record["audio_relative_path"]
+            if audio_path in seen_paths:
+                raise ValueError(f"Duplicate speaker source audio path in train manifest: {audio_path}")
+            seen_paths.add(audio_path)
+            norm = float(np.linalg.norm(embedding))
+            min_norm, max_norm = min(min_norm, norm), max(max_norm, norm)
+        return {
+            "complete": True,
+            "train_count": len(seen_paths),
+            "dimension": self.speaker_embedding_dim,
+            "min_l2_norm": min_norm,
+            "max_l2_norm": max_norm,
+            "contract": self.speaker_embedding_contract,
+        }
 
     def __len__(self) -> int:
         return len(self.records)
@@ -289,7 +388,7 @@ class SemanticVaeCelebVDubDataset(Dataset):
         normalized_latent = (latent - self.latent_mean) / self.latent_std
         if not np.isfinite(normalized_latent).all():
             raise FloatingPointError(f"Non-finite normalized latent for {record['utterance_key']}")
-        return {
+        result = {
             "ctc_feasible": bool(record["ctc_feasible_40hz"]),
             "ctc_target_length": int(record["ctc_target_length"]),
             "mel_spec": torch.from_numpy(normalized_latent).transpose(0, 1),
@@ -297,6 +396,9 @@ class SemanticVaeCelebVDubDataset(Dataset):
             "utterance_key": record["utterance_key"],
             "video": torch.from_numpy(video.copy()),
         }
+        if self.speaker_embedding_cache_dir is not None:
+            result["speaker_embedding"] = torch.from_numpy(self._load_speaker_embedding_array(record))
+        return result
 
     @staticmethod
     def collate_fn(batch: list[dict]) -> dict:
@@ -309,7 +411,7 @@ class SemanticVaeCelebVDubDataset(Dataset):
         max_length = int(lengths.max())
         latent = torch.stack([F.pad(item["mel_spec"], (0, max_length - item["mel_spec"].shape[1])) for item in batch])
         video = torch.stack([F.pad(item["video"], (0, 0, 0, max_length - item["video"].shape[0])) for item in batch])
-        return {
+        result = {
             "ctc_feasible": torch.tensor([item["ctc_feasible"] for item in batch], dtype=torch.bool),
             "mel": latent,
             "mel_lengths": lengths,
@@ -319,3 +421,9 @@ class SemanticVaeCelebVDubDataset(Dataset):
             "video": video,
             "video_lengths": video_lengths,
         }
+        has_speaker_embedding = ["speaker_embedding" in item for item in batch]
+        if any(has_speaker_embedding):
+            if not all(has_speaker_embedding):
+                raise RuntimeError("speaker_embedding must be present for every sample in a batch")
+            result["speaker_embedding"] = torch.stack([item["speaker_embedding"] for item in batch])
+        return result
