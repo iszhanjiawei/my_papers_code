@@ -78,6 +78,18 @@ class MelSpec_tacotron(nn.Module):
         return mel
 
 
+class PrecomputedAudioRepresentation(nn.Identity):
+    """No-op frontend for already extracted fixed-rate audio representations."""
+
+    def __init__(self, n_channels: int, target_sample_rate: int, hop_length: int):
+        if n_channels <= 0 or target_sample_rate <= 0 or hop_length <= 0:
+            raise ValueError("Precomputed audio representation dimensions and rates must be positive")
+        super().__init__()
+        self.n_mel_channels = n_channels
+        self.target_sample_rate = target_sample_rate
+        self.hop_length = hop_length
+
+
 class DownsampleLayer(nn.Module):
     def __init__(
         self,

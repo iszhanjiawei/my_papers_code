@@ -40,6 +40,8 @@ def get_args():
     parser.add_argument("--asr_ckpt", type=str, default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/alignDiT_pretrain_models/large-v3.pt")
     parser.add_argument("--emo_ckpt", type=str, default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/projects/data/emotion2vec_plus_large")
     parser.add_argument("--gt_av_feat", type=str, default="data/CelebVDub/avhubert_feat")
+    parser.add_argument("--test-list", type=str, default=None, help="Override the CelebV-Dub Setting 1 list")
+    parser.add_argument("--celebvdub-root", type=str, default=None, help="Override the CelebV-Dub dataset root")
     parser.add_argument("--eval_ground_truth", action="store_true", help="Evaluate GT audio (sanity check)")
     return parser.parse_args()
 
@@ -50,8 +52,8 @@ def main():
     lang = args.lang
     gen_wav_dir = args.gen_wav_dir
 
-    metalst = rel_path + "/data/celebvdub_test_s1.lst"
-    celebvdub_path = rel_path + "/data/CelebVDub"
+    metalst = args.test_list or rel_path + "/data/celebvdub_test_s1.lst"
+    celebvdub_path = args.celebvdub_root or rel_path + "/data/CelebVDub"
 
     gpus = list(range(args.gpu_nums))
     test_set = get_celebvdub_test(metalst, gen_wav_dir, gpus, celebvdub_path, eval_ground_truth=args.eval_ground_truth)
