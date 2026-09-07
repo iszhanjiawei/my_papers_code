@@ -11,6 +11,7 @@ from importlib.resources import files
 import torch
 import torchaudio
 from accelerate import Accelerator
+from hydra import compose, initialize_config_dir
 from hydra.utils import get_class
 from omegaconf import OmegaConf
 from tqdm import tqdm
@@ -71,7 +72,8 @@ def main():
     use_truth_duration = True
     no_ref_audio = False
 
-    model_cfg = OmegaConf.load(str(files("aligndit").joinpath(f"config/{exp_name}.yaml")))
+    with initialize_config_dir(config_dir=os.path.abspath(str(files("aligndit").joinpath("config"))), version_base="1.3"):
+        model_cfg = compose(config_name=exp_name)
     model_cls = get_class(f"aligndit.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
 
@@ -162,6 +164,12 @@ def main():
 
     dtype = torch.float32
     model = load_checkpoint(model, ckpt_path, device, dtype=dtype, use_ema=use_ema)
+
+    if getattr(model.transformer, "tpca_enabled", False):
+        loaded_step = int(model.transformer.tpca_step.item())
+        print(f"TPCA EMA checkpoint={ckpt_path}, tpca_step={loaded_step}, requested={ckpt_step}")
+        if loaded_step != ckpt_step:
+            raise ValueError("TPCA checkpoint step does not match requested evaluation step")
 
     prompts_all = get_inference_prompt_vt(
         metainfo,

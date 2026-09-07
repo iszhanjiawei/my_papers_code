@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 
 sys.path.append(os.getcwd())
@@ -58,6 +59,17 @@ def main():
 
     result_path = f"{gen_wav_dir}/_{eval_task}_results.jsonl"
 
+    ordered_items = [item for _, subset in test_set for item in subset]
+
+    def attach_ids(rows):
+        if len(rows) != len(ordered_items):
+            raise ValueError("Metric coverage differs from input list")
+        for row, item in zip(rows, ordered_items):
+            wav = Path(item[0])
+            if row["wav"] != wav.stem:
+                raise ValueError("Metric order differs from input list")
+            row["utterance_id"] = "/".join(wav.with_suffix("").parts[-3:])
+
     full_results = []
     metrics = []
 
@@ -71,6 +83,7 @@ def main():
         refs = [r["truth"] for r in full_results]
         hypos = [r["hypo"] for r in full_results]
         metric = compute_measures(refs, hypos)["wer"]
+        attach_ids(full_results)
         with open(result_path, "w") as f:
             for line in full_results:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
@@ -87,6 +100,7 @@ def main():
             for r in results:
                 full_results.extend(r)
 
+        attach_ids(full_results)
         with open(result_path, "w") as f:
             for line in full_results:
                 metrics.append(line["sim"])
@@ -101,6 +115,7 @@ def main():
             for r in results:
                 full_results.extend(r)
 
+        attach_ids(full_results)
         with open(result_path, "w") as f:
             for line in full_results:
                 metrics.append(line["emosim"])
@@ -116,6 +131,7 @@ def main():
             for r in results:
                 full_results.extend(r)
 
+        attach_ids(full_results)
         with open(result_path, "w") as f:
             for line in full_results:
                 metrics.append(line["avsync"])
