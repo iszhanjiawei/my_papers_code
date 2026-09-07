@@ -72,10 +72,10 @@ feature_count="$({ find "$result_root/avhubert_feat/test" -type f -name '*.npy' 
 if [ "$feature_count" -ne 213 ]; then
     echo "Extracting generated audio-video AV-HuBERT features"
     CUDA_VISIBLE_DEVICES="${gpu_list%%,*}" \
-    PYTHONPATH="$experiment_root/src:${ROOT_PREFIX}/zjw524/projects/data/av_hubert/fairseq" \
+    PYTHONPATH="$experiment_root/src:${ROOT_PREFIX}/zjw524/projects/data/av_hubert/fairseq/fairseq" \
     "$python_bin" -u src/aligndit/script/misc/extract_avhubert.py \
         --nshard 1 --rank 0 \
-        --v-input-dir data/CelebVDub/video_mouth/test \
+        --v-input-dir data/CelebVDub/video_mouth/test/test \
         --a-input-dir "$test_wavs" \
         --output-dir "$result_root/avhubert_feat/test" \
         --ckpt-path "$avhubert_checkpoint" --user_dir "$avhubert_user_dir"
