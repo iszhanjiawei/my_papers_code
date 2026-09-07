@@ -102,3 +102,25 @@ TensorBoard run：
 CUDA_VISIBLE_DEVICES=0 /zjw524/ENTER/envs/aligndit/bin/python -u src/aligndit/script/misc/smoke_test_semantic_vae_c2_speaker_tpca_real_parent.py
 CUDA_VISIBLE_DEVICES=0,1,2,3 /zjw524/ENTER/envs/aligndit/bin/python -u -m torch.distributed.run --standalone --nproc_per_node=4 tests/smoke_c2_tpca_ddp.py
 ```
+
+## 本次训练启动记录
+
+- 启动时间：2026-09-08 01:37:24（Asia/Shanghai）。运行源码提交 `bcf1cb3d9c947a6839738a4daef7b84239da4fa1`。
+- 运行名称：`AlignDiT_MMDiT_C2_SemanticVAE_Direct_Speaker_TPCA_CTC003_Warmup10k30k_semantic_vae_40hz_CelebVDub_char`。
+- launcher PID/SID：`295862`；四个训练 worker PID：`295959,295960,295961,295962`。
+  均无控制终端，worker cwd 指向本独立副本，实际运行 GPU 0..3。
+- 日志：`logs/train_speaker_tpca_20260908_013724.log`；本轮 stop update=200000。
+- 实际 parent_migration.json 确认 source=313、target=713、loaded=303、parent EMA update=70000；
+  `speaker_tpca_training_contract.json` 确认新的 project/config/checkpoint 目录及 TPCA 开关。
+- 启动检查至 update 19：20 个 TensorBoard scalar tags 均为有限值；最大总损失 2.22159；
+  speaker projection 的范数由零增加，梯度非零；完整条件分支视觉 CTC 有效。
+  音频 CTC 与 TPCA path 系数当前均为零，符合各自预热日程。
+- 实际四卡早期显存约 14–15 GiB。此时仅确认训练正常推进，尚不能判断收敛或最终指标。
+- TensorBoard PID/SID `295878`，端口 `6008`，logdir 即上文精确 run 路径。
+  只有一个 rank-0 event 文件，持续写入；主页和 Scalars HTTP API 返回 200。
+  服务器本机地址 `http://127.0.0.1:6008/`。客户端实际转发 URL 未暴露给当前工具，
+  已请求用户提供用于核验；不将本机地址或猜测 URL 称为外部可访问的转发链接。
+  用户可在 Devin 底部“端口”页签找到 6008，点击“转发地址”列中的实际链接。
+- 验证证据：`logs/validation_cpu_tpca.log`、`logs/validation_ddp_tpca.log`、
+  `logs/validation_real_parent_tpca.json`、`logs/tpca_speaker_cache_audit.log`、
+  `logs/tensorboard_startup_audit.json`。运行产物均不提交 Git。
