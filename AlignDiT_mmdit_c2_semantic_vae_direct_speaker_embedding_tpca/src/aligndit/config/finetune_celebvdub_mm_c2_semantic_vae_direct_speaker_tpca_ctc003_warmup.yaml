@@ -1,0 +1,23 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+model:
+  name: AlignDiT_MMDiT_C2_SemanticVAE_Direct_Speaker_TPCA_CTC003_Warmup10k30k
+  arch:
+    tpca_enabled: true
+    tpca_layers: [9, 10, 11]
+    tpca_local_heads: 4
+    tpca_visual_hidden_dim: 256
+    # C2 already aligns video to the 40 Hz latent grid: 2 subframes -> 80 Hz logits.
+    tpca_ctc_upsample_factor: 2
+    tpca_bias_strength: 1.0
+    tpca_prior_smoothing: 0.1
+    tpca_warmup_steps: 2000
+    tpca_ramp_steps: 8000
+    tpca_query_chunk_size: 128
+  tpca_visual_ctc_lambda: 0.03
+  tpca_path_lambda: 0.01
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_C2_SemanticVAE_Direct_Speaker_TPCA_CTC003_Warmup10k30k_40hz_CelebVDub_char
