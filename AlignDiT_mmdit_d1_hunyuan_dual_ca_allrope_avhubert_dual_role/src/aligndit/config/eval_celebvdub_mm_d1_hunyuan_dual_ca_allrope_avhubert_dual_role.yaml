@@ -1,0 +1,44 @@
+# Standalone inference config. infer.py loads YAML directly rather than composing
+# Hydra defaults, so keep the complete architecture here.
+datasets:
+  name: CelebVDub
+  data_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data
+
+model:
+  name: AlignDiT_MMDiT_D1_HunyuanDualCA_AllRoPE_AVHuBERTDualRole_L6_W01_finetune
+  tokenizer: char
+  tokenizer_path: null
+  backbone: DiT_VT_MMDiT
+  arch:
+    dim: 768
+    depth: 18
+    heads: 12
+    ff_mult: 2
+    text_dim: 512
+    text_mask_padding: false
+    qk_norm: rms_norm
+    conv_layers: 4
+    pe_attn_head: null
+    attn_mask_enabled: true
+    checkpoint_activations: false
+    use_conformer: true
+    layer_indices_ctc: [5, 11]
+    n_mm_layers: 6
+    n_text_layers: 6
+    prompt_isolated_ca: false
+    audio_video_ratio: 4
+    video_dim: 1024
+    video_rope_scaled: true
+    text_attention_mode: hunyuan_dual
+    # The projection parameters are part of the trained EMA checkpoint, although
+    # the training-only representation loss and AV-HuBERT teacher are not run.
+    avhubert_rep_layer: 5
+    avhubert_rep_dim: 1024
+  mel_spec:
+    target_sample_rate: 16000
+    n_mel_channels: 80
+    hop_length: 160
+    win_length: 640
+    n_fft: 640
+    mel_spec_type: hifigan_16k
+
