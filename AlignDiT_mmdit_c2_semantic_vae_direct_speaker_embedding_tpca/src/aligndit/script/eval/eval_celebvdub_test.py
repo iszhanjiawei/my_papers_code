@@ -10,6 +10,7 @@ sys.path.append(os.getcwd())
 
 import multiprocessing as mp
 from importlib.resources import files
+from pathlib import Path
 
 import numpy as np
 from jiwer import compute_measures
@@ -71,6 +72,16 @@ def main():
 
     gpus = list(range(args.gpu_nums))
     test_set = get_celebvdub_test(metalst, gen_wav_dir, gpus, celebvdub_path, eval_ground_truth=args.eval_ground_truth)
+    ordered_items = [item for _, subset in test_set for item in subset]
+
+    def attach_utterance_ids(rows):
+        if len(rows) != len(ordered_items):
+            raise RuntimeError(f"Metric coverage mismatch: {len(rows)} != {len(ordered_items)}")
+        for row, (generated_wav, _, _) in zip(rows, ordered_items):
+            wav = Path(generated_wav)
+            if row.get("wav") != wav.stem:
+                raise RuntimeError(f"Metric order mismatch: {row.get('wav')!r} != {wav.stem!r}")
+            row["utterance_id"] = "/".join(wav.with_suffix("").parts[-3:])
 
     result_path = f"{gen_wav_dir}/_{eval_task}_results.jsonl"
 
@@ -87,6 +98,7 @@ def main():
         refs = [r["truth"] for r in full_results]
         hypos = [r["hypo"] for r in full_results]
         metric = compute_measures(refs, hypos)["wer"]
+        attach_utterance_ids(full_results)
         with open(result_path, "w") as f:
             f.writelines(json.dumps(line, ensure_ascii=False) + "\n" for line in full_results)
             metric = round(metric, 5)
@@ -101,6 +113,7 @@ def main():
             for r in results:
                 full_results.extend(r)
 
+        attach_utterance_ids(full_results)
         with open(result_path, "w") as f:
             for line in full_results:
                 metrics.append(line["sim"])
@@ -115,6 +128,7 @@ def main():
             for r in results:
                 full_results.extend(r)
 
+        attach_utterance_ids(full_results)
         with open(result_path, "w") as f:
             for line in full_results:
                 metrics.append(line["emosim"])
@@ -129,6 +143,7 @@ def main():
             for r in results:
                 full_results.extend(r)
 
+        attach_utterance_ids(full_results)
         with open(result_path, "w") as f:
             for line in full_results:
                 metrics.append(line["emoembed"])
@@ -144,6 +159,7 @@ def main():
             for r in results:
                 full_results.extend(r)
 
+        attach_utterance_ids(full_results)
         with open(result_path, "w") as f:
             for line in full_results:
                 metrics.append(line["avsync"])
