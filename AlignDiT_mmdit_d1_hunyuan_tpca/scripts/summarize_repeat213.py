@@ -1,5 +1,6 @@
 """Validate complete model results and compare fixed reference-defined subgroups."""
 import argparse
+import csv
 import json
 from pathlib import Path
 import numpy as np
@@ -27,6 +28,7 @@ def main():
     confirmed={k for k,v in gt_runs.items() if v['exact_run_preserved']}
     dataset_rows=read_rows(root/'samples.jsonl')
     ordinary={r['utterance_id'] for r in dataset_rows if max(d['count'] for d in r['adjacent_runs'])<=5}
+    per_clip={r['utterance_id']:{'utterance_id':r['utterance_id'],'target_text':r['text'],'gt_asr':gt_transcripts[r['utterance_id']]['raw_hypo'],'gt_wer':gt_transcripts[r['utterance_id']]['wer'],'gt_audio':str(root/'CelebVDub/audio'/(r['utterance_id']+'.wav'))} for r in dataset_rows}
     result={'dataset':json.loads((root/'dataset_summary.json').read_text()),'gt_wer':gt_summary,
             'gt_repetition':json.loads((gt_root/'_repeat_summary.json').read_text()),'models':{}}
     for spec in a.specs:
@@ -34,7 +36,20 @@ def main():
         details={stage:validate(out,stage,root/'clips.lst','train',root/'CelebVDub/avhubert_feat') for stage in ['wav','features','sim','wer','emosim','avsync']}
         wer_rows=read_rows(out/'_wer_results.jsonl')
         assert all(r['truth']==gt_transcripts[r['utterance_id']]['truth'] for r in wer_rows)
-        model_runs=index_runs(read_rows(out/'_repeat_details.jsonl'))
+        model_repeat_rows=read_rows(out/'_repeat_details.jsonl')
+        model_runs=index_runs(model_repeat_rows)
+        for metric in ['sim','wer','emosim','avsync']:
+            for r in read_rows(out/f'_{metric}_results.jsonl'):
+                item=per_clip[r['utterance_id']]
+                item[f'{spec}_{metric}']=r[metric]
+                if metric=='wer':
+                    item[f'{spec}_asr']=r['raw_hypo']
+                    item[f'{spec}_audio']=str(out/(r['utterance_id']+'.wav'))
+        for r in model_repeat_rows:
+            item=per_clip[r['utterance_id']]
+            item[f'{spec}_exact_runs']=sum(d['exact_run_preserved'] for d in r['runs'])
+            item[f'{spec}_runs']=len(r['runs'])
+            item[f'{spec}_deleted_repeat_tokens']=sum(d['deletions'] for d in r['runs'])
         assert set(model_runs)==set(gt_runs)
         matched=[model_runs[k] for k in confirmed]
         denom=sum(d['count'] for d in matched)
@@ -55,6 +70,10 @@ def main():
         result['models'][spec]=details
     name='comparison_summary.json' if len(a.specs)==3 else 'partial_comparison_summary.json'
     (root/name).write_text(json.dumps(result,indent=2,ensure_ascii=False)+'\n')
+    csv_name='per_sample_comparison.csv' if len(a.specs)==3 else 'partial_per_sample_comparison.csv'
+    with (root/csv_name).open('w',encoding='utf-8-sig',newline='') as f:
+        writer=csv.DictWriter(f,fieldnames=list(next(iter(per_clip.values()))))
+        writer.writeheader();writer.writerows(per_clip.values())
     for spec,d in result['models'].items():
         print(spec,{k:round(d[k]['value'],5) for k in ('wer','sim','emosim','avsync')},d['gt_asr_exact_run_subset'])
 
