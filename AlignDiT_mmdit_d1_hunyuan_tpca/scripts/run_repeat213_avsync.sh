@@ -55,4 +55,6 @@ for spec in ${EVAL_SPECS:-d1_tpca_150000 d1_tpca_200000 c2_svae_speaker_200000};
     "$PY" scripts/score_repeat213.py "$out/_wer_results.jsonl"
     echo "ALL_METRICS_COMPLETE $spec $(date -Is)"
 done
-"$PY" scripts/score_repeat213.py "$BENCH/results/ground_truth/_wer_results.jsonl"
+if [[ -f "$BENCH/results/ground_truth/_wer_results.jsonl" ]]; then
+    "$PY" scripts/score_repeat213.py "$BENCH/results/ground_truth/_wer_results.jsonl"
+fi
