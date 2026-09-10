@@ -53,6 +53,10 @@ def main():
     parser.add_argument("--ckpt-path", default=None, type=str, help="Override checkpoint path")
     parser.add_argument("--vocoder-path", default=None, type=str, help="Override vocoder path")
 
+    parser.add_argument("--test-list", default=None)
+    parser.add_argument("--dataset-root", default=None)
+    parser.add_argument("--split", choices=["test", "train"], default="test")
+    parser.add_argument("--output-dir", default=None)
     args = parser.parse_args()
 
     seed = args.seed
@@ -98,7 +102,9 @@ def main():
     elif testset == "celebvdub_test_s1":
         metalst = rel_path + "/data/celebvdub_test_s1.lst"
         celebvdub_path = rel_path + "/data/CelebVDub"
-        metainfo = get_celebvdub_test_metainfo_s1(metalst, celebvdub_path)
+        metalst = args.test_list or metalst
+        celebvdub_path = args.dataset_root or celebvdub_path
+        metainfo = get_celebvdub_test_metainfo_s1(metalst, celebvdub_path, split=args.split)
     else:
         raise ValueError(f"testset {testset} not supported.")
 
@@ -121,6 +127,8 @@ def main():
         f"{'_gt-dur' if use_truth_duration else ''}"
         f"{'_no-ref-audio' if no_ref_audio else ''}"
     )
+
+    output_dir = args.output_dir or output_dir
 
     # -------------------------------------------------#
 

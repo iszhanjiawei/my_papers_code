@@ -7,13 +7,13 @@ import soundfile as sf
 from jiwer import compute_measures
 
 
-def validate(root, stage):
-    expected = {'test/' + s.strip() for s in Path('data/celebvdub_test_s1.lst').read_text().splitlines() if s.strip()}
+def validate(root, stage, list_path=Path("data/celebvdub_test_s1.lst"), split="test", gt_feature_root=Path("data/CelebVDub/avhubert_feat")):
+    expected = {split + "/" + s.strip() for s in list_path.read_text().splitlines() if s.strip()}
     assert len(expected) == 213
     if stage in ('wav', 'features'):
         folder = root if stage == 'wav' else root / 'avhubert_feat'
         suffix = '.wav' if stage == 'wav' else '.npy'
-        paths = list((folder / 'test').rglob('*' + suffix))
+        paths = list((folder / split).rglob('*' + suffix))
         actual = {str(p.relative_to(folder).with_suffix('')) for p in paths}
         assert actual == expected, (stage, len(actual), sorted(expected-actual), sorted(actual-expected))
         for p in paths:
@@ -22,7 +22,7 @@ def validate(root, stage):
                 assert sr == 16000 and a.ndim == 1 and len(a) > 0, p
             else:
                 a = np.load(p)
-                gt = np.load(Path('data/CelebVDub/avhubert_feat') / p.relative_to(folder))
+                gt = np.load(gt_feature_root / p.relative_to(folder))
                 assert a.shape == gt.shape, (p, a.shape, gt.shape)
             assert a.size and np.isfinite(a).all(), p
         return {'stage': stage, 'count': len(paths)}
@@ -49,7 +49,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('root', type=Path)
     parser.add_argument('stage', choices=['wav','features','sim','wer','emosim','avsync','all'])
+    parser.add_argument("--test-list", type=Path, default=Path("data/celebvdub_test_s1.lst"))
+    parser.add_argument("--split", choices=["test", "train"], default="test")
+    parser.add_argument("--gt-feature-root", type=Path, default=Path("data/CelebVDub/avhubert_feat"))
     args = parser.parse_args()
     stages = ['wav','features','sim','wer','emosim','avsync'] if args.stage == 'all' else [args.stage]
     for stage in stages:
-        print(json.dumps(validate(args.root, stage), ensure_ascii=False))
+        print(json.dumps(validate(args.root, stage, args.test_list, args.split, args.gt_feature_root), ensure_ascii=False))

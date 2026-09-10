@@ -42,6 +42,9 @@ def get_args():
     parser.add_argument("--emo_ckpt", type=str, default=os.environ.get("ROOT_PREFIX", "") + "/zjw524/projects/data/emotion2vec_plus_large")
     parser.add_argument("--gt_av_feat", type=str, default="data/CelebVDub/avhubert_feat")
     parser.add_argument("--eval_ground_truth", action="store_true", help="Evaluate GT audio (sanity check)")
+    parser.add_argument("--test-list", default=None)
+    parser.add_argument("--dataset-root", default=None)
+    parser.add_argument("--split", choices=["test", "train"], default="test")
     return parser.parse_args()
 
 
@@ -54,8 +57,10 @@ def main():
     metalst = rel_path + "/data/celebvdub_test_s1.lst"
     celebvdub_path = rel_path + "/data/CelebVDub"
 
+    metalst = args.test_list or metalst
+    celebvdub_path = args.dataset_root or celebvdub_path
     gpus = list(range(args.gpu_nums))
-    test_set = get_celebvdub_test(metalst, gen_wav_dir, gpus, celebvdub_path, eval_ground_truth=args.eval_ground_truth)
+    test_set = get_celebvdub_test(metalst, gen_wav_dir, gpus, celebvdub_path, eval_ground_truth=args.eval_ground_truth, split=args.split)
 
     result_path = f"{gen_wav_dir}/_{eval_task}_results.jsonl"
 

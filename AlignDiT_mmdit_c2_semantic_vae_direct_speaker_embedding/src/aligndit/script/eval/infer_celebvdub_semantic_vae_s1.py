@@ -65,17 +65,18 @@ def atomic_save_waveform(path: Path, waveform: torch.Tensor) -> None:
             temporary.unlink()
 
 
-def load_test_records(cache_root: Path, test_list: Path) -> list[dict[str, Any]]:
-    manifest = cache_root / "manifests/test.jsonl"
+def load_test_records(cache_root: Path, test_list: Path, manifest: Path | None = None, split: str = "test") -> list[dict[str, Any]]:
+    manifest = manifest or cache_root / "manifests/test.jsonl"
+    prefix = f"celebvdub/{split}/"
     rows = read_jsonl(manifest)
     if len(rows) != EXPECTED_TEST_COUNT:
         raise RuntimeError(f"Expected {EXPECTED_TEST_COUNT} test records, found {len(rows)}")
     by_clip = {}
     for row in rows:
         key = row.get("utterance_key")
-        if not isinstance(key, str) or not key.startswith("celebvdub/test/"):
+        if not isinstance(key, str) or not key.startswith(prefix):
             raise RuntimeError(f"Invalid test utterance key: {key!r}")
-        clip = key.removeprefix("celebvdub/test/")
+        clip = key.removeprefix(prefix)
         if clip in by_clip:
             raise RuntimeError(f"Duplicate test clip: {clip}")
         by_clip[clip] = row
@@ -254,7 +255,7 @@ def load_setting1_speaker_embeddings(
             audio_relative_path != expected_relative
             or audio_relative_path.is_absolute()
             or ".." in audio_relative_path.parts
-            or audio_relative_path.parts[0] != "test"
+            or audio_relative_path.parts[0] != row["split"]
         ):
             raise ValueError(f"S1 reference audio does not match its prompt: {row['utterance_key']}")
         # The original waveform is not re-encoded from VAE reconstructions.
@@ -291,7 +292,7 @@ def run(args: argparse.Namespace) -> None:
     torch.set_float32_matmul_precision("high")
 
     cache_root = args.cache_root.resolve(strict=True)
-    records = load_test_records(cache_root, args.test_list.resolve(strict=True))
+    records = load_test_records(cache_root, args.test_list.resolve(strict=True), args.manifest, args.split)
     if args.max_items is not None:
         if not 0 < args.max_items <= len(records):
             raise ValueError("--max-items must be in [1, 213]")
@@ -379,6 +380,10 @@ def run(args: argparse.Namespace) -> None:
         },
         "dataset": {
             "cache_root": str(cache_root),
+            "source_split": args.split,
+            "evaluation_manifest": str(args.manifest) if args.manifest else None,
+            "evaluation_manifest_sha256": sha256_file(args.manifest) if args.manifest else None,
+            "training_set_diagnostic": args.split == "train",
             "count": len(records),
             "normalization": str(args.normalization.resolve()),
             "normalization_sha256": sha256_file(args.normalization),
@@ -447,6 +452,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sway", type=float, default=-1.0)
     parser.add_argument("--cfg-text", type=float, default=5.0)
     parser.add_argument("--cfg-video", type=float, default=2.0)
+    parser.add_argument("--manifest", type=Path, help="Explicit 213-record diagnostic manifest")
+    parser.add_argument("--split", choices=["test", "train"], default="test")
     parser.add_argument("--max-items", type=int)
     return parser.parse_args()
 

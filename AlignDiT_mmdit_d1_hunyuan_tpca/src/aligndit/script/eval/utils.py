@@ -242,7 +242,7 @@ def get_inference_prompt_vt(
 
 
 # metainfo for CelebV-Dub Setting 1: GT speech is used as reference
-def get_celebvdub_test_metainfo_s1(metalst, celebvdub_path):
+def get_celebvdub_test_metainfo_s1(metalst, celebvdub_path, split="test"):
     """
     CelebV-Dub Setting 1: GT speech is used as reference.
     metalst: file with lines like "folder_name/clip_id"
@@ -254,7 +254,8 @@ def get_celebvdub_test_metainfo_s1(metalst, celebvdub_path):
     f.close()
     metainfo = []
 
-    split = "test"
+    if split not in {"test", "train"}:
+        raise ValueError(f"Unsupported split: {split}")
     for line in lines:
         clip_rel = line.strip()  # e.g., "0_ArO8UCfyk/0_0"
         parts = clip_rel.rsplit("/", 1)
@@ -278,13 +279,14 @@ def get_celebvdub_test_metainfo_s1(metalst, celebvdub_path):
 
 
 # get CelebV-Dub test set for evaluation (gen vs GT)
-def get_celebvdub_test(metalst, gen_wav_dir, gpus, celebvdub_path, eval_ground_truth=False):
+def get_celebvdub_test(metalst, gen_wav_dir, gpus, celebvdub_path, eval_ground_truth=False, split="test"):
     f = open(metalst)
     lines = f.readlines()
     f.close()
 
     test_set_ = []
-    split = "test"
+    if split not in {"test", "train"}:
+        raise ValueError(f"Unsupported split: {split}")
     for line in lines:
         clip_rel = line.strip()
         parts = clip_rel.rsplit("/", 1)
