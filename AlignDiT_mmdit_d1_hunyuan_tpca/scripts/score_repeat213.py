@@ -60,6 +60,19 @@ def main():
         repeated_token_substitution_rate=sum(r['substitutions'] for r in allruns)/count,
         method='casefold/apostrophe-preserving audit tokenizer; word Levenshtein with diagonal/deletion/insertion tie order; exact contiguous repeated run with no extra same-word neighbor',
         limitation='ASR transcript diagnostic, not human listening or time-alignment ground truth; alignment ambiguity possible')
+    from jiwer import compute_measures
+    normal_ids={r['utterance_id'] for r in output if max(d['count'] for d in r['runs'])<=5}
+    normal_rows=[r for r in rows if r['utterance_id'] in normal_ids]
+    normal_runs=[d for r in output if r['utterance_id'] in normal_ids for d in r['runs']]
+    normal_tokens=sum(d['count'] for d in normal_runs)
+    summary['non_extreme_max_run_5']={
+        'samples':len(normal_rows),'runs':len(normal_runs),'repeated_reference_tokens':normal_tokens,
+        'exact_runs':sum(d['exact_run_preserved'] for d in normal_runs),
+        'exact_run_rate':sum(d['exact_run_preserved'] for d in normal_runs)/len(normal_runs),
+        'deleted_tokens':sum(d['deletions'] for d in normal_runs),
+        'repeated_token_deletion_rate':sum(d['deletions'] for d in normal_runs)/normal_tokens,
+        'corpus_wer':compute_measures([r['truth'] for r in normal_rows],[r['hypo'] for r in normal_rows])['wer'],
+    }
     a.wer_jsonl.with_name('_repeat_details.jsonl').write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in output))
     a.wer_jsonl.with_name('_repeat_summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
