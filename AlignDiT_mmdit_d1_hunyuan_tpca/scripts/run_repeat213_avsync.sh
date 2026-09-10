@@ -26,7 +26,7 @@ extract() {
         --output-dir "$2/train" --ckpt-path "$DATA/large_vox_iter5.pt" --user_dir "$DATA/av_hubert/avhubert/avhubert"
 }
 # GT and generated audio use exactly the same newly prepared mouth videos.
-extract "$BENCH/CelebVDub/audio" "$BENCH/CelebVDub/avhubert_feat"
+validate_gt() {
 "$PY" - "$BENCH" <<'PY'
 import sys,json,numpy as np
 from pathlib import Path
@@ -37,6 +37,10 @@ for r in map(json.loads,(root/'manifest.jsonl').read_text().splitlines()):
     assert feat.shape==(r['video_frames_25hz'],1024) and np.isfinite(feat).all(), key
 print('Validated 213 GT audio-visual features against manifest shapes')
 PY
+}
+if ! validate_gt >/dev/null 2>&1; then extract "$BENCH/CelebVDub/audio" "$BENCH/CelebVDub/avhubert_feat"; fi
+validate_gt
+if [[ "${GT_ONLY:-0}" == 1 ]]; then exit 0; fi
 for spec in ${EVAL_SPECS:-d1_tpca_150000 d1_tpca_200000 c2_svae_speaker_200000}; do
     out="$BENCH/results/$spec"
     verify() { "$PY" scripts/validate_tpca_eval.py "$out" "$1" --test-list "$BENCH/clips.lst" --split train --gt-feature-root "$BENCH/CelebVDub/avhubert_feat"; }
