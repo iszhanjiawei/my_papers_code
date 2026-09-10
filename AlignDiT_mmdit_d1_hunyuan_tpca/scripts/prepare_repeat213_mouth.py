@@ -20,19 +20,40 @@ rows=[json.loads(s) for s in (a.dataset/'manifest.jsonl').read_text().splitlines
 rows=rows[a.rank::a.nshard]
 mean=np.load(a.mean_face)
 assert mean.shape==(68,2)
-fa=face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D,flip_input=False,device='cuda')
+fa=face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D,flip_input=False,device='cuda',compile=False)
 failures=[]
 for index,row in enumerate(rows):
     key=row['utterance_key'].removeprefix('celebvdub/')
     dest=a.dataset/'CelebVDub/video_mouth'/(key+'.mp4')
     meta=dest.with_suffix('.json')
-    if dest.exists() and meta.exists():
+    if dest.exists() and meta.exists() and json.loads(meta.read_text()).get('detector_max_side') == 640:
         print('SKIP',key,flush=True); continue
     try:
         source=a.dataset/'CelebVDub/video'/(key+'.mp4')
         frames=crop.read_video_frames(str(source))
         assert len(frames)==row['video_frames_25hz'], (key,len(frames),row['video_frames_25hz'])
-        landmarks=crop.detect_landmarks_video(fa,[cv2.cvtColor(f,cv2.COLOR_BGR2RGB) for f in frames],'cuda')
+        # Bound detector resolution; map boxes back before FAN on original frames.
+        # This changes only ROI preparation shared by GT and all generated audio.
+        landmarks=[None]*len(frames)
+        last_bbox=None
+        for frame_index in range(0,len(frames),crop.DETECT_STRIDE):
+            rgb=cv2.cvtColor(frames[frame_index],cv2.COLOR_BGR2RGB)
+            if frame_index % crop.REDETECT_INTERVAL == 0 or last_bbox is None:
+                scale=min(1.0,640/max(rgb.shape[:2]))
+                small=cv2.resize(rgb,None,fx=scale,fy=scale) if scale<1 else rgb
+                boxes=fa.face_detector.detect_from_image(small.copy())
+                if boxes is not None and len(boxes):
+                    box=np.asarray(boxes[0]).copy()
+                    box[:4]/=scale
+                    last_bbox=[box]
+            if last_bbox is not None:
+                found=fa.get_landmarks(rgb,detected_faces=last_bbox)
+                if found is not None and len(found): landmarks[frame_index]=found[0]
+        if landmarks[-1] is None:
+            for lm in reversed(landmarks):
+                if lm is not None:
+                    landmarks[-1]=lm
+                    break
         detected=sum(x is not None for x in landmarks)
         landmarks=crop.landmarks_interpolate(landmarks)
         if landmarks is None: raise RuntimeError('No face detected; refusing whole-frame resize fallback')
@@ -45,7 +66,7 @@ for index,row in enumerate(rows):
         assert (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))==(96,96)
         assert cap.get(cv2.CAP_PROP_FPS)==25
         cap.release()
-        meta.write_text(json.dumps(dict(utterance_id=key,frames=len(frames),detected_landmark_frames=detected,whole_frame_fallback=False,source=str(source.resolve())))+'\n')
+        meta.write_text(json.dumps(dict(utterance_id=key,frames=len(frames),detected_landmark_frames=detected,whole_frame_fallback=False,detector_max_side=640,fan_on_original_frame=True,source=str(source.resolve())))+'\n')
         print(f'{index+1}/{len(rows)} OK {key} frames={len(frames)}',flush=True)
         del frames,landmarks,patches,gray
         torch.cuda.empty_cache()

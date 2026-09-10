@@ -16,7 +16,7 @@ for r in rows:
     key=r['utterance_key'].removeprefix('celebvdub/')
     meta=root/'CelebVDub/video_mouth'/(key+'.json')
     m=json.loads(meta.read_text())
-    assert not m['whole_frame_fallback'] and m['frames']==r['video_frames_25hz'], key
+    assert not m['whole_frame_fallback'] and m['frames']==r['video_frames_25hz'] and m.get('detector_max_side')==640, key
 assert len(list((root/'CelebVDub/video_mouth/train').rglob('*.mp4')))==213
 print('Validated 213 mouth crops, original frame counts, no whole-face fallback')
 PY
