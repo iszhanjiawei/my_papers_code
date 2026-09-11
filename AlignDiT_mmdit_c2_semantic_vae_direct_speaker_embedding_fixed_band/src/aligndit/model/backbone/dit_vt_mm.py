@@ -26,6 +26,7 @@ import torch.nn.functional as F
 from x_transformers.x_transformers import apply_rotary_pos_emb
 
 from aligndit.model.adaptive_temporal_band import AdaptiveTemporalBand
+from aligndit.model.fixed_temporal_band import FixedTemporalBand
 from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
@@ -412,6 +413,9 @@ class DiT_VT_MMDiT(DiT):
         temporal_band_min_sigma_seconds=0.025,
         temporal_band_max_sigma_seconds=0.250,
         temporal_band_init_sigma_seconds=0.100,
+        temporal_band_mode="adaptive",
+        temporal_band_fixed_offset_seconds=0.0,
+        temporal_band_fixed_sigma_seconds=0.100,
     ):
         super().__init__(
             dim=dim,
@@ -561,8 +565,12 @@ class DiT_VT_MMDiT(DiT):
 
         # Construct only after all inherited parameter initialization. Disabled
         # runs retain exactly the parent's state-dict keys and RNG behavior;
-        # enabling the feature adds just the shared two-layer predictor.
+        # adaptive mode adds just the shared two-layer predictor. Fixed mode
+        # has no parameters/buffers and also preserves inherited RNG behavior.
         self.temporal_band_enabled = bool(temporal_band_enabled)
+        if temporal_band_mode not in ("adaptive", "fixed"):
+            raise ValueError("temporal_band_mode must be 'adaptive' or 'fixed'")
+        self.temporal_band_mode = temporal_band_mode
         self.temporal_band = None
         self.last_temporal_band_offset_seconds = None
         self.last_temporal_band_sigma_seconds = None
@@ -570,16 +578,25 @@ class DiT_VT_MMDiT(DiT):
         if self.temporal_band_enabled:
             if self.n_mm_layers == 0:
                 raise ValueError("temporal_band_enabled requires at least one multimodal block")
-            self.temporal_band = AdaptiveTemporalBand(
-                dim=dim,
-                hidden_dim=temporal_band_hidden_dim,
-                audio_fps=temporal_band_audio_fps,
-                video_fps=temporal_band_video_fps,
-                max_offset_seconds=temporal_band_max_offset_seconds,
-                min_sigma_seconds=temporal_band_min_sigma_seconds,
-                max_sigma_seconds=temporal_band_max_sigma_seconds,
-                init_sigma_seconds=temporal_band_init_sigma_seconds,
-            )
+            if self.temporal_band_mode == "fixed":
+                self.temporal_band = FixedTemporalBand(
+                    dim=dim,
+                    audio_fps=temporal_band_audio_fps,
+                    video_fps=temporal_band_video_fps,
+                    offset_seconds=temporal_band_fixed_offset_seconds,
+                    sigma_seconds=temporal_band_fixed_sigma_seconds,
+                )
+            else:
+                self.temporal_band = AdaptiveTemporalBand(
+                    dim=dim,
+                    hidden_dim=temporal_band_hidden_dim,
+                    audio_fps=temporal_band_audio_fps,
+                    video_fps=temporal_band_video_fps,
+                    max_offset_seconds=temporal_band_max_offset_seconds,
+                    min_sigma_seconds=temporal_band_min_sigma_seconds,
+                    max_sigma_seconds=temporal_band_max_sigma_seconds,
+                    init_sigma_seconds=temporal_band_init_sigma_seconds,
+                )
             if abs(self.temporal_band.audio_fps / self.temporal_band.video_fps - self.audio_video_ratio) > 1e-6:
                 raise ValueError("temporal-band audio/video frame-rate ratio must match audio_video_ratio")
 
@@ -830,7 +847,9 @@ class DiT_VT_MMDiT(DiT):
         temporal_band_bias = None
         if self.temporal_band is not None:
             # v is already branch-specific (including null-video embedding for
-            # CFG TTS/unconditional branches). Never predict from raw video here.
+            # CFG TTS/unconditional branches). Adaptive mode reads this content;
+            # fixed mode uses only its shape/device and has identical geometry
+            # in every branch. Never predict adaptive bands from raw video here.
             offset_seconds, sigma_seconds = self.temporal_band(v, seq_len)
             temporal_band_bias = self.temporal_band.bias(offset_seconds, sigma_seconds, video_len)
             self.last_temporal_band_offset_seconds = offset_seconds.detach()

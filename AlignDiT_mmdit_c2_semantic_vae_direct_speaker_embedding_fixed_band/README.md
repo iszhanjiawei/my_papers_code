@@ -1,8 +1,10 @@
 # Current experiment
 
-This snapshot adds frozen CAM++ speaker conditioning to Semantic-VAE Direct-C2
-with CTC lambda 0.03. See [SEMANTIC_VAE_SPEAKER_C2.md](SEMANTIC_VAE_SPEAKER_C2.md)
-for this experiment's configuration, training, TensorBoard and inference commands.
+This isolated snapshot adds a **fixed-center, fixed-width Gaussian AV temporal
+band** to Semantic-VAE Direct-C2 with frozen CAM++ speaker conditions.
+See [FIXED_TEMPORAL_BAND.md](FIXED_TEMPORAL_BAND.md) for this experiment's
+configuration, training, TensorBoard and inference commands. Older copied
+speaker/adaptive documentation is historical, not the launch protocol here.
 
 # AlignDiT
 

@@ -29,17 +29,28 @@ def main(model_cfg):
     model_arc = model_cfg.model.arch
     audio_cfg = model_cfg.model.audio_representation
     temporal_band_enabled = bool(model_arc.get("temporal_band_enabled", False))
+    temporal_band_mode = str(model_arc.get("temporal_band_mode", "adaptive"))
     if temporal_band_enabled:
+        if temporal_band_mode not in ("adaptive", "fixed"):
+            raise ValueError(f"Unknown temporal-band mode: {temporal_band_mode}")
         if int(model_arc.n_mm_layers) != 12 or int(model_arc.audio_video_ratio) != 1:
-            raise ValueError("This adaptive-band experiment retains 12 MM layers and aligned input rates")
+            raise ValueError("This temporal-band experiment retains 12 MM layers and aligned input rates")
         if any(float(model_arc[key]) != float(audio_cfg.frame_rate) for key in (
             "temporal_band_audio_fps", "temporal_band_video_fps"
         )):
             raise ValueError("Temporal-band rates must match the already-interpolated 40-Hz cache")
         # Never allow an enabled experiment to write into an inherited baseline
         # checkpoint directory, even when a caller selects the wrong YAML.
-        if "adaptive_band" not in str(model_cfg.ckpts.save_dir) or "adaptive_band" not in str(model_cfg.model.name):
-            raise ValueError("Adaptive-band runs require dedicated model.name and ckpts.save_dir")
+        marker = f"{temporal_band_mode}_band"
+        if marker not in str(model_cfg.ckpts.save_dir) or marker not in str(model_cfg.model.name):
+            raise ValueError(f"{marker} runs require dedicated model.name and ckpts.save_dir")
+        save_dir = Path(model_cfg.ckpts.save_dir)
+        if (
+            temporal_band_mode == "fixed"
+            and not (save_dir / "speaker_training_contract.json").is_file()
+            and any(save_dir.glob("*.pt"))
+        ):
+            raise RuntimeError("Refusing to label existing weights as fixed-band without their original training contract")
     if model_cfg.ckpts.log_samples:
         raise ValueError("Use the Semantic-VAE inference entry for samples; inherited mel sample logging is unsupported")
     speaker_dim = int(model_arc.speaker_dim)
@@ -133,15 +144,24 @@ def main(model_cfg):
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
         if temporal_band_enabled:
+            fixed_band = temporal_band_mode == "fixed"
             contract["temporal_band"] = {
+                "mode": temporal_band_mode,
                 "formula": "B[i,j] = -(t_video[j] - t_audio[i] - delta[i])**2 / (2*sigma[i]**2)",
-                "predictor_input": "branch-specific video embedding before all joint audio/video attention",
-                "sharing": "one predictor, shared over all heads and the first 12 MM blocks",
+                "predictor_input": (
+                    "none; fixed constants independent of content, branch and diffusion time" if fixed_band
+                    else "branch-specific video embedding before all joint audio/video attention"
+                ),
+                "sharing": "shared over all samples, heads and first 12 MM blocks" if fixed_band
+                           else "one predictor, shared over all heads and the first 12 MM blocks",
                 "scope": "audio queries to video keys only; shared joint softmax retained",
                 "initialization": (
-                    f"zero offset and sigma={model_arc.temporal_band_init_sigma_seconds} seconds; "
-                    "not function-preserving when enabled"
+                    f"fixed offset={model_arc.temporal_band_fixed_offset_seconds} seconds and "
+                    f"sigma={model_arc.temporal_band_fixed_sigma_seconds} seconds throughout training"
+                    if fixed_band else
+                    f"zero offset and sigma={model_arc.temporal_band_init_sigma_seconds} seconds"
                 ),
+                "function_preserving_when_enabled": False,
                 "extra_loss": False,
                 "mass_preservation": False,
                 "parameters": {k: v for k, v in OmegaConf.to_container(model_arc, resolve=True).items()

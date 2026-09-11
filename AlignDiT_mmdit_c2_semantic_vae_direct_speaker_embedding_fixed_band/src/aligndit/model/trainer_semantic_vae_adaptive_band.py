@@ -1,4 +1,4 @@
-"""Unchanged speaker training policy, with temporal-band learning diagnostics."""
+"""Unchanged speaker training policy, with fixed/adaptive band diagnostics."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import math
 
 import torch
 
+from aligndit.model.fixed_temporal_band import FixedTemporalBand
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
 
 
@@ -19,7 +20,7 @@ class SemanticVaeAdaptiveBandTrainer(SemanticVaeDirectC2SpeakerTrainer):
             ("sigma_ms", backbone.last_temporal_band_sigma_seconds),
         ):
             if tensor is None:
-                raise RuntimeError("Adaptive-band training did not produce temporal parameters")
+                raise RuntimeError("Temporal-band training did not produce temporal parameters")
             values = tensor.detach().float()
             if valid is not None:
                 values = values[valid]
@@ -38,6 +39,12 @@ class SemanticVaeAdaptiveBandTrainer(SemanticVaeDirectC2SpeakerTrainer):
     def _clip_gradients(self) -> float | None:
         if self.accelerator.sync_gradients and self.max_grad_norm > 0:
             band = self.accelerator.unwrap_model(self.model).transformer.temporal_band
+            if isinstance(band, FixedTemporalBand):
+                if list(band.parameters()):
+                    raise RuntimeError("Fixed temporal band unexpectedly has trainable parameters")
+                # Existing speaker/global gradient checks and clipping still run.
+                # There is deliberately no fabricated predictor gradient scalar.
+                return super()._clip_gradients()
             gradients = [p.grad.detach().float().norm() for p in band.parameters() if p.grad is not None]
             if not gradients:
                 raise RuntimeError("Temporal-band predictor is disconnected from the training loss")

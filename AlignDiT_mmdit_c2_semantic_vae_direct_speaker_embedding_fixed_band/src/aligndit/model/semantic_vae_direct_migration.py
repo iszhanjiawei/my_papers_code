@@ -11,6 +11,8 @@ from typing import Any
 import torch
 from torch import nn
 
+from aligndit.model.fixed_temporal_band import FixedTemporalBand
+
 
 EXPECTED_SOURCE_KEYS = 313
 EXPECTED_TARGET_KEYS = 703
@@ -189,7 +191,12 @@ def migrate_s2c_ema_into_model(
     # to match, and the same ten S2c HuBERT tensors are the only ignored keys.
     band = getattr(model.transformer, "temporal_band", None)
     band_keys = set()
-    if band is not None:
+    if isinstance(band, FixedTemporalBand):
+        # A fixed prior must add no trainable or serialized state. In particular,
+        # do not silently accept a disconnected or frozen adaptive predictor.
+        if list(band.parameters()) or band.state_dict():
+            raise RuntimeError("Fixed temporal-band migration requires a parameter-free prior")
+    elif band is not None:
         prefix = "transformer.temporal_band."
         expected_band_keys = {prefix + f"net.{layer}.{suffix}" for layer in (0, 2) for suffix in ("weight", "bias")}
         band_keys = {key for key in target_keys if key.startswith(prefix)}

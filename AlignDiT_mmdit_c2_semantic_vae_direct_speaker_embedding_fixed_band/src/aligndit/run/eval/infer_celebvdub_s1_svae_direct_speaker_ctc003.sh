@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Same-clip reference protocol for this isolated adaptive-band snapshot.
+# Same-clip reference protocol for this isolated fixed-band snapshot.
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$script_dir"
@@ -14,11 +14,11 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_ctc003_warmup10k30k_40hz_CelebVDub_char"
+checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_fixed_band_ctc003_warmup10k30k_40hz_CelebVDub_char"
 step="${CKPT_STEP:-200000}"
 checkpoint="$checkpoint_dir/model_${step}.pt"
 cfg_video="${CFG_VIDEO:-2.0}"
-output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_adaptive_band_cfgv${cfg_video}}"
+output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_fixed_band_cfgv${cfg_video}}"
 if [[ ! -f "$checkpoint" || -L "$checkpoint" ]]; then
     echo "Missing regular speaker-conditioned checkpoint: $checkpoint" >&2
     exit 1
@@ -32,7 +32,7 @@ CUDA_VISIBLE_DEVICES="${EVAL_GPU:-0}" OMP_NUM_THREADS=1 PYTHONPATH="$project_roo
 "$python_bin" -u src/aligndit/script/eval/infer_celebvdub_semantic_vae_s1.py \
     --checkpoint "$checkpoint" \
     --step "$step" \
-    --config src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_adaptive_band.yaml \
+    --config src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_fixed_band.yaml \
     --output-dir "$output_dir" \
     --cfg-video "$cfg_video" \
     --cfg-text "${CFG_TEXT:-5.0}" \

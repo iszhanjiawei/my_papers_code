@@ -43,7 +43,7 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-train_config="${TRAIN_CONFIG:-finetune_celebvdub_mm_c2_svae_speaker_adaptive_band}"
+train_config="${TRAIN_CONFIG:-finetune_celebvdub_mm_c2_svae_speaker_fixed_band}"
 echo "Launching isolated $project_root with config=$train_config (inherited LR/CTC schedule)" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \

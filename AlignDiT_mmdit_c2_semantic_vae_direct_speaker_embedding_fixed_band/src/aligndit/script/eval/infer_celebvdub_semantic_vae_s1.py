@@ -116,8 +116,32 @@ def load_composed_config(config_path: Path):
         return compose(config_name=config_path.stem)
 
 
+def validate_fixed_band_contract(config, checkpoint_path: Path) -> None:
+    """Fixed priors have no state keys, so strict weight loading alone is insufficient."""
+    arch = config.model.arch
+    requested_fixed = bool(arch.get("temporal_band_enabled", False)) and arch.get("temporal_band_mode") == "fixed"
+    contract_path = checkpoint_path.parent / "speaker_training_contract.json"
+    contract = read_json_object(contract_path) if contract_path.is_file() else {}
+    recorded = contract.get("temporal_band", {})
+    recorded_fixed = recorded.get("mode") == "fixed"
+    if not (requested_fixed or recorded_fixed):
+        return
+    if not requested_fixed or not recorded_fixed:
+        raise RuntimeError("Fixed-band inference requires the matching fixed-band training contract beside the checkpoint")
+    recorded_parameters = recorded.get("parameters", {})
+    for key in (
+        "temporal_band_enabled", "temporal_band_mode", "temporal_band_audio_fps", "temporal_band_video_fps",
+        "temporal_band_fixed_offset_seconds", "temporal_band_fixed_sigma_seconds",
+    ):
+        if key not in recorded_parameters or recorded_parameters[key] != arch.get(key):
+            raise RuntimeError(f"Fixed-band inference/training configuration mismatch: {key}")
+    if recorded.get("parameter_count") != 0:
+        raise RuntimeError("Fixed-band checkpoint contract must record zero temporal-band parameters")
+
+
 def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, device: torch.device) -> CFM_VT:
     config = load_composed_config(config_path)
+    validate_fixed_band_contract(config, checkpoint_path)
     arch = config.model.arch
     representation = config.model.audio_representation
     required_arch = {
