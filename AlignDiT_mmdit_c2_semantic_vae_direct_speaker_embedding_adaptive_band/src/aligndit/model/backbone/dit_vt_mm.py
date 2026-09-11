@@ -25,6 +25,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from x_transformers.x_transformers import apply_rotary_pos_emb
 
+from aligndit.model.adaptive_temporal_band import AdaptiveTemporalBand
 from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
@@ -106,7 +107,7 @@ class VideoInputEmbedding_MM(nn.Module):
             video_lens = torch.full((video.size(0),), video.size(1), device=video.device, dtype=torch.long)
 
         v = self.proj(video)
-        if self.use_conformer: # baseline的DiT是先采样到100Hz(长度*4)再在100Hz上跑Conformer 
+        if self.use_conformer: # baseline的DiT是先采样到100Hz(长度*4)再在100Hz上跑Conformer
             v, _ = self.vid_conformer(v, video_lens) # 这里不进行上采样，直接在原生25Hz上跑Conformer同样有上下文的建模能力,但序列短4倍
         v = self.conv_pos_embed(v) + v
         return v
@@ -242,7 +243,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
             key = apply_rotary_pos_emb(key, freqs, k_xpos_scale)
         return query, key
 
-    def joint_attn(self, norm_x, norm_v, mask=None, v_mask=None, rope=None, v_rope=None):
+    def joint_attn(self, norm_x, norm_v, mask=None, v_mask=None, rope=None, v_rope=None, temporal_band_bias=None):
         batch_size = norm_x.shape[0]
         n_a, n_v = norm_x.shape[1], norm_v.shape[1]
         heads = self.attn.heads
@@ -251,23 +252,54 @@ class MMDiTBlock_VT(DiTCrossBlock):
         q_a, k_a, v_a = self._qkv(self.attn, norm_x)
         q_v, k_v, v_v = self._qkv(self.v_attn, norm_v)
 
-        q_a, k_a = self._apply_rope(q_a, k_a, rope)   # 将 Q 和 K 进行位置编码  
+        q_a, k_a = self._apply_rope(q_a, k_a, rope)   # 将 Q 和 K 进行位置编码
         q_v, k_v = self._apply_rope(q_v, k_v, v_rope) # 将 Q 和 K 进行位置编码
 
         query = torch.cat([q_a, q_v], dim=2)
         key = torch.cat([k_a, k_v], dim=2)
         value = torch.cat([v_a, v_v], dim=2)
 
-        if self.attn_mask_enabled and mask is not None:
+        if temporal_band_bias is not None:
+            if temporal_band_bias.shape != (batch_size, n_a, n_v):
+                raise ValueError(
+                    f"temporal_band_bias must have shape {(batch_size, n_a, n_v)}, "
+                    f"got {tuple(temporal_band_bias.shape)}"
+                )
+            key_mask = None
+            if self.attn_mask_enabled and (mask is not None or v_mask is not None):
+                audio_key_mask = mask if mask is not None else torch.ones(
+                    (batch_size, n_a), dtype=torch.bool, device=norm_x.device
+                )
+                video_key_mask = v_mask if v_mask is not None else torch.ones(
+                    (batch_size, n_v), dtype=torch.bool, device=norm_v.device
+                )
+                key_mask = torch.cat([audio_key_mask, video_key_mask], dim=1)[:, None, None, :]
+
+            # Only audio queries receive the AV prior. Splitting queries keeps
+            # VA/VV on the original SDPA path and avoids a full joint-square
+            # additive mask or materializing one copy for every head. Keep
+            # this independent of padding-mask enablement: training deliberately
+            # passes block_mask=None, but the temporal prior must stay active.
+            audio_bias = F.pad(temporal_band_bias.to(q_a.dtype), (n_a, 0))[:, None]
+            if key_mask is not None:
+                audio_bias = audio_bias.masked_fill(~key_mask, float("-inf"))
+            out_a = F.scaled_dot_product_attention(
+                q_a, key, value, attn_mask=audio_bias, dropout_p=0.0, is_causal=False
+            )
+            out_v = F.scaled_dot_product_attention(
+                q_v, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False
+            )
+            out = torch.cat([out_a, out_v], dim=2)
+        elif self.attn_mask_enabled and mask is not None:
             if v_mask is None:
                 v_mask = torch.ones((batch_size, n_v), dtype=torch.bool, device=mask.device)
             key_mask = torch.cat([mask, v_mask], dim=1)
             attn_mask = key_mask.unsqueeze(1).unsqueeze(1)  # 'b n -> b 1 1 n'
             attn_mask = attn_mask.expand(batch_size, heads, n_a + n_v, n_a + n_v)
+            out = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
         else:
-            attn_mask = None
+            out = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False)
 
-        out = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
         out = out.transpose(1, 2).reshape(batch_size, -1, heads * head_dim)
         out = out.to(query.dtype)
 
@@ -297,6 +329,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         text=None,
         text_mask=None,
         generation_mask=None,
+        temporal_band_bias=None,
     ):
         if self.prompt_isolated_ca:
             _validate_generation_mask(x, generation_mask)
@@ -305,7 +338,10 @@ class MMDiTBlock_VT(DiTCrossBlock):
         norm_v, v_gate_msa, v_shift_mlp, v_scale_mlp, v_gate_mlp = self.v_attn_norm(v, emb=t)
 
         # joint attention across audio and video streams 2、两流信息双向交换
-        attn_x, attn_v = self.joint_attn(norm_x, norm_v, mask=mask, v_mask=v_mask, rope=rope, v_rope=v_rope)
+        attn_x, attn_v = self.joint_attn(
+            norm_x, norm_v, mask=mask, v_mask=v_mask, rope=rope, v_rope=v_rope,
+            temporal_band_bias=temporal_band_bias,
+        )
         # x_gate_msa 门控，是控制注意力输出以多大比例加回残差流的。门控都是加载处理网络之后的，用来控制网络输出的多少，而不是加在输入，是作用于输出，而不是输入
         x = x + x_gate_msa.unsqueeze(1) * attn_x # gate 控制音频流接受的信息量
         v = v + v_gate_msa.unsqueeze(1) * attn_v # gate 控制视频流接受的信息量
@@ -368,6 +404,14 @@ class DiT_VT_MMDiT(DiT):
         normalize_text_context=False,
         speaker_dim=None,
         speaker_condition_start_layer=None,
+        temporal_band_enabled=False,
+        temporal_band_hidden_dim=64,
+        temporal_band_audio_fps=40.0,
+        temporal_band_video_fps=40.0,
+        temporal_band_max_offset_seconds=0.100,
+        temporal_band_min_sigma_seconds=0.025,
+        temporal_band_max_sigma_seconds=0.250,
+        temporal_band_init_sigma_seconds=0.100,
     ):
         super().__init__(
             dim=dim,
@@ -514,6 +558,30 @@ class DiT_VT_MMDiT(DiT):
             # Preserve the parent Direct-C2 model at initialization. A second
             # zero gate here would block gradients into the projection.
             nn.init.constant_(self.speaker_proj.weight, 0)
+
+        # Construct only after all inherited parameter initialization. Disabled
+        # runs retain exactly the parent's state-dict keys and RNG behavior;
+        # enabling the feature adds just the shared two-layer predictor.
+        self.temporal_band_enabled = bool(temporal_band_enabled)
+        self.temporal_band = None
+        self.last_temporal_band_offset_seconds = None
+        self.last_temporal_band_sigma_seconds = None
+        self.last_temporal_band_valid_mask = None
+        if self.temporal_band_enabled:
+            if self.n_mm_layers == 0:
+                raise ValueError("temporal_band_enabled requires at least one multimodal block")
+            self.temporal_band = AdaptiveTemporalBand(
+                dim=dim,
+                hidden_dim=temporal_band_hidden_dim,
+                audio_fps=temporal_band_audio_fps,
+                video_fps=temporal_band_video_fps,
+                max_offset_seconds=temporal_band_max_offset_seconds,
+                min_sigma_seconds=temporal_band_min_sigma_seconds,
+                max_sigma_seconds=temporal_band_max_sigma_seconds,
+                init_sigma_seconds=temporal_band_init_sigma_seconds,
+            )
+            if abs(self.temporal_band.audio_fps / self.temporal_band.video_fps - self.audio_video_ratio) > 1e-6:
+                raise ValueError("temporal-band audio/video frame-rate ratio must match audio_video_ratio")
 
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
@@ -759,12 +827,22 @@ class DiT_VT_MMDiT(DiT):
         if self.normalize_text_context:
             text_embed, text_mask = self._stabilize_text_context(text_embed, text_mask)
 
+        temporal_band_bias = None
+        if self.temporal_band is not None:
+            # v is already branch-specific (including null-video embedding for
+            # CFG TTS/unconditional branches). Never predict from raw video here.
+            offset_seconds, sigma_seconds = self.temporal_band(v, seq_len)
+            temporal_band_bias = self.temporal_band.bias(offset_seconds, sigma_seconds, video_len)
+            self.last_temporal_band_offset_seconds = offset_seconds.detach()
+            self.last_temporal_band_sigma_seconds = sigma_seconds.detach()
+            self.last_temporal_band_valid_mask = mask.detach() if mask is not None else None
+
         lens = (
             mask.sum(dim=1)
             if mask is not None
             else torch.full((x.size(0),), seq_len, device=x.device, dtype=torch.long)
         )
-        # Aligned RoPE的生成  
+        # Aligned RoPE的生成
         rope = self.rotary_embed.forward_from_seq_len(seq_len) # 音频位置0,1,2...T-1
         # aligned RoPE for the video stream: scale positions by the audio/video frame-rate ratio
         video_pos = torch.arange(video_len, device=x.device) # 视频位置0, 4, 8...T-4
@@ -776,6 +854,13 @@ class DiT_VT_MMDiT(DiT):
         if mask is not None:
             if video_mask is not None and video_mask.shape[1] == video_len:
                 v_mask = video_mask
+            elif self.temporal_band is not None:
+                # Physical frame rates may have a non-integer ratio. Integer
+                # indexing recovers the parent's strided mask when the ratio
+                # is integral, without assuming that every video rate does.
+                audio_indices = (torch.arange(video_len, device=x.device) * self.audio_video_ratio).floor().long()
+                in_bounds = audio_indices < seq_len
+                v_mask = mask[:, audio_indices.clamp(max=seq_len - 1)] & in_bounds[None]
             else:
                 v_mask = mask[:, :: self.audio_video_ratio][:, :video_len]
                 if v_mask.shape[1] < video_len:
@@ -812,6 +897,7 @@ class DiT_VT_MMDiT(DiT):
                         text_embed,
                         text_mask,
                         generation_mask,
+                        temporal_band_bias,
                         use_reentrant=False,
                     )
                 elif has_tail_text:
@@ -848,6 +934,7 @@ class DiT_VT_MMDiT(DiT):
                         text=text_embed,
                         text_mask=text_mask,
                         generation_mask=generation_mask,
+                        temporal_band_bias=temporal_band_bias,
                     )
                 elif has_tail_text:
                     x = block(

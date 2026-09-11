@@ -14,6 +14,7 @@ from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
+from aligndit.model.trainer_semantic_vae_adaptive_band import SemanticVaeAdaptiveBandTrainer
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
 from f5_tts.model.utils import get_tokenizer
 
@@ -27,6 +28,18 @@ def main(model_cfg):
     model_cls = hydra.utils.get_class(f"aligndit.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
     audio_cfg = model_cfg.model.audio_representation
+    temporal_band_enabled = bool(model_arc.get("temporal_band_enabled", False))
+    if temporal_band_enabled:
+        if int(model_arc.n_mm_layers) != 12 or int(model_arc.audio_video_ratio) != 1:
+            raise ValueError("This adaptive-band experiment retains 12 MM layers and aligned input rates")
+        if any(float(model_arc[key]) != float(audio_cfg.frame_rate) for key in (
+            "temporal_band_audio_fps", "temporal_band_video_fps"
+        )):
+            raise ValueError("Temporal-band rates must match the already-interpolated 40-Hz cache")
+        # Never allow an enabled experiment to write into an inherited baseline
+        # checkpoint directory, even when a caller selects the wrong YAML.
+        if "adaptive_band" not in str(model_cfg.ckpts.save_dir) or "adaptive_band" not in str(model_cfg.model.name):
+            raise ValueError("Adaptive-band runs require dedicated model.name and ckpts.save_dir")
     if model_cfg.ckpts.log_samples:
         raise ValueError("Use the Semantic-VAE inference entry for samples; inherited mel sample logging is unsupported")
     speaker_dim = int(model_arc.speaker_dim)
@@ -69,7 +82,8 @@ def main(model_cfg):
         ctc_lambda=model_cfg.model.ctc_lambda,
     )
 
-    trainer = SemanticVaeDirectC2SpeakerTrainer(
+    trainer_cls = SemanticVaeAdaptiveBandTrainer if temporal_band_enabled else SemanticVaeDirectC2SpeakerTrainer
+    trainer = trainer_cls(
         model,
         epochs=model_cfg.optim.epochs,
         learning_rate=model_cfg.optim.learning_rate,
@@ -118,6 +132,22 @@ def main(model_cfg):
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
+        if temporal_band_enabled:
+            contract["temporal_band"] = {
+                "formula": "B[i,j] = -(t_video[j] - t_audio[i] - delta[i])**2 / (2*sigma[i]**2)",
+                "predictor_input": "branch-specific video embedding before all joint audio/video attention",
+                "sharing": "one predictor, shared over all heads and the first 12 MM blocks",
+                "scope": "audio queries to video keys only; shared joint softmax retained",
+                "initialization": (
+                    f"zero offset and sigma={model_arc.temporal_band_init_sigma_seconds} seconds; "
+                    "not function-preserving when enabled"
+                ),
+                "extra_loss": False,
+                "mass_preservation": False,
+                "parameters": {k: v for k, v in OmegaConf.to_container(model_arc, resolve=True).items()
+                               if k.startswith("temporal_band_")},
+                "parameter_count": sum(p.numel() for p in model.transformer.temporal_band.parameters()),
+            }
         contract_path = save_dir / "speaker_training_contract.json"
         if contract_path.exists():
             previous = json.loads(contract_path.read_text())

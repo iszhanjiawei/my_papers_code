@@ -43,7 +43,8 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-echo "Launching Semantic-VAE Direct-C2 + CAM++ tail6: LR=5e-5, CTC 0@10k -> 0.03@30k, stop at 200k" >&2
+train_config="${TRAIN_CONFIG:-finetune_celebvdub_mm_c2_svae_speaker_adaptive_band}"
+echo "Launching isolated $project_root with config=$train_config (inherited LR/CTC schedule)" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     OMP_NUM_THREADS=1 \
@@ -60,5 +61,5 @@ exec env \
         --num_processes 4 \
         --main_process_port "${TRAIN_PORT:-29620}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
-        --config-name finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup \
+        --config-name "$train_config" \
         "$@"

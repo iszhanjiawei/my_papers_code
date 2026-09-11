@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -183,6 +184,37 @@ def migrate_s2c_ema_into_model(
             or torch.count_nonzero(speaker).item() != 0
         ):
             raise RuntimeError("S2c speaker migration requires a new, zero-initialized Linear(192, 768) weight")
+    # Permit exactly the four tensors of the new Gaussian-band predictor, not
+    # arbitrary unexpected parameters. All 303 inherited S2c tensors still have
+    # to match, and the same ten S2c HuBERT tensors are the only ignored keys.
+    band = getattr(model.transformer, "temporal_band", None)
+    band_keys = set()
+    if band is not None:
+        prefix = "transformer.temporal_band."
+        expected_band_keys = {prefix + f"net.{layer}.{suffix}" for layer in (0, 2) for suffix in ("weight", "bias")}
+        band_keys = {key for key in target_keys if key.startswith(prefix)}
+        if band_keys != expected_band_keys or not band_keys.issubset(new_target):
+            raise RuntimeError(f"Unexpected new temporal-band predictor keys: {sorted(band_keys)}")
+        hidden = band.net[0].out_features
+        shapes = {
+            prefix + "net.0.weight": (hidden, model.transformer.dim),
+            prefix + "net.0.bias": (hidden,),
+            prefix + "net.2.weight": (2, hidden),
+            prefix + "net.2.bias": (2,),
+        }
+        for key, shape in shapes.items():
+            if tuple(target_state[key].shape) != shape or not torch.isfinite(target_state[key]).all():
+                raise RuntimeError(f"Invalid temporal-band initialization tensor: {key}")
+        if torch.count_nonzero(target_state[prefix + "net.2.weight"]).item() != 0:
+            raise RuntimeError("S2c migration requires the initial constant temporal-band output projection")
+        initial_bias = target_state[prefix + "net.2.bias"]
+        expected_width_bias = math.log(
+            (band.init_sigma_seconds - band.min_sigma_seconds)
+            / (band.max_sigma_seconds - band.init_sigma_seconds)
+        )
+        expected_bias = initial_bias.new_tensor([0.0, expected_width_bias])
+        if not torch.allclose(initial_bias, expected_bias, rtol=1e-6, atol=1e-7):
+            raise RuntimeError("S2c migration requires delta=0 and the configured initial sigma")
     actual_counts = (
         len(source_state),
         len(target_state),
@@ -192,10 +224,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS + int(has_speaker),
+        EXPECTED_TARGET_KEYS + int(has_speaker) + len(band_keys),
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS + int(has_speaker),
+        EXPECTED_NEW_TARGET_KEYS + int(has_speaker) + len(band_keys),
     )
     if actual_counts != expected_counts:
         raise RuntimeError(
