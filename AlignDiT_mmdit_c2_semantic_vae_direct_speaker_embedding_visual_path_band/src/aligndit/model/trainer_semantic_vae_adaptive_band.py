@@ -34,6 +34,26 @@ class SemanticVaeAdaptiveBandTrainer(SemanticVaeDirectC2SpeakerTrainer):
                 if not math.isfinite(value):
                     raise FloatingPointError(f"Non-finite temporal-band {label}/{statistic}")
                 diagnostics[f"temporal_band/{label}_{statistic}"] = value
+        if backbone.temporal_band_mode == "visual_path":
+            increments = backbone.last_visual_path_increments
+            edge_mask = backbone.last_visual_path_valid_mask
+            if increments is None or edge_mask is None or increments.shape != edge_mask.shape:
+                raise RuntimeError("Visual-path alignment did not produce edge diagnostics")
+            if not torch.isfinite(increments).all():
+                raise FloatingPointError("Non-finite visual-path increments")
+            active = increments[edge_mask].float()
+            diagnostics["visual_path/visible_edge_fraction"] = (
+                edge_mask.float().mean().item() if edge_mask.numel() else 0.0
+            )
+            # Zero visible edges is valid under whole-video CFG dropout or
+            # one-frame clips; record an explicit fraction and finite zeros.
+            stats = (
+                torch.stack((active.mean(), active.std(unbiased=False), active.min(), active.max()))
+                if active.numel() else increments.new_zeros(4)
+            )
+            for statistic, value in zip(("mean", "std", "min", "max"), stats.tolist()):
+                diagnostics[f"visual_path/increment_{statistic}"] = value
+            diagnostics["visual_path/path_sigma"] = backbone.temporal_band.path_sigma
         return diagnostics
 
     def _clip_gradients(self) -> float | None:

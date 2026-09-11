@@ -31,7 +31,7 @@ def main(model_cfg):
     temporal_band_enabled = bool(model_arc.get("temporal_band_enabled", False))
     temporal_band_mode = str(model_arc.get("temporal_band_mode", "adaptive"))
     if temporal_band_enabled:
-        if temporal_band_mode not in ("adaptive", "fixed"):
+        if temporal_band_mode not in ("adaptive", "fixed", "visual_path"):
             raise ValueError(f"Unknown temporal-band mode: {temporal_band_mode}")
         if int(model_arc.n_mm_layers) != 12 or int(model_arc.audio_video_ratio) != 1:
             raise ValueError("This temporal-band experiment retains 12 MM layers and aligned input rates")
@@ -46,11 +46,18 @@ def main(model_cfg):
             raise ValueError(f"{marker} runs require dedicated model.name and ckpts.save_dir")
         save_dir = Path(model_cfg.ckpts.save_dir)
         if (
-            temporal_band_mode == "fixed"
+            temporal_band_mode in ("fixed", "visual_path")
             and not (save_dir / "speaker_training_contract.json").is_file()
             and any(save_dir.glob("*.pt"))
         ):
-            raise RuntimeError("Refusing to label existing weights as fixed-band without their original training contract")
+            raise RuntimeError("Refusing to label existing weights without their original parameter-free band contract")
+        if temporal_band_mode == "visual_path":
+            if not model_cfg.datasets.get("video_path_enabled", False):
+                raise ValueError("Visual-path mode requires native-video path data")
+            if not model_cfg.datasets.get("native_video_root"):
+                raise ValueError("Visual-path mode requires an explicit native_video_root")
+            if float(model_arc.temporal_band_fixed_offset_seconds) != 0.0:
+                raise ValueError("Visual-path alignment anchors the audio query at zero physical offset")
     if model_cfg.ckpts.log_samples:
         raise ValueError("Use the Semantic-VAE inference entry for samples; inherited mel sample logging is unsupported")
     speaker_dim = int(model_arc.speaker_dim)
@@ -144,7 +151,7 @@ def main(model_cfg):
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
         if temporal_band_enabled:
-            fixed_band = temporal_band_mode == "fixed"
+            fixed_band = temporal_band_mode in ("fixed", "visual_path")
             contract["temporal_band"] = {
                 "mode": temporal_band_mode,
                 "formula": "B[i,j] = -(t_video[j] - t_audio[i] - delta[i])**2 / (2*sigma[i]**2)",
@@ -168,6 +175,24 @@ def main(model_cfg):
                                if k.startswith("temporal_band_")},
                 "parameter_count": sum(p.numel() for p in model.transformer.temporal_band.parameters()),
             }
+            if temporal_band_mode == "visual_path":
+                contract["temporal_band"].update({
+                    "formula": "B[i,j] = -0.5*(dt/sigma_time)**2 - 0.5*((c[i]-c[j])/sigma_path)**2",
+                    "predictor_input": "none; cumulative L2 increments of unit-normalized frozen native video features",
+                    "sharing": "one parameter-free rule shared by all heads and first 12 MM blocks",
+                    "initialization": (
+                        f"fixed time sigma={model_arc.temporal_band_fixed_sigma_seconds} seconds, "
+                        f"fixed path sigma={model_arc.temporal_band_path_sigma}, no offset predictor"
+                    ),
+                    "path_source": {
+                        "native_fps": 25,
+                        "feature": "L2-normalized frozen AV-HuBERT native features",
+                        "coordinate": "cumulative_l2",
+                        "resampling": "linear_align_corners_false",
+                        "native_video_root": str(model_cfg.datasets.native_video_root),
+                    },
+                    "dropout": "discard edges touching complementary-hidden or padded frames; zero path in null-video branches",
+                })
         contract_path = save_dir / "speaker_training_contract.json"
         if contract_path.exists():
             previous = json.loads(contract_path.read_text())
@@ -190,6 +215,8 @@ def main(model_cfg):
         speaker_embedding_dim=speaker_dim,
         speaker_embedding_model_id=model_cfg.datasets.speaker_embedding_model_id,
         speaker_embedding_checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
+        video_path_enabled=bool(model_cfg.datasets.get("video_path_enabled", False)),
+        native_video_root=model_cfg.datasets.get("native_video_root"),
     )
     if trainer.is_main:
         print(

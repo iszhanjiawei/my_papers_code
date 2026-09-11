@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
+from aligndit.model.semantic_vae_dataset import load_native_video_path
 from aligndit.model.speaker_embedding import (
     load_speaker_embedding,
     speaker_embedding_path,
@@ -117,26 +118,82 @@ def load_composed_config(config_path: Path):
 
 
 def validate_fixed_band_contract(config, checkpoint_path: Path) -> None:
-    """Fixed priors have no state keys, so strict weight loading alone is insufficient."""
+    """Guard parameter-free fixed/path priors, retaining the historical API name.
+
+    Both modes have identical weight keys to a model without their prior, so
+    strict EMA loading cannot detect a wrong mode or changed geometric scale.
+    """
     arch = config.model.arch
-    requested_fixed = bool(arch.get("temporal_band_enabled", False)) and arch.get("temporal_band_mode") == "fixed"
+    parameter_free_modes = {"fixed", "visual_path"}
+    requested_mode = arch.get("temporal_band_mode") if bool(arch.get("temporal_band_enabled", False)) else None
     contract_path = checkpoint_path.parent / "speaker_training_contract.json"
     contract = read_json_object(contract_path) if contract_path.is_file() else {}
     recorded = contract.get("temporal_band", {})
-    recorded_fixed = recorded.get("mode") == "fixed"
-    if not (requested_fixed or recorded_fixed):
+    if not isinstance(recorded, dict):
+        raise TypeError("Invalid temporal-band training contract")
+    recorded_mode = recorded.get("mode")
+    if requested_mode not in parameter_free_modes and recorded_mode not in parameter_free_modes:
         return
-    if not requested_fixed or not recorded_fixed:
-        raise RuntimeError("Fixed-band inference requires the matching fixed-band training contract beside the checkpoint")
+    if requested_mode not in parameter_free_modes or requested_mode != recorded_mode:
+        raise RuntimeError(
+            "Parameter-free temporal-band inference requires the matching fixed-band training contract "
+            "or matching visual-path training contract beside the checkpoint"
+        )
     recorded_parameters = recorded.get("parameters", {})
-    for key in (
+    if not isinstance(recorded_parameters, dict):
+        raise TypeError("Invalid temporal-band training parameters")
+    parameter_keys = [
         "temporal_band_enabled", "temporal_band_mode", "temporal_band_audio_fps", "temporal_band_video_fps",
         "temporal_band_fixed_offset_seconds", "temporal_band_fixed_sigma_seconds",
-    ):
+    ]
+    if requested_mode == "visual_path":
+        parameter_keys.append("temporal_band_path_sigma")
+    for key in parameter_keys:
         if key not in recorded_parameters or recorded_parameters[key] != arch.get(key):
-            raise RuntimeError(f"Fixed-band inference/training configuration mismatch: {key}")
+            raise RuntimeError(f"Temporal-band inference/training configuration mismatch: {key}")
     if recorded.get("parameter_count") != 0:
-        raise RuntimeError("Fixed-band checkpoint contract must record zero temporal-band parameters")
+        raise RuntimeError("Parameter-free temporal-band checkpoint contract must record zero temporal-band parameters")
+    if requested_mode == "visual_path":
+        datasets = config.datasets
+        if datasets.get("video_path_enabled") is not True or not datasets.get("native_video_root"):
+            raise RuntimeError("Visual-path inference requires enabled native video-path conditioning in datasets")
+        source = recorded.get("path_source", {})
+        expected_source = {
+            "native_fps": 25,
+            "feature": "L2-normalized frozen AV-HuBERT native features",
+            "coordinate": "cumulative_l2",
+            "resampling": "linear_align_corners_false",
+        }
+        if not isinstance(source, dict) or any(source.get(key) != value for key, value in expected_source.items()):
+            raise RuntimeError("Visual-path checkpoint has no matching native path-source contract")
+        if not source.get("native_video_root") or (
+            Path(source["native_video_root"]).expanduser().resolve()
+            != Path(datasets.native_video_root).expanduser().resolve()
+        ):
+            raise RuntimeError("Visual-path inference/training native video root mismatch")
+
+
+def setting1_video_path(target_path: torch.Tensor) -> torch.Tensor:
+    """Concatenate a flat dummy-prompt path and a rebased target without a jump."""
+    if target_path.ndim != 1 or target_path.numel() == 0 or target_path.dtype != torch.float32:
+        raise ValueError("Setting 1 target video_path must be a nonempty float32 vector")
+    if not torch.isfinite(target_path).all() or (target_path[1:] < target_path[:-1]).any():
+        raise ValueError("Setting 1 target video_path must be finite and nondecreasing")
+    target_path = target_path - target_path[:1]
+    return torch.cat((torch.zeros_like(target_path), target_path)).unsqueeze(0)
+
+
+def load_setting1_video_paths(config, records: list[dict[str, Any]]) -> list[torch.Tensor | None]:
+    """Validate native feature inputs before loading the large inference models."""
+    arch = config.model.arch
+    enabled = bool(arch.get("temporal_band_enabled", False)) and arch.get("temporal_band_mode") == "visual_path"
+    if not enabled:
+        return [None] * len(records)
+    datasets = config.datasets
+    if datasets.get("video_path_enabled") is not True or not datasets.get("native_video_root"):
+        raise ValueError("Visual-path inference requires datasets.video_path_enabled and native_video_root")
+    native_root = Path(datasets.native_video_root)
+    return [load_native_video_path(row, native_root, int(row["latent_frames"])) for row in records]
 
 
 def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, device: torch.device) -> CFM_VT:
@@ -325,6 +382,7 @@ def run(args: argparse.Namespace) -> None:
     cache_spec = read_json_object(cache_root / "state/latents/spec.json")
     config = load_composed_config(args.config.resolve(strict=True))
     speaker_embeddings, speaker_metadata = load_setting1_speaker_embeddings(config, records)
+    video_paths = load_setting1_video_paths(config, records)
 
     output_dir = args.output_dir.resolve()
     if output_dir.exists() and any(output_dir.rglob("*.wav")):
@@ -342,8 +400,8 @@ def run(args: argparse.Namespace) -> None:
     started_at = time.time()
     generated_rows = []
     with torch.inference_mode():
-        for row, speaker_embedding in tqdm(
-            zip(records, speaker_embeddings), total=len(records), desc=f"Semantic-VAE S1 {args.step}"
+        for row, speaker_embedding, video_path in tqdm(
+            zip(records, speaker_embeddings, video_paths), total=len(records), desc=f"Semantic-VAE S1 {args.step}"
         ):
             normalized, video = validate_record_arrays(row, cache_root, mean, std)
             frames = int(row["latent_frames"])
@@ -355,6 +413,8 @@ def run(args: argparse.Namespace) -> None:
                 speaker_kwargs["speaker_embedding"] = speaker_embedding.unsqueeze(0).to(
                     device=device, dtype=torch.float32
                 )
+            if video_path is not None:
+                speaker_kwargs["video_path"] = setting1_video_path(video_path).to(device=device, dtype=torch.float32)
             generated, _ = model.sample(
                 cond=cond,
                 text=[historical_setting1_text(str(row["text"]))],
@@ -416,6 +476,12 @@ def run(args: argparse.Namespace) -> None:
         },
         "decoder": decoder_metadata,
         "speaker_embedding": speaker_metadata,
+        "visual_path": {
+            "enabled": any(path is not None for path in video_paths),
+            "native_video_root": config.datasets.get("native_video_root"),
+            "coordinate": "native_25hz_l2_normalized_cumulative_l2_then_linear_align_corners_false",
+            "prompt_path": "flat zero prompt plus target rebased to zero at its first frame",
+        },
         "elapsed_seconds": time.time() - started_at,
         "generation": {
             "cfg_text": args.cfg_text,
@@ -451,7 +517,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=Path(__file__).parents[2]
-        / "config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml",
+        / "config/finetune_celebvdub_mm_c2_svae_speaker_visual_path_band.yaml",
     )
     parser.add_argument(
         "--cache-root",

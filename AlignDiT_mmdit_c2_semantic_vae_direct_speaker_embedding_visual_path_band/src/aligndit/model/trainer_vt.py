@@ -242,9 +242,11 @@ class Trainer_VT(Trainer):
                     text_lengths = batch["text_lengths"]
                     video = batch["video"]
                     video_lengths = batch["video_lengths"]
-                    speaker_kwargs = (
+                    conditioning_kwargs = (
                         {"speaker_embedding": batch["speaker_embedding"]} if "speaker_embedding" in batch else {}
                     )
+                    if "video_path" in batch:
+                        conditioning_kwargs["video_path"] = batch["video_path"].to(dtype=torch.float32)
 
                     loss, loss_components, cond, pred = self.model(
                         mel_spec,
@@ -254,7 +256,7 @@ class Trainer_VT(Trainer):
                         video=video,
                         video_lens=video_lengths,
                         noise_scheduler=self.noise_scheduler,
-                        **speaker_kwargs,
+                        **conditioning_kwargs,
                     )
                     diagnostics = self._forward_diagnostics(loss, loss_components)
                     self.accelerator.backward(loss)
@@ -302,17 +304,29 @@ class Trainer_VT(Trainer):
                             text_inputs[0] + ([" "] if isinstance(text_inputs[0], list) else " ") + text_inputs[0]
                         ]
                         with torch.inference_mode():
-                            generated, _ = self.accelerator.unwrap_model(self.model).sample(
+                            sample_model = self.accelerator.unwrap_model(self.model)
+                            ref_video_len = ref_audio_len // sample_model.audio_video_ratio
+                            sample_kwargs = {}
+                            if "speaker_embedding" in batch:
+                                sample_kwargs["speaker_embedding"] = batch["speaker_embedding"][:1]
+                            if "video_path" in batch:
+                                target_path = batch["video_path"][0, :ref_video_len].float()
+                                target_path = target_path - target_path[:1]
+                                sample_kwargs["video_path"] = torch.cat(
+                                    (torch.zeros_like(target_path), target_path)
+                                ).unsqueeze(0)
+                            generated, _ = sample_model.sample(
                                 cond=mel_spec[0][:ref_audio_len].unsqueeze(0),
                                 text=infer_text,
                                 video=torch.cat(
-                                    [video[0][: ref_audio_len // 4], video[0][: ref_audio_len // 4]]
+                                    [video[0][:ref_video_len], video[0][:ref_video_len]]
                                 ).unsqueeze(0),
                                 duration=ref_audio_len * 2,
                                 steps=nfe_step,
                                 cfg_strength=cfg_strength,
                                 sway_sampling_coef=sway_sampling_coef,
                                 max_duration=5000,
+                                **sample_kwargs,
                             )
                             generated = generated.to(torch.float32)
                             gen_mel_spec = generated[:, ref_audio_len:, :].permute(0, 2, 1).to(self.accelerator.device)

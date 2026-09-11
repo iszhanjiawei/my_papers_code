@@ -28,6 +28,7 @@ from x_transformers.x_transformers import apply_rotary_pos_emb
 from aligndit.model.adaptive_temporal_band import AdaptiveTemporalBand
 from aligndit.model.fixed_temporal_band import FixedTemporalBand
 from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
+from aligndit.model.visual_path_temporal_band import VisualPathTemporalBand, masked_visual_path
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
 from f5_tts.model.modules import AdaLayerNorm, AttnProcessor, Attention, DiTBlock, FeedForward
@@ -416,6 +417,7 @@ class DiT_VT_MMDiT(DiT):
         temporal_band_mode="adaptive",
         temporal_band_fixed_offset_seconds=0.0,
         temporal_band_fixed_sigma_seconds=0.100,
+        temporal_band_path_sigma=2.0,
     ):
         super().__init__(
             dim=dim,
@@ -566,19 +568,31 @@ class DiT_VT_MMDiT(DiT):
         # Construct only after all inherited parameter initialization. Disabled
         # runs retain exactly the parent's state-dict keys and RNG behavior;
         # adaptive mode adds just the shared two-layer predictor. Fixed mode
-        # has no parameters/buffers and also preserves inherited RNG behavior.
+        # and visual-path modes have no parameters/buffers and also preserve
+        # inherited RNG behavior.
         self.temporal_band_enabled = bool(temporal_band_enabled)
-        if temporal_band_mode not in ("adaptive", "fixed"):
-            raise ValueError("temporal_band_mode must be 'adaptive' or 'fixed'")
+        if temporal_band_mode not in ("adaptive", "fixed", "visual_path"):
+            raise ValueError("temporal_band_mode must be 'adaptive', 'fixed', or 'visual_path'")
         self.temporal_band_mode = temporal_band_mode
         self.temporal_band = None
         self.last_temporal_band_offset_seconds = None
         self.last_temporal_band_sigma_seconds = None
         self.last_temporal_band_valid_mask = None
+        self.last_visual_path_increments = None
+        self.last_visual_path_valid_mask = None
         if self.temporal_band_enabled:
             if self.n_mm_layers == 0:
                 raise ValueError("temporal_band_enabled requires at least one multimodal block")
-            if self.temporal_band_mode == "fixed":
+            if self.temporal_band_mode == "visual_path":
+                self.temporal_band = VisualPathTemporalBand(
+                    dim=dim,
+                    audio_fps=temporal_band_audio_fps,
+                    video_fps=temporal_band_video_fps,
+                    offset_seconds=temporal_band_fixed_offset_seconds,
+                    sigma_seconds=temporal_band_fixed_sigma_seconds,
+                    path_sigma=temporal_band_path_sigma,
+                )
+            elif self.temporal_band_mode == "fixed":
                 self.temporal_band = FixedTemporalBand(
                     dim=dim,
                     audio_fps=temporal_band_audio_fps,
@@ -725,9 +739,34 @@ class DiT_VT_MMDiT(DiT):
         drop_speaker: bool | None = None,
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
+        video_path: float["b nv"] | None = None,  # native-derived cumulative visual path  # noqa: F722
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
+        visual_path_state = None
+        if self.temporal_band is not None and self.temporal_band_mode == "visual_path":
+            if video_path is None:
+                raise ValueError("visual_path mode requires video_path derived from native AV-HuBERT features")
+            if video_path.shape != (batch, video_len):
+                raise ValueError(f"video_path must have shape {(batch, video_len)}, got {tuple(video_path.shape)}")
+            if video_path.device != video.device:
+                raise ValueError("video_path and video must be on the same device")
+            visible = torch.ones((batch, video_len), device=video.device, dtype=torch.bool)
+            if video_mask is not None:
+                if video_mask.shape != visible.shape or video_mask.dtype != torch.bool:
+                    raise ValueError("visual_path video_mask must be bool and match [batch, video frames]")
+                visible = visible & video_mask
+            elif mask is not None:
+                audio_indices = (torch.arange(video_len, device=video.device) * self.audio_video_ratio).floor().long()
+                visible = visible & (audio_indices < seq_len)[None]
+                visible = visible & mask[:, audio_indices.clamp(max=seq_len - 1)]
+            if complementary_mask is not None:
+                if complementary_mask.shape != visible.shape or complementary_mask.dtype != torch.bool:
+                    raise ValueError("visual_path complementary_mask must be bool and match [batch, video frames]")
+                visible = visible & ~complementary_mask
+            # Drop invalid/hidden edges before cumulative reconstruction. This
+            # prevents hidden prompt motion leaking through a later prefix sum.
+            visual_path_state = masked_visual_path(video_path, visible)
         if generation_mask is None:
             raise ValueError("generation_mask is required to separate prompt and synthesized audio regions")
         if generation_mask.dtype != torch.bool:
@@ -768,6 +807,7 @@ class DiT_VT_MMDiT(DiT):
                 drop_speaker=drop_speaker,
             )
             if not (drop_text or drop_video):
+                visual_path_kept_branches = (True, False, False)
                 x_cond, text_embed_cond, v_cond = self.get_input_embed(**embed_kwargs)
                 x_list.append(x_cond)
                 text_embed_list.append(text_embed_cond)
@@ -784,6 +824,7 @@ class DiT_VT_MMDiT(DiT):
                 if speaker_delta_cond is not None:
                     speaker_delta_list.append(speaker_delta_cond)
             else:
+                visual_path_kept_branches = (not drop_video, False)
                 x_cond, text_embed_cond, v_cond = self.get_input_embed(
                     **embed_kwargs,
                     drop_text=drop_text,
@@ -828,6 +869,7 @@ class DiT_VT_MMDiT(DiT):
             speaker_delta = torch.cat(speaker_delta_list, dim=0) if speaker_delta_list else None
 
         else:
+            visual_path_kept_branches = (not drop_video,)
             x, text_embed, v = self.get_input_embed(
                 **embed_kwargs,
                 drop_audio_cond=drop_audio_cond,
@@ -849,9 +891,24 @@ class DiT_VT_MMDiT(DiT):
             # v is already branch-specific (including null-video embedding for
             # CFG TTS/unconditional branches). Adaptive mode reads this content;
             # fixed mode uses only its shape/device and has identical geometry
-            # in every branch. Never predict adaptive bands from raw video here.
+            # in every branch. Visual-path mode uses a separate native-derived
+            # coordinate with identical conditioning-mask/CFG branch semantics.
             offset_seconds, sigma_seconds = self.temporal_band(v, seq_len)
-            temporal_band_bias = self.temporal_band.bias(offset_seconds, sigma_seconds, video_len)
+            if visual_path_state is not None:
+                # Match branch-major torch.cat ordering, including batch > 1.
+                # Null-video paths are constants and never read true-video
+                # coordinates, so TTS/unconditional CFG cannot leak content.
+                path, increments, valid_pairs = (
+                    torch.cat([value if keep else torch.zeros_like(value) for keep in visual_path_kept_branches], dim=0)
+                    for value in visual_path_state
+                )
+                temporal_band_bias = self.temporal_band.bias(
+                    offset_seconds, sigma_seconds, video_len, video_path=path
+                )
+                self.last_visual_path_increments = increments.detach()
+                self.last_visual_path_valid_mask = valid_pairs.detach()
+            else:
+                temporal_band_bias = self.temporal_band.bias(offset_seconds, sigma_seconds, video_len)
             self.last_temporal_band_offset_seconds = offset_seconds.detach()
             self.last_temporal_band_sigma_seconds = sigma_seconds.detach()
             self.last_temporal_band_valid_mask = mask.detach() if mask is not None else None

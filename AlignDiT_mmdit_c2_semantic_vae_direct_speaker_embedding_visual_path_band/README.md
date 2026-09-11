@@ -1,10 +1,10 @@
 # Current experiment
 
-This isolated snapshot adds a **fixed-center, fixed-width Gaussian AV temporal
+This isolated snapshot adds a **visual feature path-distance AV temporal
 band** to Semantic-VAE Direct-C2 with frozen CAM++ speaker conditions.
-See [FIXED_TEMPORAL_BAND.md](FIXED_TEMPORAL_BAND.md) for this experiment's
+See [VISUAL_PATH_TEMPORAL_BAND.md](VISUAL_PATH_TEMPORAL_BAND.md) for this experiment's
 configuration, training, TensorBoard and inference commands. Older copied
-speaker/adaptive documentation is historical, not the launch protocol here.
+speaker/adaptive/fixed documentation is historical, not the launch protocol here.
 
 # AlignDiT
 

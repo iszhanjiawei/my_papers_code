@@ -59,6 +59,7 @@ class CFM_VT(CFM):
         video: float["b nv d"],  # noqa: F722
         speaker_embedding: float["b ds"] | None = None,
         *,
+        video_path: torch.Tensor | None = None,
         lens: int["b"] | None = None,  # noqa: F821
         steps=32,
         cfg_strength=1.0,
@@ -86,6 +87,12 @@ class CFM_VT(CFM):
         video = video.to(next(self.parameters()).dtype)
 
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
+        if video_path is not None:
+            if video_path.shape != video.shape[:2]:
+                raise ValueError("video_path must match the unpadded input video batch and time axes")
+            # The path coordinate is a geometric conditioning signal, never a
+            # model-precision feature. Preserve FP32 under mixed precision.
+            video_path = video_path.to(device=device, dtype=torch.float32)
         if speaker_embedding is not None:
             speaker_embedding = speaker_embedding.to(device=device, dtype=torch.float32)
         if not exists(lens):
@@ -122,6 +129,9 @@ class CFM_VT(CFM):
         if video is not None:
             max_video_len = max_duration // self.audio_video_ratio
             video = video[:, :max_video_len, :]
+            if video_path is not None:
+                video_path = video_path[:, :max_video_len]
+        video_path_kwargs = {"video_path": video_path} if video_path is not None else {}
 
         # duplicate test corner for inner time step oberservation
         if duplicate_test:
@@ -178,6 +188,7 @@ class CFM_VT(CFM):
                     speaker_embedding=speaker_embedding,
                     drop_speaker=no_ref_audio,
                     cache=True,
+                    **video_path_kwargs,
                 )
                 return pred
 
@@ -199,6 +210,7 @@ class CFM_VT(CFM):
                 drop_speaker=no_ref_audio,
                 cfg_infer=True,
                 cache=True,
+                **video_path_kwargs,
             )
             if ignore_modality is None:
                 pred, tts_pred, null_pred = torch.chunk(pred_cfg, 3, dim=0)
@@ -257,6 +269,7 @@ class CFM_VT(CFM):
         video: float["b nv d"],  # noqa: F722
         speaker_embedding: float["b ds"] | None = None,
         *,
+        video_path: torch.Tensor | None = None,
         lens: int["b"] | None = None,  # noqa: F821
         text_lens: int["b"] | None = None,  # noqa: F821
         video_lens: int["b"] | None = None,  # noqa: F821
@@ -269,6 +282,11 @@ class CFM_VT(CFM):
             assert inp.shape[-1] == self.num_channels
 
         batch, seq_len, dtype, device, _σ1 = *inp.shape[:2], inp.dtype, self.device, self.sigma
+        video_path_kwargs = {}
+        if video_path is not None:
+            if video_path.shape != video.shape[:2]:
+                raise ValueError("video_path must match the input video batch and time axes")
+            video_path_kwargs["video_path"] = video_path.to(device=device, dtype=torch.float32)
 
         # handle text as string
         if isinstance(text, list):
@@ -369,6 +387,7 @@ class CFM_VT(CFM):
             speaker_embedding=speaker_embedding,
             # Use the final prompt dropout, including all-condition dropout.
             drop_speaker=drop_audio_cond,
+            **video_path_kwargs,
         )
 
         # flow matching loss

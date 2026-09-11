@@ -17,6 +17,7 @@ from aligndit.model.speaker_embedding import (
     validate_speaker_cache_metadata,
     validate_speaker_embedding_array,
 )
+from aligndit.model.visual_path_temporal_band import native_visual_path
 
 
 SEMANTIC_VAE_LATENT_DIM = 64
@@ -94,6 +95,33 @@ def _ctc_lengths(text: str, vocabulary: dict[str, int]) -> tuple[int, int, int]:
     return target_length, adjacent_repeats, target_length + adjacent_repeats
 
 
+def load_native_video_path(record: dict, native_video_root: Path, target_length: int) -> torch.Tensor:
+    """Read native frozen features without changing either authoritative cache.
+
+    Accumulate feature-space distance at 25 Hz first, then resample the scalar
+    coordinate with exactly the existing 40-Hz feature cache's interpolation.
+    Computing increments from that interpolated feature cache would erase
+    short out-and-back visual movements.
+    """
+    root = Path(native_video_root).expanduser().absolute()
+    if root.is_symlink() or not root.is_dir():
+        raise FileNotFoundError(f"Native video root must be a regular directory: {root}")
+    root = root.resolve(strict=True)
+    relative_path = record.get("video_relative_path")
+    native_frames = record.get("video_frames_25hz")
+    if not isinstance(relative_path, str) or not relative_path or Path(relative_path).suffix != ".npy":
+        raise ValueError(f"Invalid native video relative path: {relative_path!r}")
+    if type(native_frames) is not int or native_frames <= 0:
+        raise ValueError(f"Invalid native video frame count: {native_frames!r}")
+    path = _regular_file(_safe_join(root, relative_path, label="native 25 Hz video"), label="native 25 Hz video")
+    video = np.load(path, allow_pickle=False)
+    if video.shape != (native_frames, CELEBVDUB_VIDEO_DIM) or video.dtype != np.float32:
+        raise ValueError(f"Invalid native video for {record.get('utterance_key')}: {video.shape}/{video.dtype}")
+    if not np.isfinite(video).all():
+        raise FloatingPointError(f"Non-finite native video for {record.get('utterance_key')}")
+    return native_visual_path(torch.from_numpy(video), target_length)
+
+
 class SemanticVaeCelebVDubDataset(Dataset):
     """The original 79,613-record C2 train split represented at 64D/40 Hz.
 
@@ -119,6 +147,8 @@ class SemanticVaeCelebVDubDataset(Dataset):
         speaker_embedding_dim: int = DEFAULT_SPEAKER_EMBEDDING_DIM,
         speaker_embedding_model_id: str | None = None,
         speaker_embedding_checkpoint_sha256: str | None = None,
+        video_path_enabled: bool = False,
+        native_video_root: str | Path | None = None,
     ):
         self.manifest_path = _regular_file(manifest_path, label="CelebV-Dub train manifest")
         if self.manifest_path.name != "train.jsonl":
@@ -137,6 +167,17 @@ class SemanticVaeCelebVDubDataset(Dataset):
         if cache_root_path.is_symlink() or not cache_root_path.is_dir():
             raise FileNotFoundError(f"Semantic-VAE cache root must be a regular directory: {cache_root_path}")
         self.cache_root = cache_root_path.resolve(strict=True)
+        if type(video_path_enabled) is not bool:
+            raise TypeError("video_path_enabled must be a bool")
+        self.video_path_enabled = video_path_enabled
+        self.native_video_root: Path | None = None
+        if self.video_path_enabled:
+            if native_video_root is None:
+                raise ValueError("visual-path alignment requires native_video_root")
+            native_root = Path(native_video_root).expanduser().absolute()
+            if native_root.is_symlink() or not native_root.is_dir():
+                raise FileNotFoundError(f"Native video root must be a regular directory: {native_root}")
+            self.native_video_root = native_root.resolve(strict=True)
 
         inventory_meta_path = _regular_file(
             self.manifest_path.parent / "inventory_meta.json", label="CelebV-Dub inventory metadata"
@@ -251,6 +292,22 @@ class SemanticVaeCelebVDubDataset(Dataset):
                 record.get("video_40hz_relative_path"), str
             ):
                 raise TypeError(f"Missing cached feature path for {key}")
+            if self.video_path_enabled:
+                native_relative = record.get("video_relative_path")
+                native_frames = record.get("video_frames_25hz")
+                if (
+                    not isinstance(native_relative, str)
+                    or not native_relative
+                    or Path(native_relative).suffix != ".npy"
+                    or type(native_frames) is not int
+                    or native_frames <= 0
+                ):
+                    raise ValueError(f"Invalid native video metadata for {key}")
+                relative = Path(native_relative)
+                if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+                    raise ValueError(f"Invalid native video relative path for {key}: {native_relative!r}")
+                # Resolve symlinks and verify containment when loading each
+                # array. The manifest scan stays metadata-only on shared disks.
             target_length, adjacent_repeats, minimum_frames = _ctc_lengths(text, vocabulary)
             feasible = frames >= minimum_frames
             if (
@@ -398,6 +455,8 @@ class SemanticVaeCelebVDubDataset(Dataset):
         }
         if self.speaker_embedding_cache_dir is not None:
             result["speaker_embedding"] = torch.from_numpy(self._load_speaker_embedding_array(record))
+        if self.video_path_enabled:
+            result["video_path"] = load_native_video_path(record, self.native_video_root, frames)
         return result
 
     @staticmethod
@@ -426,4 +485,20 @@ class SemanticVaeCelebVDubDataset(Dataset):
             if not all(has_speaker_embedding):
                 raise RuntimeError("speaker_embedding must be present for every sample in a batch")
             result["speaker_embedding"] = torch.stack([item["speaker_embedding"] for item in batch])
+        has_video_path = ["video_path" in item for item in batch]
+        if any(has_video_path):
+            if not all(has_video_path):
+                raise RuntimeError("video_path must be present for every sample in a batch")
+            padded_paths = []
+            for item in batch:
+                path = item["video_path"]
+                frames = item["video"].shape[0]
+                if not isinstance(path, torch.Tensor) or path.shape != (frames,) or path.dtype != torch.float32:
+                    raise ValueError("video_path must be a float32 vector matching the video frame count")
+                if frames == 0 or not torch.isfinite(path).all() or (path[1:] < path[:-1]).any():
+                    raise ValueError("video_path must be finite, nonempty and nondecreasing")
+                # A cumulative coordinate must stay flat outside each sample;
+                # ordinary zero padding would introduce a false backward jump.
+                padded_paths.append(torch.cat((path, path[-1:].expand(max_length - frames))))
+            result["video_path"] = torch.stack(padded_paths)
         return result
