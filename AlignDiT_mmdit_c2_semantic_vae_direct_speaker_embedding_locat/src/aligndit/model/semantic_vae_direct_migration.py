@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -183,6 +184,7 @@ def migrate_s2c_ema_into_model(
             or torch.count_nonzero(speaker).item() != 0
         ):
             raise RuntimeError("S2c speaker migration requires a new, zero-initialized Linear(192, 768) weight")
+    locat_keys = validate_locat_initialization(model, target_state, set(new_target))
     actual_counts = (
         len(source_state),
         len(target_state),
@@ -192,10 +194,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS + int(has_speaker),
+        EXPECTED_TARGET_KEYS + int(has_speaker) + len(locat_keys),
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS + int(has_speaker),
+        EXPECTED_NEW_TARGET_KEYS + int(has_speaker) + len(locat_keys),
     )
     if actual_counts != expected_counts:
         raise RuntimeError(
@@ -231,3 +233,42 @@ def migrate_s2c_ema_into_model(
         loaded_numel=loaded_numel,
         target_numel=sum(value.numel() for value in target_state.values()),
     )
+
+
+def validate_locat_initialization(
+    model: nn.Module, target_state: dict[str, torch.Tensor], new_target: set[str],
+) -> set[str]:
+    """Permit only the exact newly initialized per-layer LocAt predictor tensors."""
+    config = getattr(model.transformer, "locat_config", {})
+    actual = {key for key in target_state if ".locat_" in key}
+    expected: set[str] = set()
+    if config.get("locat_enabled", False):
+        for direction in ("av", "va"):
+            for layer in range(config[f"locat_{direction}_layers"]):
+                expected.update(
+                    f"transformer.transformer_blocks.{layer}.locat_{direction}.{head}.{suffix}"
+                    for head in ("log_sigma", "log_alpha") for suffix in ("weight", "bias")
+                )
+    if actual != expected or not expected.issubset(new_target):
+        raise RuntimeError(f"Unexpected new LocAt predictor keys: expected={sorted(expected)}, actual={sorted(actual)}")
+    if not expected:
+        return expected
+    sigma_bias = math.log(
+        (config["locat_sigma_init_seconds"] - config["locat_sigma_min_seconds"])
+        / (config["locat_sigma_max_seconds"] - config["locat_sigma_init_seconds"])
+    )
+    # Stable inverse softplus, also valid for large positive alpha.
+    alpha = config["locat_alpha_init"]
+    alpha_bias = alpha + math.log(-math.expm1(-alpha))
+    for key in expected:
+        value = target_state[key]
+        if not torch.isfinite(value).all():
+            raise RuntimeError(f"Non-finite LocAt initialization: {key}")
+        if key.endswith(".weight"):
+            if tuple(value.shape) != (1, 64) or torch.count_nonzero(value).item() != 0:
+                raise RuntimeError(f"LocAt S2c migration requires new zero Linear(64, 1) weights: {key}")
+        else:
+            bias = sigma_bias if ".log_sigma." in key else alpha_bias
+            if tuple(value.shape) != (1,) or not torch.allclose(value, value.new_tensor([bias]), rtol=1e-6, atol=1e-7):
+                raise RuntimeError(f"LocAt S2c migration requires configured constant sigma/alpha initialization: {key}")
+    return expected

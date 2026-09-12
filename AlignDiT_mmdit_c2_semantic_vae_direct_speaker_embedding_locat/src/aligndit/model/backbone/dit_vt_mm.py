@@ -26,6 +26,7 @@ import torch.nn.functional as F
 from x_transformers.x_transformers import apply_rotary_pos_emb
 
 from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
+from aligndit.model.locat_temporal import LocAtTemporalBias
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
 from f5_tts.model.modules import AdaLayerNorm, AttnProcessor, Attention, DiTBlock, FeedForward
@@ -193,6 +194,11 @@ class MMDiTBlock_VT(DiTCrossBlock):
         self.attn_mask_enabled = attn_mask_enabled
         self.prompt_isolated_ca = prompt_isolated_ca
 
+        # Attached by the backbone only AFTER its original initialization.
+        # None adds no state-dict keys and does not consume random numbers.
+        self.locat_av = None
+        self.locat_va = None
+
         # video stream 视频流独立参数
         self.v_attn_norm = AdaLayerNorm(dim)
         self.v_attn = Attention(
@@ -242,7 +248,10 @@ class MMDiTBlock_VT(DiTCrossBlock):
             key = apply_rotary_pos_emb(key, freqs, k_xpos_scale)
         return query, key
 
-    def joint_attn(self, norm_x, norm_v, mask=None, v_mask=None, rope=None, v_rope=None):
+    def joint_attn(
+        self, norm_x, norm_v, mask=None, v_mask=None, rope=None, v_rope=None,
+        locat_audio_mask=None, locat_video_mask=None, locat_video_enabled=None,
+    ):
         batch_size = norm_x.shape[0]
         n_a, n_v = norm_x.shape[1], norm_v.shape[1]
         heads = self.attn.heads
@@ -251,6 +260,22 @@ class MMDiTBlock_VT(DiTCrossBlock):
         q_a, k_a, v_a = self._qkv(self.attn, norm_x)
         q_v, k_v, v_v = self._qkv(self.v_attn, norm_v)
 
+        # Predict from the normalized PRE-RoPE query, as in LocAtViT's
+        # RoPE-compatible implementation. Partial-head RoPE writes in-place;
+        # isolate the tensor saved by Linear backward in that case.
+        av_parameters = None
+        va_parameters = None
+        if self.locat_av is not None:
+            predictor_q = q_a.clone() if self.pe_attn_head is not None else q_a
+            av_parameters = self.locat_av.parameters_from_query(
+                predictor_q, query_mask=locat_audio_mask, enabled=locat_video_enabled,
+            )
+        if self.locat_va is not None:
+            predictor_q = q_v.clone() if self.pe_attn_head is not None else q_v
+            va_parameters = self.locat_va.parameters_from_query(
+                predictor_q, query_mask=locat_video_mask, enabled=locat_video_enabled,
+            )
+
         q_a, k_a = self._apply_rope(q_a, k_a, rope)   # 将 Q 和 K 进行位置编码  
         q_v, k_v = self._apply_rope(q_v, k_v, v_rope) # 将 Q 和 K 进行位置编码
 
@@ -258,16 +283,52 @@ class MMDiTBlock_VT(DiTCrossBlock):
         key = torch.cat([k_a, k_v], dim=2)
         value = torch.cat([v_a, v_v], dim=2)
 
-        if self.attn_mask_enabled and mask is not None:
+        if av_parameters is not None or va_parameters is not None:
+            # Keep the original padding protocol: train passes mask=None to
+            # save memory, whereas LocAt's separate validity masks still gate
+            # the enhancement. Hidden video is NOT newly hard-masked here.
+            key_mask = None
+            if self.attn_mask_enabled and mask is not None:
+                if v_mask is None:
+                    v_mask = torch.ones((batch_size, n_v), dtype=torch.bool, device=mask.device)
+                key_mask = torch.cat([mask, v_mask], dim=1)[:, None, None, :]
+
+            audio_bias = key_mask
+            if av_parameters is not None:
+                av_bias = self.locat_av.bias_from_parameters(
+                    *av_parameters, n_v, query_mask=locat_audio_mask,
+                    key_mask=locat_video_mask, enabled=locat_video_enabled,
+                ).to(q_a.dtype)
+                audio_bias = F.pad(av_bias, (n_a, 0))
+                if key_mask is not None:
+                    audio_bias = audio_bias.masked_fill(~key_mask, float("-inf"))
+            video_bias = key_mask
+            if va_parameters is not None:
+                va_bias = self.locat_va.bias_from_parameters(
+                    *va_parameters, n_a, query_mask=locat_video_mask,
+                    key_mask=locat_audio_mask, enabled=locat_video_enabled,
+                ).to(q_v.dtype)
+                video_bias = F.pad(va_bias, (0, n_v))
+                if key_mask is not None:
+                    video_bias = video_bias.masked_fill(~key_mask, float("-inf"))
+            # One joint softmax over [audio keys, video keys] remains. Splitting
+            # query rows only avoids a full (Na+Nv)^2 differentiable bias.
+            out_a = F.scaled_dot_product_attention(
+                q_a, key, value, attn_mask=audio_bias, dropout_p=0.0, is_causal=False,
+            )
+            out_v = F.scaled_dot_product_attention(
+                q_v, key, value, attn_mask=video_bias, dropout_p=0.0, is_causal=False,
+            )
+            out = torch.cat([out_a, out_v], dim=2)
+        elif self.attn_mask_enabled and mask is not None:
             if v_mask is None:
                 v_mask = torch.ones((batch_size, n_v), dtype=torch.bool, device=mask.device)
             key_mask = torch.cat([mask, v_mask], dim=1)
             attn_mask = key_mask.unsqueeze(1).unsqueeze(1)  # 'b n -> b 1 1 n'
             attn_mask = attn_mask.expand(batch_size, heads, n_a + n_v, n_a + n_v)
+            out = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
         else:
-            attn_mask = None
-
-        out = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
+            out = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False)
         out = out.transpose(1, 2).reshape(batch_size, -1, heads * head_dim)
         out = out.to(query.dtype)
 
@@ -297,6 +358,9 @@ class MMDiTBlock_VT(DiTCrossBlock):
         text=None,
         text_mask=None,
         generation_mask=None,
+        locat_audio_mask=None,
+        locat_video_mask=None,
+        locat_video_enabled=None,
     ):
         if self.prompt_isolated_ca:
             _validate_generation_mask(x, generation_mask)
@@ -305,7 +369,11 @@ class MMDiTBlock_VT(DiTCrossBlock):
         norm_v, v_gate_msa, v_shift_mlp, v_scale_mlp, v_gate_mlp = self.v_attn_norm(v, emb=t)
 
         # joint attention across audio and video streams 2、两流信息双向交换
-        attn_x, attn_v = self.joint_attn(norm_x, norm_v, mask=mask, v_mask=v_mask, rope=rope, v_rope=v_rope)
+        attn_x, attn_v = self.joint_attn(
+            norm_x, norm_v, mask=mask, v_mask=v_mask, rope=rope, v_rope=v_rope,
+            locat_audio_mask=locat_audio_mask, locat_video_mask=locat_video_mask,
+            locat_video_enabled=locat_video_enabled,
+        )
         # x_gate_msa 门控，是控制注意力输出以多大比例加回残差流的。门控都是加载处理网络之后的，用来控制网络输出的多少，而不是加在输入，是作用于输出，而不是输入
         x = x + x_gate_msa.unsqueeze(1) * attn_x # gate 控制音频流接受的信息量
         v = v + v_gate_msa.unsqueeze(1) * attn_v # gate 控制视频流接受的信息量
@@ -368,6 +436,16 @@ class DiT_VT_MMDiT(DiT):
         normalize_text_context=False,
         speaker_dim=None,
         speaker_condition_start_layer=None,
+        locat_enabled=False,
+        locat_av_enabled=True,
+        locat_va_enabled=False,
+        locat_audio_fps=40.0,
+        locat_video_fps=40.0,
+        locat_sigma_min_seconds=0.025,
+        locat_sigma_max_seconds=0.400,
+        locat_sigma_init_seconds=0.100,
+        locat_alpha_init=0.100,
+        locat_bias_mode="gaussian",
     ):
         super().__init__(
             dim=dim,
@@ -514,6 +592,62 @@ class DiT_VT_MMDiT(DiT):
             # Preserve the parent Direct-C2 model at initialization. A second
             # zero gate here would block gradients into the projection.
             nn.init.constant_(self.speaker_proj.weight, 0)
+
+        self.locat_config = {
+            "locat_enabled": bool(locat_enabled),
+            "locat_av_enabled": bool(locat_av_enabled),
+            "locat_va_enabled": bool(locat_va_enabled),
+            "locat_audio_fps": float(locat_audio_fps),
+            "locat_video_fps": float(locat_video_fps),
+            "locat_sigma_min_seconds": float(locat_sigma_min_seconds),
+            "locat_sigma_max_seconds": float(locat_sigma_max_seconds),
+            "locat_sigma_init_seconds": float(locat_sigma_init_seconds),
+            "locat_alpha_init": float(locat_alpha_init),
+            "locat_bias_mode": locat_bias_mode,
+            "locat_av_layers": self.n_mm_layers if locat_enabled and locat_av_enabled else 0,
+            # Last MM block's video output is never consumed by an audio loss.
+            # Do not add an untrainable terminal VA predictor.
+            "locat_va_layers": max(self.n_mm_layers - 1, 0) if locat_enabled and locat_va_enabled else 0,
+        }
+        if locat_enabled:
+            # Adding LocAt must not perturb any baseline initialization, nor
+            # the subsequent RNG stream used by training/data augmentation.
+            with torch.random.fork_rng(devices=[]):
+                for layer_i, block in enumerate(self.transformer_blocks[: self.n_mm_layers]):
+                    for direction, active, query_fps, key_fps in (
+                        ("av", locat_av_enabled, locat_audio_fps, locat_video_fps),
+                        ("va", locat_va_enabled and layer_i < self.n_mm_layers - 1, locat_video_fps, locat_audio_fps),
+                    ):
+                        if active:
+                            setattr(block, "locat_" + direction, LocAtTemporalBias(
+                                dim_head=dim_head, query_fps=query_fps, key_fps=key_fps,
+                                sigma_min_seconds=locat_sigma_min_seconds,
+                                sigma_max_seconds=locat_sigma_max_seconds,
+                                sigma_init_seconds=locat_sigma_init_seconds,
+                                alpha_init=locat_alpha_init, bias_mode=locat_bias_mode,
+                            ))
+
+    def locat_diagnostics(self):
+        """Detached scalar summaries only; never retain an attention-sized map."""
+        result = {}
+        for direction in ("av", "va"):
+            summaries = [
+                module.last_diagnostics
+                for block in self.transformer_blocks[: self.n_mm_layers]
+                if (module := getattr(block, "locat_" + direction, None)) is not None
+                and module.last_diagnostics
+            ]
+            if not summaries:
+                continue
+            for name in summaries[0]:
+                values = torch.stack([summary[name] for summary in summaries])
+                if "_min" in name:
+                    result[f"{direction}/{name}"] = values.amin().detach()
+                elif "_max" in name:
+                    result[f"{direction}/{name}"] = values.amax().detach()
+                else:
+                    result[f"{direction}/{name}"] = values.mean().detach()
+        return result
 
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
@@ -783,6 +917,30 @@ class DiT_VT_MMDiT(DiT):
         else:
             v_mask = None
 
+        locat_audio_mask = None
+        locat_video_mask = None
+        locat_video_enabled = None
+        if self.locat_config["locat_av_layers"] or self.locat_config["locat_va_layers"]:
+            locat_audio_mask = mask
+            if video_mask is not None:
+                locat_video_mask = LocAtTemporalBias._mask(
+                    video_mask, (x.size(0), video_len), x.device, "video_mask",
+                )
+            elif v_mask is not None:
+                locat_video_mask = v_mask
+            else:
+                locat_video_mask = torch.ones((x.size(0), video_len), dtype=torch.bool, device=x.device)
+            if complementary_mask is not None:
+                hidden = LocAtTemporalBias._mask(
+                    complementary_mask, (x.size(0), video_len), x.device, "complementary_mask",
+                )
+                locat_video_mask = locat_video_mask & ~hidden
+            # Packed CFG is branch-major: only the first (conditioned) B rows
+            # may see video. TTS/null rows never receive a temporal enhancement.
+            locat_video_enabled = torch.zeros((x.size(0),), dtype=torch.bool, device=x.device)
+            locat_video_enabled[:batch] = not drop_video
+            locat_video_enabled = locat_video_enabled & locat_video_mask.any(dim=1)
+
         if self.long_skip_connection is not None:
             residual = x
 
@@ -812,6 +970,9 @@ class DiT_VT_MMDiT(DiT):
                         text_embed,
                         text_mask,
                         generation_mask,
+                        locat_audio_mask,
+                        locat_video_mask,
+                        locat_video_enabled,
                         use_reentrant=False,
                     )
                 elif has_tail_text:
@@ -848,6 +1009,9 @@ class DiT_VT_MMDiT(DiT):
                         text=text_embed,
                         text_mask=text_mask,
                         generation_mask=generation_mask,
+                        locat_audio_mask=locat_audio_mask,
+                        locat_video_mask=locat_video_mask,
+                        locat_video_enabled=locat_video_enabled,
                     )
                 elif has_tail_text:
                     x = block(

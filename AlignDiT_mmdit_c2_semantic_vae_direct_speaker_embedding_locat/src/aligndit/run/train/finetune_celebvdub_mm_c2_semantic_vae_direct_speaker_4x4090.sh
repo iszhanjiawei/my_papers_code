@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# Isolated Direct-C2 + CAM++ speaker training with CTC disabled through 10k and linearly warmed to
-# 0.03 at 30k. All other settings, including LR=5e-5, match Direct-C2.
+# Isolated LocAt-inspired Direct-C2 + CAM++ speaker training. The original
+# speaker directory is not imported or modified by this copied launcher.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$script_dir"
 while [[ "$project_root" != "/" && ! -f "$project_root/env.sh" ]]; do
@@ -43,7 +43,12 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-echo "Launching Semantic-VAE Direct-C2 + CAM++ tail6: LR=5e-5, CTC 0@10k -> 0.03@30k, stop at 200k" >&2
+train_config="${TRAIN_CONFIG:-finetune_celebvdub_mm_c2_svae_speaker_locat_av}"
+if [[ "$train_config" != finetune_celebvdub_mm_c2_svae_speaker_locat_* ]]; then
+    echo "This isolated launcher requires an explicit LocAt configuration: $train_config" >&2
+    exit 1
+fi
+echo "Launching $train_config: LR=5e-5, CTC 0@10k -> 0.03@30k, stop at 200k" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     OMP_NUM_THREADS=1 \
@@ -58,7 +63,7 @@ exec env \
         --num_machines 1 \
         --dynamo_backend no \
         --num_processes 4 \
-        --main_process_port "${TRAIN_PORT:-29620}" \
+        --main_process_port "${TRAIN_PORT:-29634}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
-        --config-name finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup \
+        --config-name "$train_config" \
         "$@"

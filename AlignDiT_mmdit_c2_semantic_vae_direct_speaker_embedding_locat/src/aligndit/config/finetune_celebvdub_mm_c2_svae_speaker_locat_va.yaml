@@ -1,0 +1,12 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_locat_av
+  - _self_
+
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_locat_va_ctc003_warmup10k30k
+  arch:
+    locat_av_enabled: False
+    locat_va_enabled: True
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_locat_va_ctc003_warmup10k30k_40hz_CelebVDub_char

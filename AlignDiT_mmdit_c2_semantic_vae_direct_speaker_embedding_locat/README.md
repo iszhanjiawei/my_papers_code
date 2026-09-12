@@ -1,8 +1,10 @@
-# Current experiment
+# Current experiment: isolated LocAt-inspired temporal attention
 
-This snapshot adds frozen CAM++ speaker conditioning to Semantic-VAE Direct-C2
-with CTC lambda 0.03. See [SEMANTIC_VAE_SPEAKER_C2.md](SEMANTIC_VAE_SPEAKER_C2.md)
-for this experiment's configuration, training, TensorBoard and inference commands.
+This is a full source copy of the speaker-conditioned Semantic-VAE C2 baseline,
+with independent positive temporal Gaussian attention. See
+[LOCAT_TEMPORAL_ATTENTION.md](LOCAT_TEMPORAL_ATTENTION.md) for AV/VA switches,
+checkpoint contracts, validation, training and TensorBoard instructions.
+The inherited baseline and upstream documentation is retained for provenance.
 
 # AlignDiT
 

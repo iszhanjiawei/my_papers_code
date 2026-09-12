@@ -1,0 +1,23 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+# Independent LocAt-inspired positive temporal Gaussian experiment.
+# Preserve the speaker baseline's data, parent EMA, optimizer and CTC schedule.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_locat_av_ctc003_warmup10k30k
+  arch:
+    locat_enabled: True
+    locat_av_enabled: True
+    locat_va_enabled: False
+    locat_audio_fps: 40.0
+    locat_video_fps: 40.0
+    locat_sigma_min_seconds: 0.025
+    locat_sigma_max_seconds: 0.400
+    locat_sigma_init_seconds: 0.100
+    # Small positive initial boost is a transfer choice, not the paper's init.
+    locat_alpha_init: 0.100
+    locat_bias_mode: gaussian
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_locat_av_ctc003_warmup10k30k_40hz_CelebVDub_char

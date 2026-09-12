@@ -14,11 +14,12 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_40hz_CelebVDub_char"
+checkpoint_dir="${CHECKPOINT_DIR:-${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_locat_av_ctc003_warmup10k30k_40hz_CelebVDub_char}"
+export CHECKPOINT_DIR="$checkpoint_dir"
 export CKPT_STEP="${CKPT_STEP:-200000}"
 export CFG_VIDEO="${CFG_VIDEO:-2.0}"
 export EVAL_GPU="${EVAL_GPU:-0}"
-export OUTPUT_DIR="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${CKPT_STEP}_speaker_cfgv${CFG_VIDEO}}"
+export OUTPUT_DIR="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${CKPT_STEP}_locat_cfgv${CFG_VIDEO}}"
 export OMP_NUM_THREADS=1
 
 celebvdub="${ROOT_PREFIX}/zjw524/projects/alignDiT_idea6/papers_codes/alignDiT_baseline/AlignDiT/data/CelebVDub"

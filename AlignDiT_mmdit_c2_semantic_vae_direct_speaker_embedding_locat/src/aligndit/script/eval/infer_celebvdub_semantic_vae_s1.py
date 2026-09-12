@@ -22,6 +22,7 @@ from hydra.utils import get_class
 from tqdm import tqdm
 
 from aligndit.model.cfm_vt import CFM_VT
+from aligndit.model.locat_contract import validate_locat_checkpoint_contract
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.speaker_embedding import (
     load_speaker_embedding,
@@ -150,6 +151,7 @@ def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, de
         ctc_lambda=float(config.model.ctc_lambda),
         odeint_kwargs={"method": "euler"},
     )
+    validate_locat_checkpoint_contract(model.transformer, checkpoint_path.parent)
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=True)
     checkpoint_schema = checkpoint.get("checkpoint_schema_version")
@@ -427,7 +429,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=Path(__file__).parents[2]
-        / "config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml",
+        / "config/finetune_celebvdub_mm_c2_svae_speaker_locat_av.yaml",
     )
     parser.add_argument(
         "--cache-root",

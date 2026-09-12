@@ -11,6 +11,7 @@ from accelerate.utils import set_seed
 from omegaconf import OmegaConf
 
 from aligndit.model.cfm_vt import CFM_VT
+from aligndit.model.locat_contract import make_locat_contract, validate_locat_checkpoint_contract
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
@@ -27,6 +28,17 @@ def main(model_cfg):
     model_cls = hydra.utils.get_class(f"aligndit.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
     audio_cfg = model_cfg.model.audio_representation
+    locat_enabled = bool(model_arc.get("locat_enabled", False))
+    if locat_enabled:
+        if not (bool(model_arc.get("locat_av_enabled", True)) or bool(model_arc.get("locat_va_enabled", False))):
+            raise ValueError("LocAt training requires at least one AV/VA augmentation direction")
+        if int(model_arc.n_mm_layers) != 12 or int(model_arc.audio_video_ratio) != 1:
+            raise ValueError("LocAt preserves the 12-layer MM architecture and aligned input rates")
+        for key in ("locat_audio_fps", "locat_video_fps"):
+            if float(model_arc[key]) != float(audio_cfg.frame_rate):
+                raise ValueError("LocAt rates must match the already-interpolated 40-Hz cache")
+        if "locat" not in str(model_cfg.model.name).lower() or "locat" not in str(model_cfg.ckpts.save_dir).lower():
+            raise ValueError("LocAt training requires dedicated model.name and checkpoint save_dir")
     if model_cfg.ckpts.log_samples:
         raise ValueError("Use the Semantic-VAE inference entry for samples; inherited mel sample logging is unsupported")
     speaker_dim = int(model_arc.speaker_dim)
@@ -68,6 +80,9 @@ def main(model_cfg):
         audio_video_ratio=model_arc.audio_video_ratio,
         ctc_lambda=model_cfg.model.ctc_lambda,
     )
+    # Do not bless an existing unguarded checkpoint directory with a newly
+    # generated contract. Validate semantic compatibility before trainer setup.
+    validate_locat_checkpoint_contract(model.transformer, model_cfg.ckpts.save_dir, require_existing=False)
 
     trainer = SemanticVaeDirectC2SpeakerTrainer(
         model,
@@ -118,6 +133,8 @@ def main(model_cfg):
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
+        if locat_enabled:
+            contract["locat"] = make_locat_contract(model.transformer)
         contract_path = save_dir / "speaker_training_contract.json"
         if contract_path.exists():
             previous = json.loads(contract_path.read_text())

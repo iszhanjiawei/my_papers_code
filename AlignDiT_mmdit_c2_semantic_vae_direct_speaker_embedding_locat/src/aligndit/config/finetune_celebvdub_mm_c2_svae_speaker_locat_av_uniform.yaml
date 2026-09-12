@@ -1,0 +1,13 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_locat_av
+  - _self_
+
+# No temporal shape: the same query-dependent positive alpha boosts every
+# visible video key. This is a modality-gain control, not a mass-matched control.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_locat_av_uniform_ctc003_warmup10k30k
+  arch:
+    locat_bias_mode: uniform
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_locat_av_uniform_ctc003_warmup10k30k_40hz_CelebVDub_char
