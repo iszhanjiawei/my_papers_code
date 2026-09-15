@@ -86,7 +86,9 @@ def safe_cache_path(cache_root: Path, audio_relative_path: str) -> Path:
         raise ValueError(f"invalid train audio relative path: {audio_relative_path!r}")
     if any(part in {"", ".", ".."} for part in relative.parts):
         raise ValueError(f"unsafe train audio relative path: {audio_relative_path!r}")
-    result = (cache_root / relative.with_suffix(".npy")).resolve(strict=False)
+    # cache_root is resolved once by main. Avoid one metadata-heavy resolve()
+    # call per 79k not-yet-created feature path on network storage.
+    result = cache_root / relative.with_suffix(".npy")
     result.relative_to(cache_root)
     return result
 
@@ -109,7 +111,10 @@ def read_inventory(args) -> list[ExtractionItem]:
             if utterance_key in seen or not isinstance(duration, (int, float)) or duration <= 0:
                 raise ValueError(f"manifest line {line_number} has a duplicate key or invalid duration")
             seen.add(utterance_key)
-            audio_path = (args.audio_root / relative_path).resolve(strict=False)
+            # The prepared CelebV-Dub layout deliberately contains per-WAV
+            # symlinks to the authoritative dataset. Validate the manifest's
+            # lexical mapping here; load_waveform validates the resolved target.
+            audio_path = (args.audio_root / relative_path).absolute()
             audio_path.relative_to(args.audio_root)
             items.append(
                 ExtractionItem(
@@ -150,9 +155,12 @@ def cache_is_valid(path: Path) -> bool:
 
 
 def load_waveform(path: Path, max_duration_seconds: float) -> torch.Tensor:
-    if path.is_symlink() or not path.is_file():
-        raise FileNotFoundError(f"audio must be a regular file: {path}")
-    waveform, sample_rate = sf.read(path, dtype="float32", always_2d=True)
+    if not path.is_file():
+        raise FileNotFoundError(f"audio path or its symlink target is not a regular file: {path}")
+    resolved_path = path.resolve(strict=True)
+    if not resolved_path.is_file():
+        raise FileNotFoundError(f"resolved audio target is not a regular file: {resolved_path}")
+    waveform, sample_rate = sf.read(resolved_path, dtype="float32", always_2d=True)
     if waveform.shape[0] == 0:
         raise ValueError("empty waveform")
     waveform = torch.from_numpy(waveform.mean(axis=1))
