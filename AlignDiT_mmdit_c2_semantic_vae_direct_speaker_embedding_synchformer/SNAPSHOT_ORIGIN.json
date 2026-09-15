@@ -1,0 +1,16 @@
+{
+  "source_directory": "AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding",
+  "destination_directory": "AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_synchformer",
+  "copied_source_files": 234,
+  "excluded_runtime_directories": [
+    "logs",
+    "runs",
+    "data",
+    "outputs",
+    "__pycache__",
+    ".ruff_cache",
+    ".git"
+  ],
+  "foley_source_commit": "df7b005b5023df2a9b73e1d66dd51d452799884e",
+  "source_tree_git_commit": "a532ef3711dfb0f26572b8011f6b1f1e5222e10c"
+}

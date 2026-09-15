@@ -1,0 +1,19 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+# The original speaker experiment, with an additional frozen video condition.
+# Raw Synchformer tokens are cached at 25 fps with 16-frame / stride-8 windows.
+# They are resampled per sample inside the model to the 40-Hz latent timeline.
+datasets:
+  synchformer_cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/synchformer_25fps_16f_stride8
+  synchformer_dim: 768
+  synchformer_checkpoint_sha256: 8aff082f2df5c3bc52759db0c865c7ee772ae6400b860d1b7e90413f2defb67c
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_synchformer_ctc003_warmup10k30k
+  arch:
+    sync_dim: 768
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_synchformer_ctc003_warmup10k30k_40hz_CelebVDub_char
