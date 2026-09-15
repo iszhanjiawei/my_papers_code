@@ -8,11 +8,15 @@ frames are outside a window); there is no 15-second truncation.
 """
 from __future__ import annotations
 
+import ctypes
+import gc
 import hashlib
 import json
 import math
 import os
 import tempfile
+from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -30,6 +34,57 @@ PREPROCESSING = {
     "tokens_per_segment": 8, "feature_dim": 768, "short_clip": "repeat_last_to_16",
     "tail": "complete_windows_only", "duration_limit_seconds": None,
 }
+
+
+
+@lru_cache(maxsize=1)
+def _malloc_trim_function():
+    """glibc trim is optional; other platforms still collect native cycles."""
+    try:
+        trim = ctypes.CDLL(None).malloc_trim
+    except (AttributeError, OSError):
+        return None
+    trim.argtypes = [ctypes.c_size_t]
+    trim.restype = ctypes.c_int
+    return trim
+
+
+def release_extraction_host_memory() -> None:
+    """Collect released PyAV cycles, then return freed glibc arenas to the OS.
+
+    Successful extraction has released its frame/CPU tensor locals by this point.
+    During an error, traceback-owned locals survive until the caller handles it;
+    this still reclaims older unreachable allocations. Active tensors and CUDA
+    weights are never released by trimming.
+    """
+    gc.collect()
+    trim = _malloc_trim_function()
+    if trim is not None:
+        trim(0)
+
+
+@contextmanager
+def decoded_video_frames(video_path):
+    """Close the decoder explicitly: PyAV 11 Container.close leaves it open.
+
+    See https://github.com/PyAV-Org/PyAV/issues/1117. Closing the container alone
+    defers codec buffers to cyclic garbage collection across thousands of clips.
+    """
+    import av
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        codec = stream.codec_context
+        stream.thread_type = "AUTO"
+        codec.thread_count = 2
+        decoder = container.decode(stream)
+        try:
+            yield decoder
+        finally:
+            try:
+                decoder.close()
+            finally:
+                if codec.is_open:
+                    codec.close()
 
 
 def default_checkpoint_path() -> Path:
@@ -196,7 +251,7 @@ class FrozenSynchformerExtractor(nn.Module):
     """Official visual branch with strict checkpoint loading, permanently frozen."""
     def __init__(self, checkpoint_path: str | Path | None = None, device: str | torch.device = "cuda",
                  batch_size: int = 8, expected_checkpoint_sha256: str = CHECKPOINT_SHA256,
-                 verify_checkpoint: bool = True):
+                 verify_checkpoint: bool = True, cleanup_interval: int = 16):
         super().__init__()
         from aligndit.third_party.synchformer.motionformer import MotionFormer
         from torchvision.transforms import v2
@@ -219,6 +274,10 @@ class FrozenSynchformerExtractor(nn.Module):
         self.to(self.device)
         self.eval()
         self.batch_size = int(batch_size)
+        self.cleanup_interval = int(cleanup_interval)
+        self._clips_since_cleanup = 0
+        if self.cleanup_interval < 0:
+            raise ValueError("cleanup_interval must be nonnegative")
         if self.batch_size < 1:
             raise ValueError("batch_size must be positive")
         self.preprocess = v2.Compose([
@@ -241,19 +300,29 @@ class FrozenSynchformerExtractor(nn.Module):
 
     @torch.inference_mode()
     def extract(self, video_path: str | Path, clip_key: str | None = None) -> dict[str, Any]:
-        """Decode full RGB clip with original presentation timestamps; no audio input."""
-        import av
+        """Extract features while bounding decoder and host allocator lifetime."""
+        failed = True
+        try:
+            payload = self._extract_video(video_path, clip_key)
+            failed = False
+            return payload
+        finally:
+            self._clips_since_cleanup = getattr(self, "_clips_since_cleanup", 0) + 1
+            interval = getattr(self, "cleanup_interval", 16)
+            if failed or (interval > 0 and self._clips_since_cleanup >= interval):
+                release_extraction_host_memory()
+                self._clips_since_cleanup = 0
+
+    def _extract_video(self, video_path: str | Path, clip_key: str | None = None) -> dict[str, Any]:
+        """Inner scope releases decoded frames before periodic host cleanup."""
         key = canonical_clip_key(clip_key or "/".join(Path(video_path).parts[-3:]))
         identity = source_identity(video_path, key)
         frames, sample_times, source_times = [], [], []
         origin = None
         next_sample = 0
         last_pts = None
-        with av.open(str(video_path)) as container:
-            stream = container.streams.video[0]
-            stream.thread_type = "AUTO"
-            stream.codec_context.thread_count = 2
-            for frame in container.decode(stream):
+        with decoded_video_frames(video_path) as decoder:
+            for frame in decoder:
                 if frame.time is None:
                     raise ValueError(f"Video frame has no presentation timestamp: {video_path}")
                 pts = float(frame.time)

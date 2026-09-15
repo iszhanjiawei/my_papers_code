@@ -10,7 +10,7 @@
 - 随机及固定抽查 520 个视频的流时长，与音频清单的最大差异为 0.0386875 秒。
 - 变长条件、有效长度插值、padding、三路 CFG、activation checkpointing、梯度和 ODE 推理测试通过。
 - 新旧模型公共参数在相同初始化种子下逐项完全一致。
-- 6 项 dataset / S1 推理接线测试通过，6 项视频提取 / 缓存校验测试通过（包括并行启动元数据竞争回归）。
+- 6 项 dataset / S1 推理接线测试通过，8 项视频提取 / 缓存校验测试通过（包括并行启动元数据竞争回归）。
 - 首批 8 个真实视频使用官方权重提取成功，8 个缓存均通过严格校验。23.66 秒视频得到 `[584, 768]`，未截断为 15 秒。
 - 使用真实 S2c 70k 父 checkpoint 和两条真实样本进行 bf16 前向、反向验证，未执行 optimizer update。
 - 独立只读代码复查未发现需要修复的额外问题。
@@ -30,7 +30,9 @@
 
 ## 全量数据与训练
 
-全量 Synchformer 缓存提取正在进行，当前使用 4 张 GPU、24 个解码/提取进程。并行启动时的共享文件系统元数据读取竞争已修复：父进程先初始化，worker 仅读取，短暂不可见时重试；已有缓存经校验后复用。完成后的 `coverage_report.json` 必须包含 79,826 条有效记录且无失败，随后运行 `scripts/preflight_synchformer.py` 才能确认训练准备完成。
+全量目标为 79,826 条。首次长时间提取出现 PyAV 11 解码资源循环引用及 glibc 内存保留，导致 worker 被 OOM kill；已停止该轮进程并保留 45,379 个已落盘缓存文件，续跑时逐项校验复用。修复包括显式关闭 decoder/codec、每 16 个新提取视频 GC/trim，以及 worker 异常、单进程 RSS 6144 MiB 和 cgroup 90% 内存保护。正常退出、异常退出、RSS 超限和 supervisor 收到 SIGTERM 的实际子进程验证均通过。
+
+修复后连续 300 条真实视频提取通过：最终 RSS 1820.35 MiB，10 Hz 观测峰值 2591.11 MiB，8 条已有真实缓存与修复后结果逐项完全一致。当前准备以 4 张 GPU、24 个受监督 worker 续跑。完成后的 `coverage_report.json` 必须包含 79,826 条有效记录且无失败，随后运行 `scripts/preflight_synchformer.py` 才能确认训练准备完成。
 
 正式训练尚未启动。本文件会在全量检查及启动完成后更新实际状态。
 
@@ -50,4 +52,4 @@ CUDA_VISIBLE_DEVICES=0 "$PYTHON_BIN" -u \
 
 最后一条默认要求完整缓存。初期两样本验证使用 `--partial-cache`，该选项仅属于无参数更新的 smoke test，正式训练的完整覆盖检查没有放宽。
 
-实际日志位于 `logs/test_synchformer_model.log`、`logs/test_synchformer_real_parent.log`、`logs/extract_synchformer_first8.log`、`logs/synchformer_extraction_24w/`；运行产物不加入 Git。
+实际日志位于 `logs/test_synchformer_model.log`、`logs/test_synchformer_real_parent.log`、`logs/extract_synchformer_first8.log`、`logs/synchformer_extraction_guarded/`、`logs/synchformer_rss_stress.json`；运行产物不加入 Git。

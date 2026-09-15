@@ -15,7 +15,7 @@ from torch import nn
 from torchvision.transforms import v2
 from aligndit.model.synchformer_features import (
     CHECKPOINT_SHA256, MODEL_ID, PREPROCESSING, SCHEMA_VERSION, FrozenSynchformerExtractor,
-    atomic_json, cache_path, canonical_clip_key, load_synchformer_feature,
+    atomic_json, cache_path, canonical_clip_key, decoded_video_frames, load_synchformer_feature,
     load_synchformer_payload, save_synchformer_feature, validate_synchformer_cache,
 )
 
@@ -97,6 +97,44 @@ class CacheContracts(unittest.TestCase):
         report["expected_count"] = 3
         atomic_json(path, report)
         with self.assertRaises(ValueError): validate_synchformer_cache(self.cache)
+
+class DecoderLifecycle(unittest.TestCase):
+    def test_codec_closes_after_early_stop_and_decode_exception(self):
+        with tempfile.TemporaryDirectory(prefix="synchformer_decoder_test_") as directory:
+            video = Path(directory)/"clip.mp4"
+            make_video(video, 11)
+            original_open = av.open
+            codecs = []
+            def capture(*args, **kwargs):
+                container = original_open(*args, **kwargs)
+                codecs.append(container.streams.video[0].codec_context)
+                return container
+            with patch.object(av, "open", side_effect=capture):
+                with decoded_video_frames(video) as frames:
+                    next(frames)
+                    self.assertTrue(codecs[-1].is_open)
+                self.assertFalse(codecs[-1].is_open)
+                with self.assertRaisesRegex(RuntimeError, "test decode failure"):
+                    with decoded_video_frames(video) as frames:
+                        next(frames)
+                        raise RuntimeError("test decode failure")
+                self.assertFalse(codecs[-1].is_open)
+
+    def test_host_cleanup_runs_after_inner_scope_and_on_errors(self):
+        extractor = FixtureExtractor()
+        extractor.cleanup_interval = 2
+        with patch.object(extractor, "_extract_video", return_value={"test":True}), \
+             patch("aligndit.model.synchformer_features.release_extraction_host_memory") as cleanup:
+            extractor.extract("unused")
+            cleanup.assert_not_called()
+            extractor.extract("unused")
+            cleanup.assert_called_once()
+        with patch.object(extractor, "_extract_video", side_effect=RuntimeError("fixture")), \
+             patch("aligndit.model.synchformer_features.release_extraction_host_memory") as cleanup:
+            with self.assertRaises(RuntimeError):
+                extractor.extract("unused")
+            cleanup.assert_called_once()
+            self.assertEqual(extractor._clips_since_cleanup, 0)
 
 class CacheStartupRace(unittest.TestCase):
     def test_transient_missing_or_incomplete_metadata_is_retried(self):
