@@ -28,11 +28,14 @@
 
 以上是一次无参数更新的工程验证，不是训练或生成质量评测结果。
 
+另一次接近正式 batch 大小的验证选中真实长度 `[1199, 1190, 1188]`，有效 3577 帧、padding 后 3597 帧。额外驻留 4.88295 GiB 的字节缓冲，估计 AdamW 两份 FP32 状态、EMA 副本与 DDP 梯度 bucket。保持 `checkpoint_activations=false` 时，CTC 0 / 0.03 的前后向均通过，GPU allocated 峰值分别为 15.57293 / 15.57117 GiB，reserved 峰值为 16.30469 / 16.39648 GiB。无参数更新。该容量估计不包含 NCCL、optimizer step 临时张量或 DDP bucket 重建峰值，正式启动仍需核验完整更新。日志：`logs/test_synchformer_real_parent_3600_reserved.log`。
+
+
 ## 全量数据与训练
 
 全量目标为 79,826 条。首次长时间提取出现 PyAV 11 解码资源循环引用及 glibc 内存保留，导致 worker 被 OOM kill；已停止该轮进程并保留 45,379 个已落盘缓存文件，续跑时逐项校验复用。修复包括显式关闭 decoder/codec、每 16 个新提取视频 GC/trim，以及 worker 异常、单进程 RSS 6144 MiB 和 cgroup 90% 内存保护。正常退出、异常退出、RSS 超限和 supervisor 收到 SIGTERM 的实际子进程验证均通过。
 
-修复后连续 300 条真实视频提取通过：最终 RSS 1820.35 MiB，10 Hz 观测峰值 2591.11 MiB，8 条已有真实缓存与修复后结果逐项完全一致。当前准备以 4 张 GPU、24 个受监督 worker 续跑。完成后的 `coverage_report.json` 必须包含 79,826 条有效记录且无失败，随后运行 `scripts/preflight_synchformer.py` 才能确认训练准备完成。
+修复后连续 300 条真实视频提取通过：最终 RSS 1820.35 MiB，10 Hz 观测峰值 2591.11 MiB，8 条已有真实缓存与修复后结果逐项完全一致。已于 12:06 左右以 4 张 GPU、24 个受监督 worker 续跑（独立 session PID 143750）。完成后的 `coverage_report.json` 必须包含 79,826 条有效记录且无失败，随后运行 `scripts/preflight_synchformer.py` 才能确认训练准备完成。
 
 正式训练尚未启动。本文件会在全量检查及启动完成后更新实际状态。
 

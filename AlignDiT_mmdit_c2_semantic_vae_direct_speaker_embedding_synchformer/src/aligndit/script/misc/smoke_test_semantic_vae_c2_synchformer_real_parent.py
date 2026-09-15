@@ -3,6 +3,11 @@
 This is a forward/backward integration test only: it does not update weights,
 write checkpoints, or start a training job. Select the GPU with
 CUDA_VISIBLE_DEVICES and retain stdout as the validation report.
+
+For a conservative capacity probe, add --batch-frames 3600 and
+--reserve-training-memory. The extra byte buffers estimate resident AdamW,
+EMA and DDP bucket storage; they do not execute those components and cannot
+establish that a complete distributed optimizer update will fit.
 """
 
 from __future__ import annotations
@@ -34,14 +39,84 @@ from aligndit.model.synchformer_features import cache_path, load_synchformer_fea
 from f5_tts.model.utils import get_tokenizer
 
 
+def select_examples(dataset, sync_cache_dir, *, max_frames, batch_frames):
+    if not batch_frames:
+        selected = [
+            index for index, record in enumerate(dataset.records)
+            if record["ctc_feasible_40hz"] and 64 <= record["latent_frames"] <= max_frames
+            and cache_path(sync_cache_dir, dataset._synchformer_clip_key(record)).is_file()
+        ][:2]
+        if len(selected) != 2:
+            raise RuntimeError("Need two real CTC-feasible examples between 64 and --max-frames frames")
+        return selected
+
+    candidates = sorted(
+        ((int(record["latent_frames"]), index) for index, record in enumerate(dataset.records)
+         if record["ctc_feasible_40hz"] and 64 <= record["latent_frames"] <= batch_frames),
+        reverse=True,
+    )
+    selected, valid_frames, longest = [], 0, 0
+    for length, index in candidates:
+        if valid_frames + length > batch_frames or max(longest, length) * (len(selected) + 1) > batch_frames:
+            continue
+        record = dataset.records[index]
+        if not cache_path(sync_cache_dir, dataset._synchformer_clip_key(record)).is_file():
+            continue
+        selected.append(index)
+        valid_frames += length
+        longest = max(longest, length)
+        if valid_frames >= batch_frames * 0.99:
+            break
+    if not selected or longest <= 1000 or valid_frames < batch_frames * 0.9:
+        raise RuntimeError(
+            f"Need available CTC-feasible caches totaling >=90% of {batch_frames} frames, "
+            f"including a >1000-frame clip; selected {valid_frames} frames, longest={longest}"
+        )
+    return selected
+
+
+def reserve_training_storage(model, device):
+    """Keep explicit CUDA byte buffers alive, without optimizer/EMA execution."""
+    parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    fp32_parameter_bytes = sum(parameter.numel() for parameter in parameters) * 4
+    # EMA copies floating parameters/buffers as FP32; integral buffers retain
+    # their original width. Count registered tensors, not a second live model.
+    ema_bytes = sum(
+        value.numel() * (4 if value.is_floating_point() else value.element_size())
+        for value in list(model.parameters()) + list(model.buffers())
+    )
+    byte_counts = {
+        "adamw_exp_avg_fp32": fp32_parameter_bytes,
+        "adamw_exp_avg_sq_fp32": fp32_parameter_bytes,
+        "ema_parameters_and_buffers": ema_bytes,
+        "ddp_gradient_bucket_estimate_fp32": fp32_parameter_bytes,
+    }
+    report = {
+        "kind": "conservative_resident_storage_estimate_not_full_DDP_validation",
+        "bytes": byte_counts,
+        "total_bytes": sum(byte_counts.values()),
+        "total_gib": sum(byte_counts.values()) / 1024**3,
+        "exclusions": ["NCCL workspace", "optimizer.step temporary tensors", "DDP bucket rebuild transients"],
+    }
+    print(json.dumps({"training_memory_reservation_plan": report}, sort_keys=True), flush=True)
+    buffers = [torch.empty(count, dtype=torch.uint8, device=device) for count in byte_counts.values()]
+    torch.cuda.synchronize(device)
+    return buffers, report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config-name", default="finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_synchformer"
     )
     parser.add_argument("--max-frames", type=int, default=160)
-    parser.add_argument("--partial-cache", action="store_true", help="Validate two available real caches before full extraction completes; production training still requires full coverage")
+    parser.add_argument("--partial-cache", action="store_true", help="Validate selected available real caches before full extraction completes; production training still requires full coverage")
+    parser.add_argument("--batch-frames", type=int, default=0, help="Use a nearly full long-clip batch, limiting both valid and padded frames; 0 retains the two short examples")
+    parser.add_argument("--reserve-training-memory", action="store_true", help="Reserve AdamW/EMA/DDP-sized CUDA byte buffers; capacity estimate only, no optimizer update")
+    parser.add_argument("--checkpoint-activations", action="store_true", help="Override activation checkpointing to true for an OOM fallback probe")
     args = parser.parse_args()
+    if args.batch_frames < 0:
+        parser.error("--batch-frames must be nonnegative")
     started = time.monotonic()
     torch.set_num_threads(4)
     if not torch.cuda.is_available():
@@ -50,6 +125,13 @@ def main() -> None:
     config_dir = Path(__file__).resolve().parents[2] / "config"
     with initialize_config_dir(version_base="1.3", config_dir=str(config_dir)):
         config = compose(config_name=args.config_name)
+    if args.checkpoint_activations:
+        config.model.arch.checkpoint_activations = True
+    print(json.dumps({
+        "checkpoint_activations": bool(config.model.arch.checkpoint_activations),
+        "requested_batch_frames": args.batch_frames,
+        "reserve_training_memory": args.reserve_training_memory,
+    }), flush=True)
     torch.manual_seed(int(config.seed))
     ckpts = config.ckpts
     print("Validating real S2c 70k parent artifact hashes...", flush=True)
@@ -71,13 +153,7 @@ def main() -> None:
     dataset = SemanticVaeCelebVDubDataset(
         **{key: value for key, value in dataset_config.items() if key in dataset_parameters}
     )
-    selected = [
-        index for index, record in enumerate(dataset.records)
-        if record["ctc_feasible_40hz"] and 64 <= record["latent_frames"] <= args.max_frames
-        and cache_path(sync_cache_dir, dataset._synchformer_clip_key(record)).is_file()
-    ][:2]
-    if len(selected) != 2:
-        raise RuntimeError("Need two real CTC-feasible examples between 64 and --max-frames frames")
+    selected = select_examples(dataset, sync_cache_dir, max_frames=args.max_frames, batch_frames=args.batch_frames)
     examples = [dataset[index] for index in selected]
     if args.partial_cache:
         for example, index in zip(examples, selected):
@@ -86,17 +162,20 @@ def main() -> None:
                 expected_checkpoint_sha256=config.datasets.synchformer_checkpoint_sha256,
             )
     batch = dataset.collate_fn(examples)
-    print(json.dumps({
+    batch_report = {
         "selected_utterances": batch["utterance_keys"],
         "latent_lengths": batch["mel_lengths"].tolist(),
         "text_lengths": batch["text_lengths"].tolist(),
         "speaker_norms": batch["speaker_embedding"].norm(dim=1).tolist(),
         "sync_lengths": batch["sync_lens"].tolist(),
         "partial_cache_test": args.partial_cache,
-    }), flush=True)
+        "total_valid_frames": int(batch["mel_lengths"].sum()),
+        "total_padded_frames": batch["mel"].shape[0] * batch["mel"].shape[2],
+    }
+    print(json.dumps(batch_report), flush=True)
     assert batch["mel"].shape[1] == 64
-    assert batch["speaker_embedding"].shape == (2, 192)
-    assert batch["sync_feat"].shape[0] == 2 and batch["sync_feat"].shape[2] == 768
+    assert batch["speaker_embedding"].shape == (len(selected), 192)
+    assert batch["sync_feat"].shape[0] == len(selected) and batch["sync_feat"].shape[2] == 768
     assert torch.equal(batch["mel_lengths"], batch["video_lengths"])
 
     vocab_char_map, vocab_size = get_tokenizer(config.datasets.vocab_path, "custom")
@@ -124,7 +203,7 @@ def main() -> None:
         parent_contract_sha256=ckpts.expected_parent_contract_sha256,
         parent_ema_step=ema_step,
     )
-    common_key = next(key for key in source_state if key in model.state_dict() and source_state[key].ndim > 0)
+    common_key = next(key for key in source_state if key in model.state_dict() and source_state[key].numel() > 1)
     for corruption in ("shape", "unknown_key"):
         malformed = dict(source_state)
         if corruption == "shape":
@@ -176,6 +255,14 @@ def main() -> None:
     }
     assert not forward_kwargs["speaker_embedding"].requires_grad
     assert not forward_kwargs["sync_feat"].requires_grad
+    reservation_buffers, reservation_report = [], None
+    if args.reserve_training_memory:
+        reservation_buffers, reservation_report = reserve_training_storage(model, device)
+    print(json.dumps({
+        "resident_allocated_gib_before_forward": torch.cuda.memory_allocated(device) / 1024**3,
+        "resident_reserved_gib_before_forward": torch.cuda.memory_reserved(device) / 1024**3,
+        "trainable_parameters": sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad),
+    }), flush=True)
     results = []
     for weight in (0.0, 0.03):
         torch.manual_seed(int(config.seed) + 1)
@@ -183,6 +270,7 @@ def main() -> None:
         model.zero_grad(set_to_none=True)
         model.ctc_lambda = weight
         torch.cuda.reset_peak_memory_stats(device)
+        print(json.dumps({"stage": "forward_backward", "ctc_lambda": weight}), flush=True)
         # Preserve configured dropout probabilities but force this validation
         # batch to take the full-conditioning branch so identity has a gradient.
         with patch("aligndit.model.cfm_vt.random", return_value=0.99), torch.autocast("cuda", dtype=torch.bfloat16):
@@ -208,6 +296,7 @@ def main() -> None:
         assert math.isfinite(global_norm) and global_norm > 0
         assert not torch.count_nonzero(model.transformer.speaker_proj.weight), "test must not update weights"
         assert not torch.count_nonzero(model.transformer.sync_in[2].w2.weight), "test must not update weights"
+        torch.cuda.synchronize(device)
         result = {
             "ctc_lambda": weight,
             "total_loss": float(loss),
@@ -216,11 +305,12 @@ def main() -> None:
             "sync_output_projection_grad_norm_pre_clip": sync_grad_norm,
             "global_grad_norm_pre_clip": global_norm,
             "cuda_peak_allocated_gib": torch.cuda.max_memory_allocated(device) / 1024**3,
+            "cuda_peak_reserved_gib": torch.cuda.max_memory_reserved(device) / 1024**3,
         }
         results.append(result)
         print(json.dumps(result, sort_keys=True), flush=True)
         del loss, prediction
-    del model, forward_kwargs, batch
+    del model, forward_kwargs, batch, reservation_buffers
     gc.collect()
     torch.cuda.empty_cache()
     print(json.dumps({
@@ -231,6 +321,9 @@ def main() -> None:
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "updates_performed": 0,
         "partial_cache_test": args.partial_cache,
+        "checkpoint_activations": bool(config.model.arch.checkpoint_activations),
+        "batch": batch_report,
+        "training_memory_reservation": reservation_report,
         "checks": results,
     }, indent=2, sort_keys=True), flush=True)
 
