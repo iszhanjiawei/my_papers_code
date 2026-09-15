@@ -91,7 +91,7 @@ setsid env PYTHONUNBUFFERED=1 \
   > logs/prepare_synchformer.log 2>&1 < /dev/null &
 ```
 
-`SYNC_GPUS=0,1,2,3`、`SYNC_BATCH_SIZE=8` 可覆盖提取使用的 GPU 和每次前向的窗口数。默认 `SYNC_WORKERS_PER_GPU=4`，即 4 张卡共 16 个进程，利用 CPU 并行视频解码；CPU/内存资源较少时可设为 1 或 2。提取子入口为 `scripts/extract_synchformer_multigpu.sh`；单独 audit 使用 `PYTHONPATH=src python scripts/extract_synchformer.py --audit-only`。`--limit` 仅用于调试，不能生成完整训练所需的通过证明。逐卡日志在 `logs/synchformer_extraction/`。 每个 worker 默认 RSS 上限为 6144 MiB（`SYNC_MAX_WORKER_RSS_MIB` 可覆盖）；进程异常退出、超过该内存上限或 cgroup 内存使用达到 90% 时，监督进程会停止其余 worker，避免带故障继续运行。已写入且校验通过的缓存可直接续用。PyAV 11 的解码上下文会显式关闭，每 16 个新提取视频执行垃圾回收并归还可释放的 glibc 内存，避免大量视频累积占用。
+`SYNC_GPUS=0,1,2,3`、`SYNC_BATCH_SIZE=8` 可覆盖提取使用的 GPU 和每次前向的窗口数。默认 `SYNC_WORKERS_PER_GPU=4`，即 4 张卡共 16 个进程，利用 CPU 并行视频解码；CPU/内存资源较少时可设为 1 或 2。提取子入口为 `scripts/extract_synchformer_multigpu.sh`；单独 audit 使用 `PYTHONPATH=src python scripts/extract_synchformer.py --audit-only`。`--limit` 仅用于调试，不能生成完整训练所需的通过证明。全量 audit 默认使用 8 个 CPU 进程（`SYNC_AUDIT_WORKERS` 可覆盖），逐项读取并校验全部缓存；不加载 Synchformer 编码器。逐卡日志在 `logs/synchformer_extraction/`。 每个 worker 默认 RSS 上限为 6144 MiB（`SYNC_MAX_WORKER_RSS_MIB` 可覆盖）；进程异常退出、超过该内存上限或 cgroup 内存使用达到 90% 时，监督进程会停止其余 worker，避免带故障继续运行。已写入且校验通过的缓存可直接续用。PyAV 11 的解码上下文会显式关闭，每 16 个新提取视频执行垃圾回收并归还可释放的 glibc 内存，避免大量视频累积占用。
 
 新训练配置继承原 speaker 实验：S2c 70k EMA 初始化、学习率 `5e-5`、20k LR warmup、CTC 在 10k 前为 0，在 30k 增至 `0.03`、200 epoch 的 LR 调度范围、最多 200k updates、每卡 3,600 latent frames、4 张 GPU。新增独立 checkpoint 和 TensorBoard run 名。
 

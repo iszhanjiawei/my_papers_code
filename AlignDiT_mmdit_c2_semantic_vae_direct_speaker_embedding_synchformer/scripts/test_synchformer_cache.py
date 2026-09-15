@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """CPU contracts: test-only encoder and generated videos; no production caches."""
+from contextlib import redirect_stdout
+import io
 import tempfile
 from pathlib import Path
 import unittest
@@ -97,6 +99,60 @@ class CacheContracts(unittest.TestCase):
         report["expected_count"] = 3
         atomic_json(path, report)
         with self.assertRaises(ValueError): validate_synchformer_cache(self.cache)
+
+class ParallelAuditContracts(unittest.TestCase):
+    def test_spawn_audit_matches_serial_checks_order_and_failures(self):
+        with tempfile.TemporaryDirectory(prefix="synchformer_parallel_audit_test_") as directory:
+            root = Path(directory)
+            cache = root / "cache"
+            extractor = FixtureExtractor()
+            records = []
+            keys = ["train/video_a/valid", "train/video_b/nonfinite", "test/video_c/valid",
+                    "train/video_d/missing_cache", "test/video_e/duration_mismatch"]
+            for key in keys:
+                video = root / (key + ".mp4")
+                make_video(video, 11)
+                payload = extractor.extract(video, key)
+                records.append({"audio_relative_path":key+".wav", "duration_seconds":.44})
+                if "nonfinite" in key:
+                    payload["features"] = payload["features"].clone()
+                    payload["features"][0,0] = float("nan")
+                if "duration_mismatch" in key:
+                    records[-1]["duration_seconds"] = 1.0
+                if "missing_cache" not in key:
+                    save_synchformer_feature(cache, key, payload)
+            inventory = root / "inventory.jsonl"
+            inventory.write_text("".join(json.dumps(record)+"\n" for record in records))
+            args = SimpleNamespace(cache_dir=cache, video_root=root, inventory=inventory,
+                checkpoint_sha256=CHECKPOINT_SHA256, limit=0, log_every=1000,
+                audit_workers=1, audit_chunksize=1)
+            def run(workers):
+                args.audit_workers = workers
+                with redirect_stdout(io.StringIO()):
+                    code = extraction.audit(args, records)
+                report = json.loads((cache/"coverage_report.json").read_text())
+                report.pop("created_at_utc")
+                report.pop("elapsed_seconds")
+                return code, report
+            serial_code, serial = run(1)
+            parallel_code, parallel = run(2)
+            self.assertEqual(serial_code, 1)
+            self.assertEqual(parallel_code, serial_code)
+            self.assertEqual(parallel, serial)
+            self.assertEqual(parallel["valid_keys"], [keys[0], keys[2]])
+            self.assertEqual(parallel["valid_by_split"], {"train":1,"test":1})
+            self.assertEqual(parallel["feature_tokens"],16)
+            self.assertEqual((parallel["valid"],parallel["invalid"],parallel["missing"]),(2,2,1))
+            self.assertEqual([error["kind"] for error in parallel["errors"]], ["invalid","missing","invalid"])
+            self.assertFalse(parallel["complete"])
+            # Even an entirely valid selected subset must not certify full coverage.
+            args.limit = 1
+            args.audit_workers = 1
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(extraction.audit(args, records[:1]),0)
+            subset = json.loads((cache/"coverage_report.subset.json").read_text())
+            self.assertEqual(subset["valid"],1)
+            self.assertFalse(subset["complete"])
 
 class DecoderLifecycle(unittest.TestCase):
     def test_codec_closes_after_early_stop_and_decode_exception(self):

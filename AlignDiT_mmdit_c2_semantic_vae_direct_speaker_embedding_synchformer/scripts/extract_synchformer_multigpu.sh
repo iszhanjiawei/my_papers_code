@@ -27,6 +27,6 @@ cat "$SYNC_LOG_DIR/initialize.log"
   --batch-size "$SYNC_BATCH_SIZE" --num-threads "$SYNC_NUM_THREADS" \
   --log-dir "$SYNC_LOG_DIR" --max-worker-rss-mib "${SYNC_MAX_WORKER_RSS_MIB:-6144}" \
   -- "$@"
-"$PYTHON_BIN" -u scripts/extract_synchformer.py --audit-only "$@" \
+"$PYTHON_BIN" -u scripts/extract_synchformer.py --audit-only --audit-workers "${SYNC_AUDIT_WORKERS:-8}" "$@" \
   > "$SYNC_LOG_DIR/coverage_audit.log" 2>&1
 cat "$SYNC_LOG_DIR/coverage_audit.log"

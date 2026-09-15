@@ -3,9 +3,11 @@
 from __future__ import annotations
 import argparse
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 import datetime
 import errno
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import sys
@@ -36,6 +38,8 @@ def parser():
     result.add_argument("--num-threads", type=int, default=2)
     result.add_argument("--initialize-only", action="store_true", help="initialize cache metadata once before launching extraction workers")
     result.add_argument("--audit-only", action="store_true", help="fully validate every feature tensor, source fingerprint and duration")
+    result.add_argument("--audit-workers", type=int, default=1, help="read-only audit processes (spawn); each subprocess uses one Torch thread")
+    result.add_argument("--audit-chunksize", type=int, default=32, help="records assigned per audit process task")
     result.add_argument("--source-audit-only", action="store_true", help="check RGB source coverage before weights are available")
     result.add_argument("--log-every", type=int, default=25)
     return result
@@ -99,6 +103,64 @@ def prepare_cache_metadata(args, records, *, initialize=False):
     return metadata
 
 
+def audit_record(record, video_root, cache_dir, checkpoint_sha256, source_only):
+    """One unchanged full validation; only small scalars leave the process."""
+    key = clip_key(record)
+    video = video_root / (key + ".mp4")
+    try:
+        identity = source_identity(video, key)
+        if identity["size_bytes"] <= 0:
+            raise ValueError("empty source video")
+        tokens = 0
+        if not source_only:
+            payload = load_synchformer_payload(cache_dir, key, checkpoint_sha256, video_path=video)
+            meta = payload["metadata"]
+            # RGB stream frames are discrete (40 ms); allow two frames for
+            # encoder/sample-boundary rounding, never a 15 s truncation.
+            expected_duration = float(record["duration_seconds"])
+            if abs(meta["duration_seconds"] - expected_duration) > 0.081:
+                raise ValueError(f"RGB/audio duration mismatch: {meta['duration_seconds']} vs {expected_duration}")
+            tokens = payload["features"].shape[0]
+        return key, tokens, None, None
+    except FileNotFoundError as error:
+        return key, 0, "missing", str(error)
+    except Exception as error:
+        return key, 0, "invalid", str(error)
+
+
+_AUDIT_SETTINGS = None
+
+
+def initialize_audit_worker(video_root, cache_dir, checkpoint_sha256, source_only):
+    """Spawned read-only workers never construct an encoder or touch CUDA."""
+    global _AUDIT_SETTINGS
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+    _AUDIT_SETTINGS = (video_root, cache_dir, checkpoint_sha256, source_only)
+
+
+def audit_worker(record):
+    return audit_record(record, *_AUDIT_SETTINGS)
+
+
+def audit_results(args, records, source_only=False):
+    """Yield in manifest order, sharing exactly the same checks in both modes."""
+    settings = (args.video_root, args.cache_dir, args.checkpoint_sha256, source_only)
+    workers = getattr(args, "audit_workers", 1)
+    chunksize = getattr(args, "audit_chunksize", 32)
+    if workers < 1 or chunksize < 1:
+        raise ValueError("Audit worker count and chunksize must be positive")
+    if workers == 1:
+        for record in records:
+            yield audit_record(record, *settings)
+    else:
+        with ProcessPoolExecutor(max_workers=workers,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=initialize_audit_worker, initargs=settings) as executor:
+            # map preserves input order; tensors stay local to each worker.
+            yield from executor.map(audit_worker, records, chunksize=chunksize)
+
+
 def audit(args, records, source_only=False):
     start = time.monotonic()
     metadata = common_metadata(args, records)
@@ -106,30 +168,15 @@ def audit(args, records, source_only=False):
     counts = Counter()
     splits = Counter()
     total_tokens = 0
-    for index, record in enumerate(records):
-        key = clip_key(record)
-        video = args.video_root / (key + ".mp4")
-        try:
-            identity = source_identity(video, key)
-            if identity["size_bytes"] <= 0:
-                raise ValueError("empty source video")
-            if not source_only:
-                payload = load_synchformer_payload(args.cache_dir, key, args.checkpoint_sha256, video_path=video)
-                meta = payload["metadata"]
-                # RGB stream frames are discrete (40 ms); allow two frames for
-                # encoder/sample-boundary rounding, never a 15 s truncation.
-                expected_duration = float(record["duration_seconds"])
-                if abs(meta["duration_seconds"] - expected_duration) > 0.081:
-                    raise ValueError(f"RGB/audio duration mismatch: {meta['duration_seconds']} vs {expected_duration}")
-                total_tokens += payload["features"].shape[0]
+    for index, result in enumerate(audit_results(args, records, source_only)):
+        key, tokens, error_kind, error_text = result
+        if error_kind is None:
             valid_keys.append(key)
             splits[key.split("/")[0]] += 1
-        except FileNotFoundError as error:
-            counts["missing"] += 1
-            errors.append({"clip_key": key, "error": str(error), "kind": "missing"})
-        except Exception as error:
-            counts["invalid"] += 1
-            errors.append({"clip_key": key, "error": str(error), "kind": "invalid"})
+            total_tokens += tokens
+        else:
+            counts[error_kind] += 1
+            errors.append({"clip_key": key, "error": error_text, "kind": error_kind})
         if (index + 1) % max(1, args.log_every * 100) == 0:
             print(json.dumps({"stage": "source_audit" if source_only else "audit", "checked": index + 1, "valid": len(valid_keys), **counts}), flush=True)
     report = {**metadata, "complete": len(valid_keys) == len(records) and not args.limit,
@@ -202,7 +249,7 @@ def extract(args, records):
 
 def main():
     args = parser().parse_args()
-    if args.world_size < 1 or not 0 <= args.rank < args.world_size or args.batch_size < 1 or args.log_every < 1:
+    if args.world_size < 1 or not 0 <= args.rank < args.world_size or args.batch_size < 1 or args.log_every < 1 or args.audit_workers < 1 or args.audit_chunksize < 1:
         raise ValueError("Invalid worker/batch/log arguments")
     torch.set_num_threads(args.num_threads)
     records = read_inventory(args.inventory)
