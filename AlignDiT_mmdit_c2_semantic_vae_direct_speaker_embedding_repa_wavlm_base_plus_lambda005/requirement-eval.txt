@@ -1,0 +1,6 @@
+faster_whisper==0.10.1
+funasr
+jiwer<4.0.0
+modelscope
+zhconv
+zhon

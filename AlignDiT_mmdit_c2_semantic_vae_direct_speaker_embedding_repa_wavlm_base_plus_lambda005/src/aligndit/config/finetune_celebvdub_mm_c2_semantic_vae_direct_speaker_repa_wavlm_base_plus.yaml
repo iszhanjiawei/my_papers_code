@@ -1,0 +1,24 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+datasets:
+  # Offline final-layer WavLM-Base+ features from each complete GT utterance.
+  repa_feature_cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/wavlm_base_plus_repa_final_fp16
+  repa_feature_dim: 768
+  repa_model_id: microsoft/wavlm-base-plus
+  repa_model_revision: 4c66d4806a428f2e922ccfa1a962776e232d487b
+  repa_checkpoint_sha256: 3bb273a6ace99408b50cfc81afdbb7ef2de02da2eab0234e18db608ce692fe51
+  repa_teacher_layer: 12
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_repa_wavlm_base_plus_lambda005
+  repa_lambda: 0.05
+  arch:
+    # Zero-based 9 is the 10th of 12 MM-DiT blocks.
+    repa_layer: 9
+    repa_target_dim: 768
+    repa_projector_dim: 2048
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_repa_wavlm_base_plus_lambda005_40hz_CelebVDub_char
