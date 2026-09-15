@@ -18,12 +18,14 @@ python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
 manifest="${ROOT_PREFIX}/zjw524/projects/data/CelebVDub_svae1000k_sample_seed666_fp32/manifests/train.jsonl"
 audio_root="${ROOT_PREFIX}/zjw524/projects/data/CelebVDub/audio"
 cache_dir="${ROOT_PREFIX}/zjw524/projects/data/CelebVDub/wavlm_base_plus_repa_final_fp16"
-for path in "$python_bin" "$manifest"; do
-    if [[ ! -f "$path" || -L "$path" ]]; then
-        echo "Missing required regular file: $path" >&2
-        exit 1
-    fi
-done
+if [[ ! -x "$python_bin" ]]; then
+    echo "Missing AlignDiT Python interpreter: $python_bin" >&2
+    exit 1
+fi
+if [[ ! -f "$manifest" || -L "$manifest" ]]; then
+    echo "Missing regular train manifest: $manifest" >&2
+    exit 1
+fi
 if [[ ! -d "$audio_root" || -L "$audio_root" ]]; then
     echo "Missing regular CelebV-Dub audio directory: $audio_root" >&2
     exit 1
