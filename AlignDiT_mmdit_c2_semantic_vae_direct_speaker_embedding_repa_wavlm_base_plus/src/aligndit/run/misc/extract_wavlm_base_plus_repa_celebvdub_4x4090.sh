@@ -38,6 +38,7 @@ fi
 echo "Caching pinned final-layer WavLM-Base+ targets with four GPUs at $cache_dir" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
+    HF_HUB_DISABLE_XET=1 \
     OMP_NUM_THREADS=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=src \

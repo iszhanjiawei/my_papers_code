@@ -171,28 +171,41 @@ def load_waveform(path: Path, max_duration_seconds: float) -> torch.Tensor:
     return waveform
 
 
-def load_teacher(device: torch.device):
-    checkpoint_path = Path(
-        hf_hub_download(
-            repo_id=WAVLM_BASE_PLUS_MODEL_ID,
-            filename="pytorch_model.bin",
-            revision=WAVLM_BASE_PLUS_REVISION,
+def prepare_teacher_files() -> None:
+    """Download once on rank 0 before distributed local-only loading."""
+
+    checkpoint_path = None
+    for filename in ("config.json", "preprocessor_config.json", "pytorch_model.bin"):
+        downloaded = Path(
+            hf_hub_download(
+                repo_id=WAVLM_BASE_PLUS_MODEL_ID,
+                filename=filename,
+                revision=WAVLM_BASE_PLUS_REVISION,
+            )
         )
-    )
+        if filename == "pytorch_model.bin":
+            checkpoint_path = downloaded
+    if checkpoint_path is None:
+        raise RuntimeError("WavLM checkpoint download did not return a path")
     actual_sha256 = sha256_file(checkpoint_path)
     if actual_sha256 != WAVLM_BASE_PLUS_CHECKPOINT_SHA256:
         raise RuntimeError(
             f"WavLM checkpoint SHA256 mismatch: expected={WAVLM_BASE_PLUS_CHECKPOINT_SHA256}, "
             f"got={actual_sha256}"
         )
+
+
+def load_teacher(device: torch.device):
     feature_extractor = AutoFeatureExtractor.from_pretrained(
         WAVLM_BASE_PLUS_MODEL_ID,
         revision=WAVLM_BASE_PLUS_REVISION,
+        local_files_only=True,
     )
     model = WavLMModel.from_pretrained(
         WAVLM_BASE_PLUS_MODEL_ID,
         revision=WAVLM_BASE_PLUS_REVISION,
         torch_dtype=torch.float32,
+        local_files_only=True,
     )
     if model.config.hidden_size != WAVLM_BASE_PLUS_DIM or model.config.num_hidden_layers != WAVLM_BASE_PLUS_LAYER:
         raise RuntimeError("downloaded WavLM architecture is not the pinned 12-layer 768-D Base+ model")
@@ -286,6 +299,10 @@ def main():
     if world_size > 1:
         dist.init_process_group(backend="nccl")
 
+    if rank == 0:
+        prepare_teacher_files()
+    if world_size > 1:
+        dist.barrier()
     inventory = read_inventory(args)
     shard = inventory[rank::world_size]
     feature_extractor, model = load_teacher(device)
