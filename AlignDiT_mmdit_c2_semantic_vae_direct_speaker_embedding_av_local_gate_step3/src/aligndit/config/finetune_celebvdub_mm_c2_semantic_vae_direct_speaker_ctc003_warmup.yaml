@@ -1,0 +1,32 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_ctc003_warmup
+  - _self_
+
+# Record initialization as well as sampler seed for this new isolated run.
+seed: 666
+
+datasets:
+  speaker_embedding_cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/campplus_spk_emb_zh_en_16k
+  speaker_embedding_dim: 192
+  speaker_embedding_model_id: iic/speech_campplus_sv_zh_en_16k-common_advanced
+  speaker_embedding_checkpoint_sha256: 92f29b94e6948786a26778c9e302525d185bb08c8b9f5252ed98776902840199
+
+optim:
+  # Stop after the comparison checkpoint without changing the inherited
+  # 200-epoch learning-rate schedule.
+  run_until_update: 200000
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_av_local_gate_step3_r2
+  arch:
+    speaker_dim: 192
+    speaker_condition_start_layer: 12
+    # Preserve step 1: local AV radius 2 on the 40-Hz grid (+/-50 ms).
+    av_local_window_radius: 2
+    # Step 2: one learned scalar per MM block; O_AA + g * (O_AJ - O_AA).
+    av_visual_delta_gate_init: 1.0e-5
+    # Step 3: block video-query/audio-key feedback; retain global VV attention.
+    block_video_audio_attention: true
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_av_local_gate_step3_r2_40hz_CelebVDub_char
