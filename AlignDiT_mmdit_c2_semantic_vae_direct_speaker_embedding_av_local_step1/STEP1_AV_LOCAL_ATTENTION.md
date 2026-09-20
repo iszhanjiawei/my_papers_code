@@ -194,3 +194,11 @@ The user authorized abandoning the initial unsaved run and starting again from
 the same pinned 70k EMA parent with seed 666. Old logs and TensorBoard events are
 archived outside the active TensorBoard run before restarting, so step numbers
 from independent runs cannot overlap in the active loss curve.
+
+The initial restarted end-to-end measurement (updates 50..155, same seed and
+configuration) was 1.38 updates/s, versus about 1.54 updates/s over a comparable
+early interval of the archived dense run. This is an early sequential comparison,
+not an interleaved benchmark; no training acceleration has been demonstrated.
+The historical 2.52 updates/s attribution to mask handling alone was too strong.
+The split run is active, and its finite losses and TensorBoard scalar recording
+were verified. Runtime PID/logdir details are in `logs/query_split_restart_status.json`.
