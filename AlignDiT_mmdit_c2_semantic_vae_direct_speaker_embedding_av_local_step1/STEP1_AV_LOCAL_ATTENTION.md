@@ -159,3 +159,38 @@ target state keys through the inherited strict migration, and runs finite
 forward/backward passes at CTC weights 0 and 0.03 without updating parameters.
 The resolved Hydra config differs from the parent only in model name,
 checkpoint output directory and `av_local_window_radius`.
+
+
+## Equivalent split-query implementation (2026-09-21)
+
+Local attention now splits audio and video query rows into two SDPA calls. Both
+calls retain the concatenated audio/video keys and values. Audio uses an additive
+0/-infinity mask with the same radius; video uses the inherited padding mask (or
+no mask in training). This is the same row-wise softmax as the original dense
+joint-square boolean mask. No model tensors, loss, schedule or visibility change.
+Floating-point kernel differences mean bitwise-identical training is not promised.
+
+Validation adds an independent float64 dense reference for output, input-gradient
+and parameter-gradient comparisons, radii 0/2/20, and padded/unpadded batches.
+The existing locality, CFM/CTC, checkpoint and CFG tests also pass. Run:
+
+```bash
+PYTHONPATH=src OMP_NUM_THREADS=1 /zjw524/ENTER/envs/aligndit/bin/python -u \
+  src/aligndit/script/misc/smoke_test_av_local_step1.py
+CUDA_VISIBLE_DEVICES=0 /zjw524/ENTER/envs/aligndit/bin/python -u \
+  src/aligndit/script/misc/benchmark_av_local_query_split.py
+```
+
+On this machine, isolated bf16 SDPA tests at B=8/T=400 and B=4/T=800 gave
+output relative RMS differences of 0.163%/0.168%, and Q/K/V-gradient differences
+of 0.21%-0.33%. These are numerical tensor comparisons, not quality metrics.
+The old implementation uses memory-efficient SDPA; the new video branch uses
+Flash SDPA. Isolated attention forward/backward changed from 1.050 to 1.176 ms
+and 1.725 to 1.625 ms respectively: query splitting alone does not establish a
+consistent throughput gain. End-to-end training speed must be measured separately;
+the historical fixed-band rate of 2.52 updates/s is not guaranteed on this host.
+
+The user authorized abandoning the initial unsaved run and starting again from
+the same pinned 70k EMA parent with seed 666. Old logs and TensorBoard events are
+archived outside the active TensorBoard run before restarting, so step numbers
+from independent runs cannot overlap in the active loss curve.

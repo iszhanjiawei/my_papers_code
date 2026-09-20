@@ -1,6 +1,6 @@
 """CPU contracts for step 1: local A-query/V-key attention on the 40-Hz grid.
 
-Run from this experiment root with PYTHONPATH=src. Five test groups require no
+Run from this experiment root with PYTHONPATH=src. Six test groups require no
 datasets, checkpoints, VAE decoder, or GPU. Direct attention tests isolate one layer:
 other global paths can legitimately carry distant video information across
 multiple layers, so whole-model locality is deliberately not asserted.
@@ -75,13 +75,22 @@ def capture_joint_masks(total_tokens):
     original = F.scaled_dot_product_attention
     captured = []
 
+    pending = []
+
     def wrapped(query, key, value, *args, **kwargs):
-        if query.shape[-2] == key.shape[-2] == total_tokens:
+        if key.shape[-2] == total_tokens and query.shape[-2] in (total_tokens, total_tokens // 2):
             mask = kwargs.get("attn_mask", args[0] if args else None)
-            expanded = None if mask is None else mask.expand(
-                query.shape[0], query.shape[1], total_tokens, total_tokens
-            ).detach().clone()
-            captured.append(expanded)
+            shape = (query.shape[0], query.shape[1], query.shape[-2], total_tokens)
+            allowed = torch.ones(shape, dtype=torch.bool, device=query.device) if mask is None else (
+                mask if mask.dtype == torch.bool else ~torch.isneginf(mask)
+            ).expand(shape).detach().clone()
+            if query.shape[-2] == total_tokens:
+                captured.append(allowed if mask is not None else None)
+            else:
+                pending.append(allowed)
+                if len(pending) == 2:
+                    captured.append(torch.cat(pending, dim=-2))
+                    pending.clear()
         return original(query, key, value, *args, **kwargs)
 
     with patch("aligndit.model.backbone.dit_vt_mm.F.scaled_dot_product_attention", side_effect=wrapped):
@@ -239,8 +248,51 @@ def test_cfg_prefix_and_null_video():
     print("[OK] 2/3-branch CFG, prefix coordinates, dropped video and B=1/2 sampling")
 
 
+def test_split_dense_output_and_gradient_equivalence():
+    """Independent dense oracle: same rows/softmax, including padded batches."""
+    import copy
+
+    torch.manual_seed(83)
+    for radius in (0, 2, 20):
+        for padded in (False, True):
+            split = make_block(radius).double()
+            dense = copy.deepcopy(split)
+            x = torch.randn(2, 8, 16, dtype=torch.float64, requires_grad=True)
+            v = torch.randn_like(x, requires_grad=True)
+            xd, vd = x.detach().clone().requires_grad_(), v.detach().clone().requires_grad_()
+            valid_a = torch.arange(8)[None] < torch.tensor([8, 6])[:, None]
+            valid_v = torch.arange(8)[None] < torch.tensor([7, 5])[:, None]
+            kwargs = dict(mask=valid_a, v_mask=valid_v) if padded else {}
+            actual = split.joint_attn(x, v, **kwargs)
+            qa, ka, va = dense._qkv(dense.attn, xd)
+            qv, kv, vv = dense._qkv(dense.v_attn, vd)
+            allowed = expected_mask(8, radius, batch=2, **(
+                dict(audio_valid=valid_a, video_valid=valid_v) if padded else {}
+            ))
+            result = F.scaled_dot_product_attention(
+                torch.cat([qa, qv], dim=2), torch.cat([ka, kv], dim=2),
+                torch.cat([va, vv], dim=2), attn_mask=allowed, dropout_p=0.0,
+            ).transpose(1, 2).reshape(2, 16, 16)
+            expected = (dense.attn.to_out[1](dense.attn.to_out[0](result[:, :8])), dense.v_attn.to_out[1](dense.v_attn.to_out[0](result[:, 8:])))
+            if padded:
+                expected = tuple(o.masked_fill(~m[..., None], 0.0) for o, m in zip(expected, (valid_a, valid_v)))
+            weights = [torch.randn_like(o) for o in actual]
+            for a, b in zip(actual, expected):
+                torch.testing.assert_close(a, b, rtol=1e-10, atol=1e-12)
+            sum((o * w).sum() for o, w in zip(actual, weights)).backward()
+            sum((o * w).sum() for o, w in zip(expected, weights)).backward()
+            for a, b in ((x.grad, xd.grad), (v.grad, vd.grad)):
+                torch.testing.assert_close(a, b, rtol=1e-9, atol=1e-11)
+            for a, b in zip(split.parameters(), dense.parameters()):
+                assert (a.grad is None) == (b.grad is None)
+                if a.grad is not None:
+                    torch.testing.assert_close(a.grad, b.grad, rtol=1e-9, atol=1e-11)
+    print("[OK] float64 split/dense outputs, input and parameter gradients agree; radii 0/2/20, padding on/off")
+
+
 def main():
     torch.set_num_threads(1)
+    test_split_dense_output_and_gradient_equivalence()
     test_four_quadrants_and_padding()
     test_direct_information_and_gradient_paths()
     test_checkpoint_compatibility_and_wide_window()

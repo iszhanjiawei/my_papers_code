@@ -267,46 +267,44 @@ class MMDiTBlock_VT(DiTCrossBlock):
         q_a, k_a = self._apply_rope(q_a, k_a, rope)   # 将 Q 和 K 进行位置编码  
         q_v, k_v = self._apply_rope(q_v, k_v, v_rope) # 将 Q 和 K 进行位置编码
 
-        query = torch.cat([q_a, q_v], dim=2)
         key = torch.cat([k_a, k_v], dim=2)
         value = torch.cat([v_a, v_v], dim=2)
 
+        key_mask = None
         if self.attn_mask_enabled and mask is not None:
             if v_mask is None:
                 v_mask = torch.ones((batch_size, n_v), dtype=torch.bool, device=mask.device)
-            key_mask = torch.cat([mask, v_mask], dim=1)
-            attn_mask = key_mask.unsqueeze(1).unsqueeze(1)  # 'b n -> b 1 1 n'
-            attn_mask = attn_mask.expand(batch_size, heads, n_a + n_v, n_a + n_v)
-        else:
-            attn_mask = None
+            key_mask = torch.cat([mask, v_mask], dim=1)[:, None, None, :]
 
         if self.av_local_window_radius is not None:
-            # Step 1 changes only the audio-query/video-key quadrant. Use the
-            # shared sequence coordinates, including any reference prefix.
-            # This structural mask must also run during training, where the
-            # historical padding-mask path passes mask=None to this block.
-            audio_positions = torch.arange(n_a, device=query.device)
-            video_positions = torch.arange(n_v, device=query.device)
+            # Split only query rows: each audio row still has ONE softmax over
+            # all audio keys and the same local video keys. Video rows retain
+            # their global path without a structural mask.
+            audio_positions = torch.arange(n_a, device=q_a.device)
+            video_positions = torch.arange(n_v, device=q_a.device)
             local_av = (
                 audio_positions[:, None] - video_positions[None, :]
             ).abs() <= self.av_local_window_radius
-            allowed = torch.ones(
-                (n_a + n_v, n_a + n_v), dtype=torch.bool, device=query.device
+            allowed = F.pad(local_av, (n_a, 0), value=True)[None, None]
+            if key_mask is not None:
+                allowed = allowed & key_mask
+            audio_bias = torch.zeros_like(allowed, dtype=q_a.dtype).masked_fill(
+                ~allowed, float("-inf")
             )
-            allowed[:n_a, n_a:] = local_av
-            # SDPA boolean masks use True for allowed connections. Broadcast
-            # across batch/heads rather than allocating a per-head mask.
-            allowed = allowed[None, None]
-            if attn_mask is None:
-                attn_mask = allowed
-            else:
-                # The existing key mask is shared by heads. Keep its padding
-                # policy unchanged while intersecting with the new topology.
-                attn_mask = attn_mask[:, :1] & allowed
-
-        out = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
+            out_a = F.scaled_dot_product_attention(
+                q_a, key, value, attn_mask=audio_bias, dropout_p=0.0, is_causal=False
+            )
+            out_v = F.scaled_dot_product_attention(
+                q_v, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False
+            )
+            out = torch.cat([out_a, out_v], dim=2)
+        else:
+            query = torch.cat([q_a, q_v], dim=2)
+            out = F.scaled_dot_product_attention(
+                query, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False
+            )
         out = out.transpose(1, 2).reshape(batch_size, -1, heads * head_dim)
-        out = out.to(query.dtype)
+        out = out.to(q_a.dtype)
 
         out_a, out_v = out[:, :n_a], out[:, n_a:]
 
