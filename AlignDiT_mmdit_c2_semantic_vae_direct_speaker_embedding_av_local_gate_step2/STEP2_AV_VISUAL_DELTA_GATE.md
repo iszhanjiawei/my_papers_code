@@ -51,6 +51,9 @@ by step 1, with new optimizer state and update counter. It does not resume a
 trained step-1 checkpoint. Strict migration loads the same 303 source keys,
 validates the 12 newly initialized scalar gate keys, and otherwise preserves the
 parent contract: 716 target keys, 413 new target keys for the active speaker model.
+Online gates must remain trainable. The EMA migration explicitly identifies its
+fully frozen shadow model and applies the same key, shape and initialization
+checks; freezing EMA parameters is expected and does not invalidate migration.
 
 The active configuration remains:
 
@@ -131,3 +134,10 @@ Resolved config comparison against step 1 found exactly three differences:
 model run name, checkpoint directory and `av_visual_delta_gate_init`. All 236
 source-file hashes in the original step-1 directory remain unchanged; copied
 files have separate inodes and no cross-experiment source links.
+
+The first distributed launch exposed a migration check that incorrectly required
+EMA gates to be trainable. It exited before any training update. The migration
+now distinguishes the online model from the frozen EMA shadow explicitly; the
+real-parent smoke also constructs the actual `ema_pytorch.EMA` object, compares
+all migrated online/EMA tensors, and rejects frozen online gates, a trainable
+EMA model and incorrect EMA gate initialization.

@@ -76,6 +76,7 @@ class SemanticVaeDirectC2Trainer(Trainer_VT):
                 parent_size=self.expected_parent_size,
                 parent_contract_sha256=self.expected_parent_contract_sha256,
                 parent_ema_step=parent_ema_step,
+                is_ema=True,
             )
             if online_report != ema_report:
                 raise RuntimeError("Online and EMA S2c migration reports differ")

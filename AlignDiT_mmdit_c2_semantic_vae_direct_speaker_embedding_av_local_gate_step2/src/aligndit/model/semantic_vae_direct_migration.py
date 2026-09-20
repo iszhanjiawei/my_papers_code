@@ -161,7 +161,13 @@ def migrate_s2c_ema_into_model(
     parent_size: int,
     parent_contract_sha256: str,
     parent_ema_step: int,
+    is_ema: bool = False,
 ) -> DirectC2MigrationReport:
+    # EMA shadow parameters are deliberately detached by ema_pytorch. Require
+    # callers to identify that role explicitly; an accidentally frozen online
+    # gate must still fail the training migration contract.
+    if is_ema and any(parameter.requires_grad for parameter in model.parameters()):
+        raise RuntimeError("S2c EMA migration requires a fully frozen shadow model")
     target_state = model.state_dict()
     source_keys = set(source_state)
     target_keys = set(target_state)
@@ -210,7 +216,7 @@ def migrate_s2c_ema_into_model(
         if (
             key not in new_target
             or not isinstance(parameter, nn.Parameter)
-            or not parameter.requires_grad
+            or parameter.requires_grad != (not is_ema)
             or gate.shape != torch.Size([])
             or getattr(block, "av_visual_delta_gate_init", None) != gate_init
             or not torch.equal(gate, gate.new_tensor(gate_init))

@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 import hydra
 import torch
+from ema_pytorch import EMA
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
@@ -97,15 +98,52 @@ def main() -> None:
         expected_parent_contract_sha256=ckpts.expected_parent_contract_sha256,
         expected_parent_update=ckpts.expected_parent_update,
     )
-    migration = migrate_s2c_ema_into_model(
-        model,
-        source_state,
+    migration_kwargs = dict(
         parent_path=ckpts.pretrained_path,
         parent_sha256=ckpts.expected_parent_sha256,
         parent_size=ckpts.expected_parent_size,
         parent_contract_sha256=ckpts.expected_parent_contract_sha256,
         parent_ema_step=ema_step,
     )
+    # Match the trainer's actual EMA lifecycle: the shadow is constructed and
+    # detached before either copy receives its S2c parent weights.
+    ema = EMA(model, include_online_model=False)
+    assert all(not parameter.requires_grad for parameter in ema.ema_model.parameters())
+    migration = migrate_s2c_ema_into_model(model, source_state, **migration_kwargs)
+    ema_migration = migrate_s2c_ema_into_model(ema.ema_model, source_state, **migration_kwargs, is_ema=True)
+    assert ema_migration == migration
+    ema_state = ema.ema_model.state_dict()
+    for key, value in model.state_dict().items():
+        assert torch.equal(value, ema_state[key]), key
+    del ema_state
+    if config.model.arch.get("av_visual_delta_gate_init") is not None:
+        online_gate = model.transformer.transformer_blocks[0].av_visual_delta_gate
+        online_gate.requires_grad_(False)
+        try:
+            migrate_s2c_ema_into_model(model, source_state, **migration_kwargs)
+        except RuntimeError as error:
+            assert "requires a new scalar" in str(error), str(error)
+        else:
+            raise AssertionError("A frozen online visual gate must be rejected")
+        finally:
+            online_gate.requires_grad_(True)
+        try:
+            migrate_s2c_ema_into_model(model, source_state, **migration_kwargs, is_ema=True)
+        except RuntimeError as error:
+            assert "fully frozen shadow" in str(error), str(error)
+        else:
+            raise AssertionError("EMA migration must reject a trainable model")
+        ema_gate = ema.ema_model.transformer.transformer_blocks[0].av_visual_delta_gate
+        with torch.no_grad():
+            ema_gate.fill_(0.5)
+        try:
+            migrate_s2c_ema_into_model(ema.ema_model, source_state, **migration_kwargs, is_ema=True)
+        except RuntimeError as error:
+            assert "requires a new scalar" in str(error), str(error)
+        else:
+            raise AssertionError("EMA migration must retain the exact gate initialization contract")
+    del ema
+    print("[OK] real EMA migration matches online; frozen-online/trainable-EMA/wrong-init checks passed", flush=True)
     visual_gates = {
         index: block.av_visual_delta_gate
         for index, block in enumerate(model.transformer.transformer_blocks)
