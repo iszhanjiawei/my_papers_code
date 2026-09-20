@@ -429,7 +429,7 @@ def run_sim(args):
         # print(f"VSim score between two audios: {sim:.4f} (-1.0, 1.0).")
         sim_results.append(
             {
-                "wav": Path(gen_wav).stem,
+                "wav": Path(*Path(gen_wav).parts[-3:]).with_suffix("").as_posix(),
                 "sim": sim,
             }
         )

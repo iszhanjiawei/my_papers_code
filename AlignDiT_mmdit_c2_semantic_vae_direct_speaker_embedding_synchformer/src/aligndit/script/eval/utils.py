@@ -430,7 +430,7 @@ def run_asr_wer(args):
 
         wer_results.append(
             {
-                "wav": Path(gen_wav).stem,
+                "wav": Path(*Path(gen_wav).parts[-3:]).with_suffix("").as_posix(),
                 "truth": truth,
                 "hypo": hypo,
                 "raw_truth": raw_truth,
@@ -458,7 +458,9 @@ def run_emosim(args):
         emb_gt = torch.tensor(res_gt[0]["scores"]).unsqueeze(0)
         sim = F.cosine_similarity(emb_gen, emb_gt).item()
 
-        emo_results.append({"wav": Path(gen_wav).stem, "emosim": sim})
+        emo_results.append(
+            {"wav": Path(*Path(gen_wav).parts[-3:]).with_suffix("").as_posix(), "emosim": sim}
+        )
 
     return emo_results
 
@@ -508,7 +510,7 @@ def run_avsync(args):
 
         avsync_results.append(
             {
-                "wav": Path(gen_wav).stem,
+                "wav": Path(*Path(gen_wav).parts[-3:]).with_suffix("").as_posix(),
                 "avsync": cosine_sim.mean().item(),
             }
         )
