@@ -34,7 +34,7 @@ CFM_ARCH = {
     "num_channels": 64,
     "audio_video_ratio": 1,
     "ctc_lambda": 0.03,
-    "repa_lambda": 0.1,
+    "repa_lambda": 0.2,
     "audio_drop_prob": 0.0,
     "cond_drop_prob": 0.0,
     "text_drop_prob": 0.0,
@@ -184,7 +184,7 @@ class AdaptiveBandRepaTests(unittest.TestCase):
         expected_flow_loss = (predicted_flow - target_flow).square()[expected_mask].mean()
         self.assertAlmostEqual(components["diff_loss"], expected_flow_loss.item(), places=6)
         expected_total = (
-            components["diff_loss"] + 0.1 * components["repa_loss"] + 0.03 * components["ctc_loss"]
+            components["diff_loss"] + 0.2 * components["repa_loss"] + 0.03 * components["ctc_loss"]
         )
         self.assertAlmostEqual(loss.item(), expected_total, places=5)
 

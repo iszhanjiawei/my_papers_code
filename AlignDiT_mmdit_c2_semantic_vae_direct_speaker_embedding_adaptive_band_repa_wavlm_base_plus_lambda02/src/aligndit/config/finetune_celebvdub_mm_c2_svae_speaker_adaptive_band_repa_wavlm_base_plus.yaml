@@ -12,8 +12,8 @@ datasets:
   repa_teacher_layer: 12
 
 model:
-  name: AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_ctc003_warmup10k30k
-  repa_lambda: 0.1
+  name: AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_lambda02_ctc003_warmup10k30k
+  repa_lambda: 0.2
   arch:
     # Zero-based 9: audio output of the 10th MM-DiT block, with the band active.
     repa_layer: 9
@@ -21,4 +21,4 @@ model:
     repa_projector_dim: 2048
 
 ckpts:
-  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_lambda02_ctc003_warmup10k30k_40hz_CelebVDub_char

@@ -59,7 +59,7 @@ exec env \
         --num_machines 1 \
         --dynamo_backend no \
         --num_processes 4 \
-        --main_process_port "${TRAIN_PORT:-29634}" \
+        --main_process_port "${TRAIN_PORT:-29635}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
         --config-name "$train_config" \
         "$@"

@@ -15,11 +15,11 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char"
+checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_lambda02_ctc003_warmup10k30k_40hz_CelebVDub_char"
 step="${CKPT_STEP:-200000}"
 checkpoint="$checkpoint_dir/model_${step}.pt"
 cfg_video="${CFG_VIDEO:-2.0}"
-output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_adaptive_band_repa_baseplus_cfgv${cfg_video}}"
+output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_adaptive_band_repa02_baseplus_cfgv${cfg_video}}"
 if [[ ! -f "$checkpoint" || -L "$checkpoint" ]]; then
     echo "Missing regular REPA checkpoint: $checkpoint" >&2
     exit 1

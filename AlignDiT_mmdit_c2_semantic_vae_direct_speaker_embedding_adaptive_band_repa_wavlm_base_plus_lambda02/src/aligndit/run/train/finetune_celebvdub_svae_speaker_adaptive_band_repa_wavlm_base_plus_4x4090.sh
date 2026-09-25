@@ -41,7 +41,7 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-echo "Launching Direct-C2 + CAM++ + adaptive band + WavLM-Base+ REPA: tap=10th MM-DiT, lambda=0.1" >&2
+echo "Launching Direct-C2 + CAM++ + adaptive band + WavLM-Base+ REPA: tap=10th MM-DiT, lambda=0.2" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     OMP_NUM_THREADS=1 \
@@ -56,7 +56,7 @@ exec env \
         --num_machines 1 \
         --dynamo_backend no \
         --num_processes 4 \
-        --main_process_port "${TRAIN_PORT:-29634}" \
+        --main_process_port "${TRAIN_PORT:-29635}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
         --config-name finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus \
         "$@"

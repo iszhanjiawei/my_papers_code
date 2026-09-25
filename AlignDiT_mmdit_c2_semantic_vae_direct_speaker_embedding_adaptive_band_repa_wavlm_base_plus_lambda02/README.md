@@ -1,7 +1,7 @@
 # Current experiment
 
 This independent copy of the adaptive-band speaker experiment adds WavLM-Base+
-REPA with fixed weight 0.1. The adaptive temporal band and delayed CTC schedule
+REPA with fixed weight 0.2. The adaptive temporal band and delayed CTC schedule
 remain enabled. See [ADAPTIVE_BAND_WAVLM_REPA.md](ADAPTIVE_BAND_WAVLM_REPA.md)
 for the combined experiment's configuration, validation and launch commands.
 

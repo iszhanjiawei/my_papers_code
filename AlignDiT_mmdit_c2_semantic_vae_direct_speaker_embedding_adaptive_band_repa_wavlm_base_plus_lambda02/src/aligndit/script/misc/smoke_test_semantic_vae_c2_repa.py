@@ -107,7 +107,7 @@ def test_cfm_repa_backward():
             num_channels=64,
             audio_video_ratio=1,
             ctc_lambda=0.03,
-            repa_lambda=0.1,
+            repa_lambda=0.2,
             audio_drop_prob=0.0,
             cond_drop_prob=0.0,
             text_drop_prob=0.0,

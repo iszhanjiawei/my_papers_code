@@ -1,9 +1,10 @@
 # Adaptive temporal band + WavLM-Base+ REPA
 
-This project is an independent source copy of
-`AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_adaptive_band`.
+This project is an independent source copy of the completed
+`AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_adaptive_band_repa_wavlm_base_plus`
+implementation for a matched REPA-weight ablation.
 The copy was committed before integration. It contains its own implementation;
-the parent adaptive-band and the existing speaker-only REPA projects are unchanged.
+the parent lambda-0.1 project and its running experiment are unchanged.
 Training logs, checkpoints and TensorBoard events were not copied.
 
 ## Experiment contract
@@ -19,8 +20,8 @@ Training logs, checkpoints and TensorBoard events were not copied.
   adaptive-band attention, and project with a `768 -> 2048 -> 2048 -> 768` SiLU MLP.
 - Average `1 - cosine_similarity` over the flow-matching generation mask only;
   prompt and padding frames are excluded from the loss reduction.
-- Use fixed `repa_lambda=0.1` from the first update:
-  `loss = diff_loss + 0.1 * repa_loss + ctc_lambda(update) * ctc_loss`.
+- Use fixed `repa_lambda=0.2` from the first update:
+  `loss = diff_loss + 0.2 * repa_loss + ctc_lambda(update) * ctc_loss`.
 - Keep the parent CTC schedule: zero through 10k, then linear to 0.03 at 30k.
   Preserve seed 666, LR 5e-5, 20k LR warmup, bf16, 3,600 frames/GPU,
   200-epoch scheduler horizon and a 200k-update stop.
@@ -87,9 +88,9 @@ bash scripts/start_adaptive_band_repa_tensorboard.sh
 setsid env PYTHONUNBUFFERED=1 bash src/aligndit/run/train/finetune_celebvdub_svae_speaker_adaptive_band_repa_wavlm_base_plus_4x4090.sh > logs/train_adaptive_band_repa.log 2>&1 < /dev/null &
 ```
 
-The training launcher defaults to four GPUs and distributed port 29634
+The training launcher defaults to four GPUs and distributed port 29635
 (`TRAIN_PORT` can override it). TensorBoard serves this project's `runs/`
-on port 6014 (`TENSORBOARD_PORT` can override it). Only rank 0 writes scalars.
+on port 6015 (`TENSORBOARD_PORT` can override it). Only rank 0 writes scalars.
 Existing band offset/sigma and speaker/CTC diagnostics are retained alongside
 `repa_loss`, `repa_lambda`, `repa_weighted_loss`, `repa_fraction_of_total`,
 `repa_projector_grad_norm` and `repa_projector_weight_norm`.
@@ -97,7 +98,7 @@ Existing band offset/sigma and speaker/CTC diagnostics are retained alongside
 Checkpoint directory (prefixed by ROOT_PREFIX where configured):
 
 ```text
-/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char
+/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_lambda02_ctc003_warmup10k30k_40hz_CelebVDub_char
 ```
 
 After training produces a checkpoint:
@@ -116,7 +117,7 @@ The inherited adaptive-band training launcher also redirects to the combined run
 
 The implementation itself does not start a formal training or evaluation run.
 
-## Verification completed on 2026-09-26
+## Parent verification and lambda-0.2 validation
 
 - 19 inherited adaptive-band tests, 8 combined band/REPA tests, and the original
   speaker and REPA contract suites passed.
@@ -129,8 +130,10 @@ The implementation itself does not start a formal training or evaluation run.
   313 source / 714 target / 303 loaded / 10 ignored / 411 new tensors.
 - Two real training clips (126 and 98 latent frames) passed BF16 forward/backward
   at CTC=0 and 0.03; speaker, band offset/width and REPA gradients were finite
-  and nonzero. The REPA loss was 1.00099802 and its weighted contribution
-  0.10009980. Peak allocated GPU memory was 2.64 GiB for this small check;
+  and nonzero. This lambda-0.2 snapshot repeated that check successfully: its
+  REPA loss was 1.00099802, weighted contribution was 0.20019960, and the
+  projector gradient norm was 0.26367414. Peak allocated GPU memory was
+  2.64 GiB for this small check;
   this does not estimate full-batch training memory.
 - The check performed zero optimizer updates. Its successful runtime report is
   `logs/validate_adaptive_band_repa_real_parent_retry.log` (ignored by Git).
