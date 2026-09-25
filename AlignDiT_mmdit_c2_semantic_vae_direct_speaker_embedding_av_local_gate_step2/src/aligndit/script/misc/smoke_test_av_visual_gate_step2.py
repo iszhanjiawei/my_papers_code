@@ -264,7 +264,42 @@ def test_cfg_packed_matches_sequential_and_null_video():
     )
     assert output.shape == (2, 12, 64) and torch.isfinite(output).all()
     torch.testing.assert_close(output[:, :3], kwargs["cond"][:, :3], rtol=0, atol=0)
-    print("[OK] B=2 packed CFG matches sequential 2/3 branches; null-video independence; CFM sample preserves prefix")
+
+    captured_video_masks = []
+    handle = model.transformer_blocks[0].register_forward_pre_hook(
+        lambda _module, _args, block_kwargs: captured_video_masks.append(block_kwargs["v_mask"].detach().clone()),
+        with_kwargs=True,
+    )
+    try:
+        # A long text can increase CFM's final duration beyond the requested
+        # two-clip duration.  The video grid must be zero-padded to match while
+        # the added positions remain invalid attention keys.
+        padded_output, _ = cfm.sample(
+            cond=kwargs["cond"][:1, :3],
+            text=torch.zeros((1, 14), dtype=torch.long),
+            duration=torch.tensor([12]),
+            video=kwargs["video"][:1],
+            lens=torch.tensor([3]),
+            speaker_embedding=kwargs["speaker_embedding"][:1],
+            steps=1,
+            use_epss=False,
+            cfg_strength=1.0,
+            cfg_strength_v=1.0,
+            seed=0,
+        )
+    finally:
+        handle.remove()
+    assert padded_output.shape == (1, 15, 64) and torch.isfinite(padded_output).all()
+    assert captured_video_masks
+    original_video_len = kwargs["video"].shape[1]
+    expected_video_mask = torch.tensor([True] * original_video_len + [False] * (15 - original_video_len))
+    for observed in captured_video_masks:
+        assert observed.shape == (3, 15)
+        torch.testing.assert_close(observed.cpu(), expected_video_mask.expand(3, -1), rtol=0, atol=0)
+    print(
+        "[OK] B=2 packed CFG matches sequential 2/3 branches; null-video independence; "
+        "CFM sample preserves prefix and masks text-extended video padding"
+    )
 
 
 def main():
