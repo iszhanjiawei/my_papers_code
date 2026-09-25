@@ -185,7 +185,20 @@ def test_full_model_cfg_prefix_and_compatibility():
     )
     assert torch.isfinite(output).all()
     torch.testing.assert_close(output[:, :3], kwargs["cond"][:, :3], rtol=0, atol=0)
-    print("[OK] state-key/EMA compatibility; full-model None/wide fallback; packed CFG/null video; reference prefix")
+    # Sampling resolves duration against text length.  Long text therefore
+    # requires zero-padding a shorter real-video clip before local AV/VV masks
+    # are constructed (the formal S1 list contains this corner case).
+    long_text = torch.zeros((1, 15), dtype=torch.long)
+    with torch.inference_mode():
+        long_output, _ = cfm.sample(
+            cond=kwargs["cond"][:1, :3], text=long_text, duration=torch.tensor([12]),
+            video=kwargs["video"][:1], lens=torch.tensor([3]),
+            speaker_embedding=kwargs["speaker_embedding"][:1], steps=1,
+            use_epss=False, cfg_strength=1.0, cfg_strength_v=1.0, seed=0,
+        )
+    assert long_output.shape == (1, 16, 64) and torch.isfinite(long_output).all()
+    torch.testing.assert_close(long_output[:, :3], kwargs["cond"][:1, :3], rtol=0, atol=0)
+    print("[OK] state-key/EMA compatibility; full-model None/wide fallback; packed CFG/null video; reference prefix; long-text video padding")
 
 
 def test_training_recomputation_and_bfloat16():

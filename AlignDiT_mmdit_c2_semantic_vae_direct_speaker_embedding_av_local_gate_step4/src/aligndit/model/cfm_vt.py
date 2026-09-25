@@ -118,10 +118,17 @@ class CFM_VT(CFM):
         max_duration = duration.amax()
         duration_mask = lens_to_mask(duration, length=max_duration)
 
-        # Clip video to match clamped duration to avoid length mismatch in complementary_mask
+        # Match video to the resolved audio duration.  A long text prompt can
+        # raise `duration` above the caller-requested value, so clipping alone
+        # leaves local audio/video attention with unequal sequence lengths.
+        # Zero padding represents unavailable visual context beyond the real
+        # clip and preserves the historical audio-duration rule.
         if video is not None:
-            max_video_len = max_duration // self.audio_video_ratio
-            video = video[:, :max_video_len, :]
+            max_video_len = int(max_duration.item()) // self.audio_video_ratio
+            if video.shape[1] < max_video_len:
+                video = F.pad(video, (0, 0, 0, max_video_len - video.shape[1]), value=0.0)
+            else:
+                video = video[:, :max_video_len, :]
 
         # duplicate test corner for inner time step oberservation
         if duplicate_test:
