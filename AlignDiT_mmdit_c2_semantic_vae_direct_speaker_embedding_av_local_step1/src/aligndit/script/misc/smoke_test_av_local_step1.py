@@ -99,6 +99,17 @@ def expected_mask(length, radius, batch=1, *, audio_valid=None, video_valid=None
     return expected
 
 
+def expected_rectangular_mask(audio_length, video_length, radius, batch=1):
+    total = audio_length + video_length
+    expected = torch.ones(batch, 1, total, total, dtype=torch.bool)
+    for audio_query in range(audio_length):
+        for video_key in range(video_length):
+            expected[:, :, audio_query, audio_length + video_key] = (
+                abs(audio_query - video_key) <= radius
+            )
+    return expected
+
+
 def test_four_quadrants_and_padding():
     torch.manual_seed(11)
     n = 8
@@ -239,6 +250,34 @@ def test_cfg_prefix_and_null_video():
     print("[OK] 2/3-branch CFG, prefix coordinates, dropped video and B=1/2 sampling")
 
 
+def test_text_clamped_audio_can_exceed_video():
+    """Setting 1 may extend audio duration when token count exceeds 2x frames."""
+
+    model = make_model().eval()
+    kwargs = inputs()
+    audio_length, video_length = 15, kwargs["video"].shape[1]
+    kwargs["x"] = F.pad(kwargs["x"][:1], (0, 0, 0, audio_length - 12))
+    kwargs["cond"] = F.pad(kwargs["cond"][:1], (0, 0, 0, audio_length - 12))
+    kwargs["text"] = kwargs["text"][:1]
+    kwargs["video"] = kwargs["video"][:1]
+    kwargs["time"] = kwargs["time"][:1]
+    kwargs["mask"] = None
+    kwargs["text_mask"] = kwargs["text_mask"][:1]
+    kwargs["video_mask"] = None
+    kwargs["complementary_mask"] = kwargs["complementary_mask"][:1]
+    kwargs["generation_mask"] = torch.arange(audio_length)[None] >= 3
+    kwargs["speaker_embedding"] = kwargs["speaker_embedding"][:1]
+
+    with torch.inference_mode(), capture_joint_masks(audio_length + video_length) as captured:
+        actual, _ = model(**kwargs, cfg_infer=True)
+    assert actual.shape == (3, audio_length, 64) and torch.isfinite(actual).all()
+    expected = expected_rectangular_mask(audio_length, video_length, 2, batch=3)
+    assert len(captured) == 2
+    for mask in captured:
+        assert torch.equal(mask, expected.expand_as(mask))
+    print("[OK] text-clamped audio tails preserve rectangular local AV coordinates")
+
+
 def main():
     torch.set_num_threads(1)
     test_four_quadrants_and_padding()
@@ -246,6 +285,7 @@ def main():
     test_checkpoint_compatibility_and_wide_window()
     test_training_mask_none_and_checkpoint_backward()
     test_cfg_prefix_and_null_video()
+    test_text_clamped_audio_can_exceed_video()
     print("All AV-local step-1 contracts passed.")
 
 

@@ -685,11 +685,6 @@ class DiT_VT_MMDiT(DiT):
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
-        if self.av_local_window_radius is not None and video_len != seq_len:
-            raise ValueError(
-                "AV local step 1 requires aligned, equal-length audio/video sequences "
-                f"including the reference prefix; got audio={seq_len}, video={video_len}"
-            )
         if generation_mask is None:
             raise ValueError("generation_mask is required to separate prompt and synthesized audio regions")
         if generation_mask.dtype != torch.bool:
