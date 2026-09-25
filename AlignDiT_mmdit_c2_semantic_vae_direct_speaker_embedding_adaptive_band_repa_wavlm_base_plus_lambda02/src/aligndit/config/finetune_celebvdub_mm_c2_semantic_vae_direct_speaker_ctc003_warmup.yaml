@@ -1,0 +1,26 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_ctc003_warmup
+  - _self_
+
+# Record initialization as well as sampler seed for this new isolated run.
+seed: 666
+
+datasets:
+  speaker_embedding_cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/campplus_spk_emb_zh_en_16k
+  speaker_embedding_dim: 192
+  speaker_embedding_model_id: iic/speech_campplus_sv_zh_en_16k-common_advanced
+  speaker_embedding_checkpoint_sha256: 92f29b94e6948786a26778c9e302525d185bb08c8b9f5252ed98776902840199
+
+optim:
+  # Stop after the comparison checkpoint without changing the inherited
+  # 200-epoch learning-rate schedule.
+  run_until_update: 200000
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k
+  arch:
+    speaker_dim: 192
+    speaker_condition_start_layer: 12
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_40hz_CelebVDub_char
