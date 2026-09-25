@@ -1,8 +1,9 @@
 # Current experiment
 
-This snapshot adds frozen CAM++ speaker conditioning to Semantic-VAE Direct-C2
-with CTC lambda 0.03. See [SEMANTIC_VAE_SPEAKER_C2.md](SEMANTIC_VAE_SPEAKER_C2.md)
-for this experiment's configuration, training, TensorBoard and inference commands.
+This independent copy of the adaptive-band speaker experiment adds WavLM-Base+
+REPA with fixed weight 0.1. The adaptive temporal band and delayed CTC schedule
+remain enabled. See [ADAPTIVE_BAND_WAVLM_REPA.md](ADAPTIVE_BAND_WAVLM_REPA.md)
+for the combined experiment's configuration, validation and launch commands.
 
 # AlignDiT
 

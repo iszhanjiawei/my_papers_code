@@ -1,5 +1,10 @@
 # Isolated Semantic-VAE C2 + speaker + adaptive temporal band
 
+This document describes the copied adaptive-band parent. For the current
+combined adaptive-band + WavLM-Base+ REPA experiment and launch commands, use
+[ADAPTIVE_BAND_WAVLM_REPA.md](ADAPTIVE_BAND_WAVLM_REPA.md). Historical validation
+results below belong to the parent experiment.
+
 This is a source-code copy of `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding`.
 The original project is unchanged. Source files are real copies, not shared imports
 or symlinks. Training products were not copied. The existing dataset and frozen

@@ -1,8 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-# Isolated Direct-C2 + CAM++ speaker training with CTC disabled through 10k and linearly warmed to
-# 0.03 at 30k. All other settings, including LR=5e-5, match Direct-C2.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$script_dir"
 while [[ "$project_root" != "/" && ! -f "$project_root/env.sh" ]]; do
@@ -18,20 +16,20 @@ cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
 parent_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech"
+repa_cache="${ROOT_PREFIX}/zjw524/projects/data/CelebVDub/wavlm_base_plus_repa_final_fp16"
 if [[ ! -x "$python_bin" ]]; then
     echo "Missing AlignDiT Python interpreter: $python_bin" >&2
     exit 1
 fi
-if [[ ! -f "$parent_dir/model_70000.pt" || -L "$parent_dir/model_70000.pt" ]]; then
-    echo "Missing regular S2c 70k checkpoint: $parent_dir/model_70000.pt" >&2
-    exit 1
-fi
-if [[ ! -f "$parent_dir/training_contract.json" || -L "$parent_dir/training_contract.json" ]]; then
-    echo "Missing regular S2c training contract: $parent_dir/training_contract.json" >&2
-    exit 1
-fi
+for path in "$parent_dir/model_70000.pt" "$parent_dir/training_contract.json" \
+    "$repa_cache/metadata.json" "$repa_cache/coverage_report.json"; do
+    if [[ ! -f "$path" || -L "$path" ]]; then
+        echo "Missing required regular file: $path" >&2
+        exit 1
+    fi
+done
 if [[ "$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)" -lt 4 ]]; then
-    echo "Direct-C2 requires four visible GPUs" >&2
+    echo "Direct-C2 REPA requires four visible GPUs" >&2
     exit 1
 fi
 while IFS=',' read -r gpu_index memory_used; do
@@ -43,8 +41,7 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-train_config="${TRAIN_CONFIG:-finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus}"
-echo "Launching isolated $project_root with config=$train_config (inherited LR/CTC schedule)" >&2
+echo "Launching Direct-C2 + CAM++ + adaptive band + WavLM-Base+ REPA: tap=10th MM-DiT, lambda=0.1" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     OMP_NUM_THREADS=1 \
@@ -61,5 +58,5 @@ exec env \
         --num_processes 4 \
         --main_process_port "${TRAIN_PORT:-29634}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
-        --config-name "$train_config" \
+        --config-name finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus \
         "$@"

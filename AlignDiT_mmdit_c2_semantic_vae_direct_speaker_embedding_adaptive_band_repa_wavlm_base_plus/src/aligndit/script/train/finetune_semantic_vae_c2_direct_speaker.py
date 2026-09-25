@@ -12,6 +12,7 @@ from omegaconf import OmegaConf
 
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
+from aligndit.model.repa import validate_repa_cache_metadata
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
 from aligndit.model.trainer_semantic_vae_adaptive_band import SemanticVaeAdaptiveBandTrainer
@@ -53,6 +54,28 @@ def main(model_cfg):
         model_id=model_cfg.datasets.speaker_embedding_model_id,
         checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
     )
+    repa_lambda = float(OmegaConf.select(model_cfg, "model.repa_lambda", default=0.0))
+    if not math.isfinite(repa_lambda) or repa_lambda < 0:
+        raise ValueError(f"repa_lambda must be finite and non-negative, got {repa_lambda}")
+    repa_enabled = repa_lambda > 0
+    repa_metadata = None
+    if repa_enabled:
+        if "repa_wavlm_base_plus" not in str(model_cfg.ckpts.save_dir) or "repa_wavlm_base_plus" not in str(model_cfg.model.name):
+            raise ValueError("REPA runs require dedicated model.name and ckpts.save_dir")
+        if int(model_arc.repa_layer) != 9:
+            raise ValueError("The primary REPA experiment must tap zero-based MM-DiT layer 9 (the 10th block)")
+        if int(model_arc.repa_target_dim) != 768 or int(model_arc.repa_projector_dim) != 2048:
+            raise ValueError("The primary WavLM-Base+ REPA projector must be 768->2048->2048->768")
+        repa_metadata = validate_repa_cache_metadata(
+            model_cfg.datasets.repa_feature_cache_dir,
+            expected_manifest_sha256=model_cfg.datasets.expected_manifest_sha256,
+            expected_count=int(model_cfg.datasets.expected_record_count),
+            expected_dim=int(model_cfg.datasets.repa_feature_dim),
+            model_id=model_cfg.datasets.repa_model_id,
+            model_revision=model_cfg.datasets.repa_model_revision,
+            checkpoint_sha256=model_cfg.datasets.repa_checkpoint_sha256,
+            teacher_layer=int(model_cfg.datasets.repa_teacher_layer),
+        )
 
     if float(model_cfg.optim.learning_rate) != 5e-5:
         raise RuntimeError("Direct-C2 CTC-warmup experiment requires the requested global learning rate 5e-5")
@@ -80,6 +103,7 @@ def main(model_cfg):
         vocab_char_map=vocab_char_map,
         audio_video_ratio=model_arc.audio_video_ratio,
         ctc_lambda=model_cfg.model.ctc_lambda,
+        repa_lambda=repa_lambda,
     )
 
     trainer_cls = SemanticVaeAdaptiveBandTrainer if temporal_band_enabled else SemanticVaeDirectC2SpeakerTrainer
@@ -127,11 +151,22 @@ def main(model_cfg):
             "project_dir": str(Path.cwd()),
             "config": OmegaConf.to_container(model_cfg, resolve=True),
             "speaker_cache_metadata": speaker_metadata,
+            "repa_cache_metadata": repa_metadata,
             "initialization": "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter",
             "speaker_condition": "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17",
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
+        if repa_enabled:
+            contract["repa"] = {
+                "lambda": repa_lambda,
+                "schedule": "fixed from the first update",
+                "student_layer_zero_based": int(model_arc.repa_layer),
+                "teacher_layer": int(model_cfg.datasets.repa_teacher_layer),
+                "alignment": "linear interpolation of each unpadded 50-Hz target to valid 40-Hz latent length",
+                "loss": "mean 1-cosine on the flow-matching generation mask only",
+                "inference": "projector weights load strictly but the auxiliary head is not called",
+            }
         if temporal_band_enabled:
             contract["temporal_band"] = {
                 "formula": "B[i,j] = -(t_video[j] - t_audio[i] - delta[i])**2 / (2*sigma[i]**2)",
@@ -170,6 +205,12 @@ def main(model_cfg):
         speaker_embedding_dim=speaker_dim,
         speaker_embedding_model_id=model_cfg.datasets.speaker_embedding_model_id,
         speaker_embedding_checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
+        repa_feature_cache_dir=(model_cfg.datasets.repa_feature_cache_dir if repa_enabled else None),
+        repa_feature_dim=(int(model_cfg.datasets.repa_feature_dim) if repa_enabled else 768),
+        repa_model_id=(model_cfg.datasets.repa_model_id if repa_enabled else None),
+        repa_model_revision=(model_cfg.datasets.repa_model_revision if repa_enabled else None),
+        repa_checkpoint_sha256=(model_cfg.datasets.repa_checkpoint_sha256 if repa_enabled else None),
+        repa_teacher_layer=(int(model_cfg.datasets.repa_teacher_layer) if repa_enabled else None),
     )
     if trainer.is_main:
         print(
@@ -177,7 +218,8 @@ def main(model_cfg):
             f"records={len(train_dataset)}, CTC feasible={train_dataset.ctc_feasible_count}, "
             f"CTC zero_infinity-only={train_dataset.ctc_infeasible_count}; "
             f"ctc_lambda=0 through update {model_cfg.model.ctc_warmup_start}, "
-            f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}",
+            f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}; "
+            f"repa_lambda={repa_lambda}; temporal_band={temporal_band_enabled}",
             flush=True,
         )
     trainer.finetune(
