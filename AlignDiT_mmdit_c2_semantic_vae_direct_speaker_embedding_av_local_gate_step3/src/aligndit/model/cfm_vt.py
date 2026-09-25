@@ -118,10 +118,18 @@ class CFM_VT(CFM):
         max_duration = duration.amax()
         duration_mask = lens_to_mask(duration, length=max_duration)
 
-        # Clip video to match clamped duration to avoid length mismatch in complementary_mask
+        # Match video to the final audio duration. The text-length safeguard
+        # above can extend inference beyond the caller's requested duration;
+        # local A->V attention still needs both streams on the same coordinate
+        # grid. Keep added video positions invalid so zero padding cannot
+        # become conditioning for VA/VV attention.
+        video_valid_len = video.shape[1]
         if video is not None:
             max_video_len = max_duration // self.audio_video_ratio
+            video_valid_len = min(video.shape[1], max_video_len)
             video = video[:, :max_video_len, :]
+            if video.shape[1] < max_video_len:
+                video = F.pad(video, (0, 0, 0, max_video_len - video.shape[1]), value=0.0)
 
         # duplicate test corner for inner time step oberservation
         if duplicate_test:
@@ -147,6 +155,16 @@ class CFM_VT(CFM):
         else:  # save memory and speed up, as single inference need no mask currently
             mask = None
             video_mask = None
+        if video_valid_len < video.shape[1]:
+            observed_video_mask = (
+                torch.arange(video.shape[1], device=device).unsqueeze(0) < video_valid_len
+            ).expand(batch, -1)
+            # Ordinary single-item inference omits padding masks. Once text
+            # extension adds video padding, retain the all-valid audio mask so
+            # the video mask reaches every attention block.
+            if mask is None:
+                mask = duration_mask
+            video_mask = observed_video_mask if video_mask is None else video_mask & observed_video_mask
         text_mask = lens_to_mask(text_lens)
 
         # complementary masking

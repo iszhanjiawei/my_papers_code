@@ -181,7 +181,39 @@ def test_multilayer_video_isolation_and_cfg():
     )
     assert torch.isfinite(output).all()
     torch.testing.assert_close(output[:, :3], kwargs["cond"][:, :3], rtol=0, atol=0)
-    print("[OK] multilayer video independence from audio/text at fixed flow time; packed CFG; null video; prefix sample")
+
+    captured_video_masks = []
+    handle = model.transformer_blocks[0].register_forward_pre_hook(
+        lambda _module, _args, block_kwargs: captured_video_masks.append(block_kwargs["v_mask"].detach().clone()),
+        with_kwargs=True,
+    )
+    try:
+        padded_output, _ = cfm.sample(
+            cond=kwargs["cond"][:1, :3],
+            text=torch.zeros((1, 14), dtype=torch.long),
+            duration=torch.tensor([12]),
+            video=kwargs["video"][:1],
+            lens=torch.tensor([3]),
+            speaker_embedding=kwargs["speaker_embedding"][:1],
+            steps=1,
+            use_epss=False,
+            cfg_strength=1.0,
+            cfg_strength_v=1.0,
+            seed=0,
+        )
+    finally:
+        handle.remove()
+    assert padded_output.shape == (1, 15, 64) and torch.isfinite(padded_output).all()
+    assert captured_video_masks
+    original_video_len = kwargs["video"].shape[1]
+    expected_video_mask = torch.tensor([True] * original_video_len + [False] * (15 - original_video_len))
+    for observed in captured_video_masks:
+        assert observed.shape == (3, 15)
+        torch.testing.assert_close(observed.cpu(), expected_video_mask.expand(3, -1), rtol=0, atol=0)
+    print(
+        "[OK] multilayer video independence from audio/text at fixed flow time; packed CFG; null video; "
+        "prefix sample; text-extended video padding is masked"
+    )
 
 
 def test_training_checkpoint_and_bfloat16():
