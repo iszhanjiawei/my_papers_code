@@ -1,0 +1,19 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+# Matched control for the adaptive band's initial Gaussian prior. No predictor,
+# no additional trainable tensors; all baseline data/loss/optimizer settings stay.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_fixed_band_ctc003_warmup10k30k
+  arch:
+    temporal_band_enabled: True
+    temporal_band_mode: fixed
+    # Physical model-input rates after the unchanged 25 -> 40 Hz interpolation.
+    temporal_band_audio_fps: 40.0
+    temporal_band_video_fps: 40.0
+    temporal_band_fixed_offset_seconds: 0.0
+    temporal_band_fixed_sigma_seconds: 0.100
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_fixed_band_ctc003_warmup10k30k_40hz_CelebVDub_char
