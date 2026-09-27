@@ -1,4 +1,4 @@
-"""Strict loader for the Semantic-VAE decoder bound to a latent cache."""
+"""Strict loaders for the Semantic-VAE model bound to a latent cache."""
 
 from __future__ import annotations
 
@@ -33,10 +33,14 @@ def read_json_object(path: str | Path) -> dict[str, Any]:
     return value
 
 
-def load_semantic_vae_decoder(
+def load_semantic_vae(
     *, repo: Path, checkpoint_root: Path, cache_spec: dict[str, Any], device: torch.device
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
-    """Load only the pinned 1000k EMA decoder and verify every cache binding."""
+    """Load the pinned full 1000k EMA VAE and verify every cache binding.
+
+    Returning the encoder as well enables independent reference audio to use
+    precisely the same posterior path as the training cache.
+    """
 
     repo = repo.resolve(strict=True)
     checkpoint_root = checkpoint_root.resolve(strict=True)
@@ -118,9 +122,9 @@ def load_semantic_vae_decoder(
             f"Unexpected Semantic-VAE geometry: sample_rate={model.sample_rate}, "
             f"hop={model.hop_length}, vae_dim={model.vae_dim}"
         )
-    decoder = model.decoder.eval().requires_grad_(False).to(device)
-    del model, checkpoint, selected, target_state
-    return decoder, {
+    model = model.eval().requires_grad_(False).to(device=device, dtype=torch.float32)
+    del checkpoint, selected, target_state
+    return model, {
         "checkpoint": str(checkpoint_path),
         "checkpoint_sha256": sha256_file(checkpoint_path),
         "ema_step": ema_step,
@@ -129,3 +133,17 @@ def load_semantic_vae_decoder(
         "metainfo_sha256": sha256_file(metainfo_path),
         "repo": str(repo),
     }
+
+
+def load_semantic_vae_decoder(
+    *, repo: Path, checkpoint_root: Path, cache_spec: dict[str, Any], device: torch.device
+) -> tuple[torch.nn.Module, dict[str, Any]]:
+    """Load only the pinned decoder, preserving the original public API."""
+    # Load on CPU first so decoder-only callers do not acquire encoder GPU
+    # allocations while constructing the otherwise identical strict model.
+    model, metadata = load_semantic_vae(
+        repo=repo, checkpoint_root=checkpoint_root, cache_spec=cache_spec, device=torch.device("cpu")
+    )
+    decoder = model.decoder.to(device)
+    del model
+    return decoder, metadata
