@@ -16,6 +16,9 @@ MM-DiT backbone for multimodal dubbing:
   `n_text_layers` are text-free audio-only DiT blocks
 - audio-stream parameter names are kept identical to DiTBlock so
   that the audio-only pretrained checkpoint loads directly by key matching
+- optional VA blocking keeps audio queries on the original joint AA/AV
+  softmax with the Visual Path Band prior; video queries read global VV only
+- optional REPA projects an intermediate audio state during training only
 """
 
 from __future__ import annotations
@@ -43,6 +46,11 @@ def _validate_generation_mask(x, generation_mask):
         raise ValueError(
             f"generation_mask must have shape {tuple(x.shape[:2])}, got {tuple(generation_mask.shape)}"
         )
+
+
+def _validate_block_video_audio_attention(value):
+    if type(value) is not bool:
+        raise TypeError("block_video_audio_attention must be a boolean")
 
 
 # 音频流输入层
@@ -176,6 +184,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         attn_mask_enabled=True,
         text_dim=512,
         prompt_isolated_ca=True,
+        block_video_audio_attention=False,
     ):
         super().__init__(
             dim=dim,
@@ -195,6 +204,8 @@ class MMDiTBlock_VT(DiTCrossBlock):
         self.pe_attn_head = pe_attn_head
         self.attn_mask_enabled = attn_mask_enabled
         self.prompt_isolated_ca = prompt_isolated_ca
+        _validate_block_video_audio_attention(block_video_audio_attention)
+        self.block_video_audio_attention = block_video_audio_attention
 
         # video stream 视频流独立参数
         self.v_attn_norm = AdaLayerNorm(dim)
@@ -261,13 +272,13 @@ class MMDiTBlock_VT(DiTCrossBlock):
         key = torch.cat([k_a, k_v], dim=2)
         value = torch.cat([v_a, v_v], dim=2)
 
-        if temporal_band_bias is not None:
-            if temporal_band_bias.shape != (batch_size, n_a, n_v):
+        if temporal_band_bias is not None or self.block_video_audio_attention:
+            if temporal_band_bias is not None and temporal_band_bias.shape != (batch_size, n_a, n_v):
                 raise ValueError(
                     f"temporal_band_bias must have shape {(batch_size, n_a, n_v)}, "
                     f"got {tuple(temporal_band_bias.shape)}"
                 )
-            key_mask = None
+            key_mask = video_key_mask = None
             if self.attn_mask_enabled and (mask is not None or v_mask is not None):
                 audio_key_mask = mask if mask is not None else torch.ones(
                     (batch_size, n_a), dtype=torch.bool, device=norm_x.device
@@ -276,21 +287,30 @@ class MMDiTBlock_VT(DiTCrossBlock):
                     (batch_size, n_v), dtype=torch.bool, device=norm_v.device
                 )
                 key_mask = torch.cat([audio_key_mask, video_key_mask], dim=1)[:, None, None, :]
+                video_key_mask = video_key_mask[:, None, None, :]
 
-            # Only audio queries receive the AV prior. Splitting queries keeps
-            # VA/VV on the original SDPA path and avoids a full joint-square
-            # additive mask or materializing one copy for every head. Keep
-            # this independent of padding-mask enablement: training deliberately
-            # passes block_mask=None, but the temporal prior must stay active.
-            audio_bias = F.pad(temporal_band_bias.to(q_a.dtype), (n_a, 0))[:, None]
-            if key_mask is not None:
-                audio_bias = audio_bias.masked_fill(~key_mask, float("-inf"))
+            # Split queries, not the audio softmax: QA still reads [KA, KV]
+            # jointly. The original soft AV prior stays active even when the
+            # training padding-mask policy passes None; no hard AV window or
+            # visual-output gate is introduced. VA blocking separately makes
+            # QV read only global KV/VV, including when the prior is disabled.
+            if temporal_band_bias is not None:
+                audio_bias = F.pad(temporal_band_bias.to(q_a.dtype), (n_a, 0))[:, None]
+                if key_mask is not None:
+                    audio_bias = audio_bias.masked_fill(~key_mask, float("-inf"))
+            else:
+                audio_bias = key_mask
             out_a = F.scaled_dot_product_attention(
                 q_a, key, value, attn_mask=audio_bias, dropout_p=0.0, is_causal=False
             )
-            out_v = F.scaled_dot_product_attention(
-                q_v, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False
-            )
+            if self.block_video_audio_attention:
+                out_v = F.scaled_dot_product_attention(
+                    q_v, k_v, v_v, attn_mask=video_key_mask, dropout_p=0.0, is_causal=False
+                )
+            else:
+                out_v = F.scaled_dot_product_attention(
+                    q_v, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False
+                )
             out = torch.cat([out_a, out_v], dim=2)
         elif self.attn_mask_enabled and mask is not None:
             if v_mask is None:
@@ -418,6 +438,10 @@ class DiT_VT_MMDiT(DiT):
         temporal_band_fixed_offset_seconds=0.0,
         temporal_band_fixed_sigma_seconds=0.100,
         temporal_band_path_sigma=2.0,
+        block_video_audio_attention=False,
+        repa_layer=None,
+        repa_target_dim=None,
+        repa_projector_dim=None,
     ):
         super().__init__(
             dim=dim,
@@ -442,6 +466,8 @@ class DiT_VT_MMDiT(DiT):
         self.audio_video_ratio = audio_video_ratio
         self.video_rope_scaled = video_rope_scaled
         self.prompt_isolated_ca = prompt_isolated_ca
+        _validate_block_video_audio_attention(block_video_audio_attention)
+        self.block_video_audio_attention = block_video_audio_attention
         self.normalize_text_context = bool(normalize_text_context)
         # Runtime-only diagnostics.  These are deliberately not buffers: the
         # repair must remain state-dict compatible with the S2c parent and the
@@ -474,6 +500,23 @@ class DiT_VT_MMDiT(DiT):
                     f"n_text_layers <= speaker_condition_start_layer < depth, got "
                     f"{self.n_text_layers} <= {self.speaker_condition_start_layer} < {depth}"
                 )
+        self.repa_layer = repa_layer
+        self.repa_target_dim = repa_target_dim
+        if self.repa_layer is None:
+            if self.repa_target_dim is not None or repa_projector_dim is not None:
+                raise ValueError("repa_target_dim/repa_projector_dim require repa_layer")
+        else:
+            if type(self.repa_layer) is not int or not 0 <= self.repa_layer < self.n_mm_layers:
+                raise ValueError(
+                    "repa_layer must be a zero-based MM-DiT layer index in "
+                    f"[0, {self.n_mm_layers}), got {self.repa_layer!r}"
+                )
+            if type(self.repa_target_dim) is not int or self.repa_target_dim <= 0:
+                raise ValueError(f"repa_target_dim must be a positive integer, got {self.repa_target_dim!r}")
+            if repa_projector_dim is None:
+                repa_projector_dim = self.dim * 2
+            if type(repa_projector_dim) is not int or repa_projector_dim <= 0:
+                raise ValueError(f"repa_projector_dim must be a positive integer, got {repa_projector_dim!r}")
         try:
             ctc_layer_indices = tuple(layer_indices_ctc)
         except TypeError as error:
@@ -518,7 +561,9 @@ class DiT_VT_MMDiT(DiT):
         }
         self.transformer_blocks = nn.ModuleList(
             [
-                MMDiTBlock_VT(**text_block_kwargs)
+                MMDiTBlock_VT(
+                    **text_block_kwargs, block_video_audio_attention=block_video_audio_attention
+                )
                 if i < self.n_mm_layers
                 else AudioTextDiTBlock(**text_block_kwargs)
                 if i < self.n_text_layers
@@ -613,6 +658,20 @@ class DiT_VT_MMDiT(DiT):
                 )
             if abs(self.temporal_band.audio_fps / self.temporal_band.video_fps - self.audio_video_ratio) > 1e-6:
                 raise ValueError("temporal-band audio/video frame-rate ratio must match audio_video_ratio")
+
+        # Build the auxiliary head last so a matched seed preserves all inherited
+        # weights. This projector is unused at inference.
+        self.repa_projector = (
+            nn.Sequential(
+                nn.Linear(self.dim, repa_projector_dim),
+                nn.SiLU(),
+                nn.Linear(repa_projector_dim, repa_projector_dim),
+                nn.SiLU(),
+                nn.Linear(repa_projector_dim, self.repa_target_dim),
+            )
+            if self.repa_layer is not None
+            else None
+        )
 
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
@@ -740,6 +799,7 @@ class DiT_VT_MMDiT(DiT):
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
         video_path: float["b nv"] | None = None,  # native-derived cumulative visual path  # noqa: F722
+        return_repa: bool = False,
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
@@ -777,6 +837,10 @@ class DiT_VT_MMDiT(DiT):
             )
         if generation_mask.device != x.device:
             raise ValueError(f"generation_mask must be on {x.device}, got {generation_mask.device}")
+        if return_repa and self.repa_projector is None:
+            raise RuntimeError("return_repa=True requires a configured REPA projector")
+        if return_repa and (cfg_infer or cache):
+            raise ValueError("REPA activations are training-only and cannot be requested with cfg_infer/cache")
         if time.ndim == 0:
             time = time.repeat(batch)
 
@@ -948,6 +1012,7 @@ class DiT_VT_MMDiT(DiT):
             residual = x
 
         intermediates_ctc = {}
+        repa_projection = None
         for layer_i, block in enumerate(self.transformer_blocks):
             is_mm = isinstance(block, MMDiTBlock_VT)
             has_tail_text = isinstance(block, AudioTextDiTBlock)
@@ -1030,6 +1095,9 @@ class DiT_VT_MMDiT(DiT):
                         rope=rope,
                     )
 
+            if return_repa and layer_i == self.repa_layer:
+                repa_projection = self.repa_projector(x)
+
             if not cache and layer_i in self.layer_map_ctc:  # hack
                 projector = self.projectors_ctc[self.layer_map_ctc[layer_i]]
                 z_tilde, z_lens = projector(x, lens)
@@ -1041,4 +1109,8 @@ class DiT_VT_MMDiT(DiT):
         x = self.norm_out(x, t)
         output = self.proj_out(x)
 
+        if return_repa:
+            if repa_projection is None:
+                raise RuntimeError(f"failed to collect REPA activation from layer {self.repa_layer}")
+            return output, intermediates_ctc, repa_projection
         return output, intermediates_ctc

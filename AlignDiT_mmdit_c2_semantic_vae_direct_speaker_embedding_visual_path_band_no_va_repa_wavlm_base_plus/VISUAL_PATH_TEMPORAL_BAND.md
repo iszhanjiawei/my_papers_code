@@ -1,3 +1,6 @@
+> Historical parent experiment. This snapshot now uses
+> [Visual Path Band + blocked VA + WavLM REPA](VISUAL_PATH_NO_VA_WAVLM_REPA.md).
+
 # Isolated visual feature path-distance alignment
 
 This is a real source copy of the fixed-band speaker C2 snapshot (`6c69daa`),

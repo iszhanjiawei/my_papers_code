@@ -10,6 +10,7 @@ d - dimension
 
 from __future__ import annotations
 
+import math
 from random import random
 from typing import Callable
 
@@ -18,6 +19,7 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 from torchdiffeq import odeint
 
+from aligndit.model.repa import masked_repa_cosine_loss
 from f5_tts.model.cfm import CFM
 from f5_tts.model.utils import (
     exists,
@@ -37,6 +39,7 @@ class CFM_VT(CFM):
         video_drop_prob=0.2,
         audio_video_ratio=4,
         ctc_lambda=0.1,
+        repa_lambda=0.0,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -49,6 +52,9 @@ class CFM_VT(CFM):
 
         # ctc loss
         self.ctc_lambda = ctc_lambda
+        if not math.isfinite(float(repa_lambda)) or float(repa_lambda) < 0.0:
+            raise ValueError(f"repa_lambda must be finite and non-negative, got {repa_lambda}")
+        self.repa_lambda = float(repa_lambda)
 
     @torch.no_grad()
     def sample(
@@ -273,6 +279,8 @@ class CFM_VT(CFM):
         lens: int["b"] | None = None,  # noqa: F821
         text_lens: int["b"] | None = None,  # noqa: F821
         video_lens: int["b"] | None = None,  # noqa: F821
+        repa_features: float["b nr dr"] | None = None,  # noqa: F722
+        repa_feature_lens: int["b"] | None = None,  # noqa: F821
         noise_scheduler: str | None = None,
     ):
         # handle raw wave
@@ -370,7 +378,10 @@ class CFM_VT(CFM):
             drop_video = True
 
         # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
-        pred, intermediates_ctc = self.transformer(
+        use_repa = self.repa_lambda > 0
+        if use_repa and (repa_features is None or repa_feature_lens is None):
+            raise RuntimeError("positive repa_lambda requires cached repa_features and repa_feature_lens")
+        transformer_outputs = self.transformer(
             x=φ,
             cond=cond,
             text=text,
@@ -387,14 +398,31 @@ class CFM_VT(CFM):
             speaker_embedding=speaker_embedding,
             # Use the final prompt dropout, including all-condition dropout.
             drop_speaker=drop_audio_cond,
+            return_repa=use_repa,
             **video_path_kwargs,
         )
+
+        if use_repa:
+            pred, intermediates_ctc, repa_projection = transformer_outputs
+        else:
+            pred, intermediates_ctc = transformer_outputs
 
         # flow matching loss
         loss = F.mse_loss(pred, flow, reduction="none")
         loss = loss[rand_span_mask]
         loss = loss.mean()
         component_losses = {"diff_loss": loss.item()}
+
+        if use_repa:
+            repa_loss = masked_repa_cosine_loss(
+                repa_projection,
+                repa_features,
+                repa_feature_lens,
+                lens,
+                rand_span_mask,
+            )
+            loss = loss + repa_loss * self.repa_lambda
+            component_losses["repa_loss"] = repa_loss.item()
 
         # ctc loss
         if self.ctc_lambda > 0:

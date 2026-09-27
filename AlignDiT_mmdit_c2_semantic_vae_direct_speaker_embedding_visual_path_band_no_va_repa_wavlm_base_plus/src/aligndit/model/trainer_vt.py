@@ -247,6 +247,9 @@ class Trainer_VT(Trainer):
                     )
                     if "video_path" in batch:
                         conditioning_kwargs["video_path"] = batch["video_path"].to(dtype=torch.float32)
+                    if "repa_features" in batch:
+                        conditioning_kwargs["repa_features"] = batch["repa_features"]
+                        conditioning_kwargs["repa_feature_lens"] = batch["repa_feature_lengths"]
 
                     loss, loss_components, cond, pred = self.model(
                         mel_spec,

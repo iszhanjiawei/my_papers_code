@@ -173,6 +173,46 @@ def validate_fixed_band_contract(config, checkpoint_path: Path) -> None:
             raise RuntimeError("Visual-path inference/training native video root mismatch")
 
 
+def validate_no_va_repa_contract(config, checkpoint_path: Path) -> None:
+    """Reject silent changes to VA topology or the REPA tap at inference.
+
+    VA blocking and the REPA tap index are not represented by state-dict keys.
+    Keep legacy visual-path checkpoints usable with their original configs,
+    while requiring the complete recorded config for the combined experiment.
+    """
+    arch = config.model.arch
+    contract_path = checkpoint_path.parent / "speaker_training_contract.json"
+    contract = read_json_object(contract_path) if contract_path.is_file() else {}
+    recorded_config = contract.get("config", {})
+    recorded_model = recorded_config.get("model", {}) if isinstance(recorded_config, dict) else {}
+    recorded_arch = recorded_model.get("arch", {}) if isinstance(recorded_model, dict) else {}
+    if not isinstance(recorded_arch, dict):
+        raise TypeError("Invalid recorded model architecture")
+    requested_va = arch.get("block_video_audio_attention", False)
+    recorded_va = recorded_arch.get("block_video_audio_attention", False)
+    requested_repa = arch.get("repa_layer") is not None
+    recorded_repa = recorded_arch.get("repa_layer") is not None
+    if not (requested_va or recorded_va or requested_repa or recorded_repa):
+        return
+    if not recorded_arch:
+        raise RuntimeError("Combined no-VA/REPA inference requires the recorded training configuration")
+    if type(requested_va) is not bool or type(recorded_va) is not bool or requested_va != recorded_va:
+        raise RuntimeError("Inference/training configuration mismatch: block_video_audio_attention")
+    for key in ("repa_layer", "repa_target_dim", "repa_projector_dim"):
+        if arch.get(key) != recorded_arch.get(key):
+            raise RuntimeError(f"Inference/training configuration mismatch: {key}")
+    if requested_repa:
+        if config.model.get("repa_lambda") != recorded_model.get("repa_lambda"):
+            raise RuntimeError("Inference/training configuration mismatch: repa_lambda")
+        recorded_datasets = recorded_config.get("datasets", {})
+        for key in (
+            "repa_feature_dim", "repa_model_id", "repa_model_revision",
+            "repa_checkpoint_sha256", "repa_teacher_layer",
+        ):
+            if config.datasets.get(key) is None or config.datasets.get(key) != recorded_datasets.get(key):
+                raise RuntimeError(f"Inference/training REPA teacher configuration mismatch: {key}")
+
+
 def setting1_video_path(target_path: torch.Tensor) -> torch.Tensor:
     """Concatenate a flat dummy-prompt path and a rebased target without a jump."""
     if target_path.ndim != 1 or target_path.numel() == 0 or target_path.dtype != torch.float32:
@@ -199,6 +239,7 @@ def load_setting1_video_paths(config, records: list[dict[str, Any]]) -> list[tor
 def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, device: torch.device) -> CFM_VT:
     config = load_composed_config(config_path)
     validate_fixed_band_contract(config, checkpoint_path)
+    validate_no_va_repa_contract(config, checkpoint_path)
     arch = config.model.arch
     representation = config.model.audio_representation
     required_arch = {

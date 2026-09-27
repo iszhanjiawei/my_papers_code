@@ -1,10 +1,14 @@
 # Current experiment
 
-This isolated snapshot adds a **visual feature path-distance AV temporal
-band** to Semantic-VAE Direct-C2 with frozen CAM++ speaker conditions.
-See [VISUAL_PATH_TEMPORAL_BAND.md](VISUAL_PATH_TEMPORAL_BAND.md) for this experiment's
-configuration, training, TensorBoard and inference commands. Older copied
-speaker/adaptive/fixed documentation is historical, not the launch protocol here.
+This independent Visual Path Band snapshot keeps its time-and-visual-path soft
+bias on audio-query/video-key attention, blocks video-query/audio-key attention,
+and adds frozen WavLM-Base+ REPA supervision (tap 9, weight 0.1).
+AA and VV remain global. No hard local AV mask or visual-specific gate is used.
+
+See [VISUAL_PATH_NO_VA_WAVLM_REPA.md](VISUAL_PATH_NO_VA_WAVLM_REPA.md) for the
+experiment contract, validation and dedicated four-GPU training/evaluation
+entries. The original projects remain unchanged; older documents retain
+historical parent and upstream context.
 
 # AlignDiT
 
