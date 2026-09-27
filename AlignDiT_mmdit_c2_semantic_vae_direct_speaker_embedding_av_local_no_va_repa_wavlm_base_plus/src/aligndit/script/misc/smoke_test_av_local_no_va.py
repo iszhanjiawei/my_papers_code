@@ -1,6 +1,6 @@
-"""CPU contracts for step 1: local A-query/V-key attention on the 40-Hz grid.
+"""CPU contracts for local AV + blocked VA (without a visual delta gate) on the 40-Hz grid.
 
-Run from this experiment root with PYTHONPATH=src. Five test groups require no
+Run from this experiment root with PYTHONPATH=src. The test groups require no
 datasets, checkpoints, VAE decoder, or GPU. Direct attention tests isolate one layer:
 other global paths can legitimately carry distant video information across
 multiple layers, so whole-model locality is deliberately not asserted.
@@ -34,7 +34,7 @@ def make_block(radius, *, attn_mask_enabled=True):
     return MMDiTBlock_VT(
         dim=16, heads=2, dim_head=8, dropout=0.0, ff_mult=2,
         text_dim=16, prompt_isolated_ca=False,
-        attn_mask_enabled=attn_mask_enabled, av_local_window_radius=radius,
+        attn_mask_enabled=attn_mask_enabled, av_local_window_radius=radius, block_video_audio_attention=True,
     ).eval()
 
 
@@ -42,7 +42,7 @@ def make_model(radius=2, *, checkpoint_activations=False):
     torch.manual_seed(41)
     model = DiT_VT_MMDiT(
         **{**ARCH, "checkpoint_activations": checkpoint_activations},
-        av_local_window_radius=radius,
+        av_local_window_radius=radius, block_video_audio_attention=True,
     )
     # Scratch AdaLN/output zeros would hide broken gradient paths. Simulate
     # the nonzero modulation and output weights of the audio warm start.
@@ -76,12 +76,12 @@ def capture_joint_masks(total_tokens):
     captured = []
 
     def wrapped(query, key, value, *args, **kwargs):
-        if query.shape[-2] == key.shape[-2] == total_tokens:
+        if key.shape[-2] == total_tokens:
             mask = kwargs.get("attn_mask", args[0] if args else None)
             expanded = None if mask is None else mask.expand(
-                query.shape[0], query.shape[1], total_tokens, total_tokens
+                query.shape[0], query.shape[1], query.shape[-2], total_tokens
             ).detach().clone()
-            captured.append(expanded)
+            captured.append((query.shape[-2], expanded))
         return original(query, key, value, *args, **kwargs)
 
     with patch("aligndit.model.backbone.dit_vt_mm.F.scaled_dot_product_attention", side_effect=wrapped):
@@ -93,6 +93,7 @@ def expected_mask(length, radius, batch=1, *, audio_valid=None, video_valid=None
     for query in range(length):
         for video_key in range(length):
             expected[:, :, query, length + video_key] = abs(query - video_key) <= radius
+    expected[:, :, length:, :length] = False
     if audio_valid is not None:
         valid = torch.cat([audio_valid, video_valid], dim=1)
         expected &= valid[:, None, None, :]
@@ -107,6 +108,7 @@ def expected_rectangular_mask(audio_length, video_length, radius, batch=1):
             expected[:, :, audio_query, audio_length + video_key] = (
                 abs(audio_query - video_key) <= radius
             )
+    expected[:, :, audio_length:, :audio_length] = False
     return expected
 
 
@@ -126,13 +128,14 @@ def test_four_quadrants_and_padding():
                 dict(audio_valid=audio_valid, video_valid=video_valid)
                 if use_padding and enabled else {}
             ))
-            assert len(captured) == 1 and captured[0] is not None
-            assert torch.equal(captured[0], expected.expand_as(captured[0]))
+            assert len(captured) == 1 and captured[0][1] is not None
+            query_count, actual = captured[0]
+            assert torch.equal(actual, expected[:, :, :query_count].expand_as(actual))
             assert torch.isfinite(out_a).all() and torch.isfinite(out_v).all()
             if use_padding:
                 assert not torch.count_nonzero(out_a[~audio_valid])
                 assert not torch.count_nonzero(out_v[~video_valid])
-    print("[OK] only AV is local; AA/VA/VV and existing padding policy are preserved")
+    print("[OK] AV local and VA blocked; AA/VV global; padding policy preserved")
 
 
 def test_direct_information_and_gradient_paths():
@@ -149,14 +152,14 @@ def test_direct_information_and_gradient_paths():
     assert torch.count_nonzero(grad_x[0, 7]), "AA must retain distant audio access"
     assert torch.count_nonzero(grad_v[0, 1:4]), "local AV must remain trainable"
     assert not torch.count_nonzero(grad_v[0, [0, 4, 5, 6, 7]]), "distant direct AV path must be blocked"
-    grad_x_v, grad_v_v = torch.autograd.grad(out_v[0, 2].square().sum(), (x, v))
-    assert torch.count_nonzero(grad_x_v[0, 7]), "VA must retain distant audio access"
+    grad_x_v, grad_v_v = torch.autograd.grad(out_v[0, 2].square().sum(), (x, v), allow_unused=True)
+    assert grad_x_v is None or not torch.count_nonzero(grad_x_v), "VA must be blocked"
     assert torch.count_nonzero(grad_v_v[0, 7]), "VV must retain distant video access"
     changed_v = v.detach().clone()
     changed_v[:, 7] += 20.0
     changed_a, _ = local.joint_attn(x.detach(), changed_v)
     torch.testing.assert_close(changed_a[:, 2], out_a[:, 2], rtol=0, atol=0)
-    print("[OK] distant AV values/gradients blocked; nearby AV and distant AA/VA/VV remain live")
+    print("[OK] distant AV values/gradients blocked; nearby AV and distant AA/VV remain live; VA gradients are zero")
 
 
 def test_checkpoint_compatibility_and_wide_window():
@@ -198,11 +201,11 @@ def test_training_mask_none_and_checkpoint_backward():
             assert torch.isfinite(loss) and "ctc_loss" in components
             loss.backward()
         assert len(captured) >= 2
-        for mask in captured:
+        for query_count, mask in captured:
             assert mask is not None
             # Baseline intentionally drops padding masks during training.
             # The structural AV window must nevertheless stay active.
-            assert torch.equal(mask, expected_mask(12, 2, batch=2).expand_as(mask))
+            assert torch.equal(mask, expected_mask(12, 2, batch=2)[:, :, :query_count].expand_as(mask))
         for name, parameter in {
             "audio query": transformer.transformer_blocks[0].attn.to_q.weight,
             "video value": transformer.transformer_blocks[0].v_attn.to_v.weight,
@@ -224,8 +227,8 @@ def test_cfg_prefix_and_null_video():
         valid = kwargs["mask"].repeat(branch_count, 1)
         expected = expected_mask(12, 2, batch=2 * branch_count, audio_valid=valid, video_valid=valid)
         assert len(captured) == 2
-        for mask in captured:
-            assert torch.equal(mask, expected.expand_as(mask))
+        for query_count, mask in captured:
+            assert torch.equal(mask, expected[:, :, :query_count].expand_as(mask))
             # Three prefix positions are retained in both grids; query 6
             # reads video 4..8, not target-relative video 1..5.
             assert mask[0, 0, 6, 12 + 6]
@@ -246,7 +249,7 @@ def test_cfg_prefix_and_null_video():
             )
         assert output.shape == (batch, 12, 64) and torch.isfinite(output).all()
         torch.testing.assert_close(output[:, :3], kwargs["cond"][:batch, :3], rtol=0, atol=0)
-        assert captured and all(mask is not None for mask in captured)
+        assert captured and all(mask is not None for _, mask in captured)
     print("[OK] 2/3-branch CFG, prefix coordinates, dropped video and B=1/2 sampling")
 
 
@@ -273,20 +276,100 @@ def test_text_clamped_audio_can_exceed_video():
     assert actual.shape == (3, audio_length, 64) and torch.isfinite(actual).all()
     expected = expected_rectangular_mask(audio_length, video_length, 2, batch=3)
     assert len(captured) == 2
-    for mask in captured:
-        assert torch.equal(mask, expected.expand_as(mask))
-    print("[OK] text-clamped audio tails preserve rectangular local AV coordinates")
+    for query_count, mask in captured:
+        assert torch.equal(mask, expected[:, :, :query_count].expand_as(mask))
+    cfm = CFM_VT(transformer=model, num_channels=64, audio_video_ratio=1, ctc_lambda=0.03)
+    original_inputs = inputs()
+    for batch in (1, 2):
+        observed_shapes = []
+
+        def record_shape(_module, _args, forward_kwargs):
+            observed_shapes.append((forward_kwargs["x"].shape[1], forward_kwargs["video"].shape[1]))
+
+        handle = model.register_forward_pre_hook(record_shape, with_kwargs=True)
+        try:
+            with capture_joint_masks(audio_length + video_length) as captured:
+                output, _ = cfm.sample(
+                    cond=original_inputs["cond"][:batch, :3],
+                    text=torch.randint(0, 16, (batch, audio_length - 1)),
+                    duration=torch.tensor([12, 10])[:batch], video=original_inputs["video"][:batch],
+                    lens=torch.full((batch,), 3),
+                    speaker_embedding=original_inputs["speaker_embedding"][:batch],
+                    steps=1, use_epss=False, cfg_strength=1.0, cfg_strength_v=1.0, seed=0,
+                )
+        finally:
+            handle.remove()
+        assert observed_shapes and set(observed_shapes) == {(audio_length, video_length)}
+        assert output.shape == (batch, audio_length, 64) and torch.isfinite(output).all()
+        torch.testing.assert_close(output[:, :3], original_inputs["cond"][:batch, :3], atol=0, rtol=0)
+        assert captured and all(mask is not None for _, mask in captured)
+    print("[OK] text-clamped backbone and B=1/2 CFM sampling preserve rectangular AV without padding video")
+
+
+
+def test_explicit_full_mask_reference_and_gradients():
+    """A split SDPA implementation must equal one shared four-quadrant SDPA."""
+    torch.manual_seed(73)
+    for n_a, n_v, padding in ((8, 8, False), (11, 8, False), (11, 8, True)):
+        block = make_block(2)
+        x = torch.randn(2, n_a, 16, requires_grad=True)
+        v = torch.randn(2, n_v, 16, requires_grad=True)
+        audio_mask = torch.arange(n_a)[None] < torch.tensor([n_a, n_a - 2])[:, None]
+        video_mask = torch.arange(n_v)[None] < torch.tensor([n_v, n_v - 3])[:, None]
+        actual = block.joint_attn(x, v, **(dict(mask=audio_mask, v_mask=video_mask) if padding else {}))
+        qa, ka, va = block._qkv(block.attn, x)
+        qv, kv, vv = block._qkv(block.v_attn, v)
+        allowed = expected_rectangular_mask(n_a, n_v, 2, batch=2)
+        if padding:
+            allowed &= torch.cat((audio_mask, video_mask), dim=1)[:, None, None]
+        output = F.scaled_dot_product_attention(
+            torch.cat((qa, qv), dim=2), torch.cat((ka, kv), dim=2),
+            torch.cat((va, vv), dim=2), attn_mask=allowed,
+        ).transpose(1, 2).reshape(2, n_a + n_v, 16)
+        expected_a = block.attn.to_out[1](block.attn.to_out[0](output[:, :n_a]))
+        expected_v = block.v_attn.to_out[1](block.v_attn.to_out[0](output[:, n_a:]))
+        if padding:
+            expected_a = expected_a.masked_fill(~audio_mask[..., None], 0)
+            expected_v = expected_v.masked_fill(~video_mask[..., None], 0)
+        for computed, reference in zip(actual, (expected_a, expected_v)):
+            torch.testing.assert_close(computed, reference, atol=2e-6, rtol=2e-5)
+        parameters = (x, v, *block.parameters())
+        actual_grads = torch.autograd.grad(sum(t.square().sum() for t in actual), parameters, retain_graph=True, allow_unused=True)
+        expected_grads = torch.autograd.grad(expected_a.square().sum() + expected_v.square().sum(), parameters, allow_unused=True)
+        for computed, reference in zip(actual_grads, expected_grads):
+            assert (computed is None) == (reference is None)
+            if computed is not None:
+                torch.testing.assert_close(computed, reference, atol=4e-6, rtol=3e-5)
+    assert not any("av_visual" in key or "temporal_band" in key for key in block.state_dict())
+    print("[OK] split attention matches explicit full-mask reference outputs and gradients")
+
+
+def test_video_hidden_states_do_not_read_audio():
+    torch.manual_seed(79)
+    block = make_block(2)
+    # Nonzero modulations make this a real updated-video test, not an identity.
+    with torch.no_grad():
+        block.v_attn_norm.linear.weight.normal_(std=0.2)
+        block.v_attn_norm.linear.bias.normal_(std=0.2)
+    x, v, t, text = torch.randn(1, 8, 16), torch.randn(1, 8, 16), torch.randn(1, 16), torch.randn(1, 4, 16)
+    _, first = block(x, v, t, text=text)
+    _, second = block(x * 10 + 9, v, t, text=text)
+    torch.testing.assert_close(first, second, atol=0, rtol=0)
+    assert not torch.equal(first, v), "test must exercise nontrivial video updates"
+    print("[OK] updated video states are independent of audio at fixed video/time")
 
 
 def main():
     torch.set_num_threads(1)
+    test_explicit_full_mask_reference_and_gradients()
+    test_video_hidden_states_do_not_read_audio()
     test_four_quadrants_and_padding()
     test_direct_information_and_gradient_paths()
     test_checkpoint_compatibility_and_wide_window()
     test_training_mask_none_and_checkpoint_backward()
     test_cfg_prefix_and_null_video()
     test_text_clamped_audio_can_exceed_video()
-    print("All AV-local step-1 contracts passed.")
+    print("All AV-local / no-VA contracts passed.")
 
 
 if __name__ == "__main__":

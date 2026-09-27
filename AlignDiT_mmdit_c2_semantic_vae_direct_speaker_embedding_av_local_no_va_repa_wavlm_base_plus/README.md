@@ -1,13 +1,14 @@
 # Current experiment
 
-This independent snapshot adds Step-1 local audio-query/video-key attention to
-Semantic-VAE Direct-C2 with frozen CAM++ speaker conditioning and CTC lambda 0.03.
-The first 12 multimodal blocks use a radius of two positions on the shared 40-Hz
-grid (+/-50 ms); the other three attention regions retain global attention.
-See [STEP1_AV_LOCAL_ATTENTION.md](STEP1_AV_LOCAL_ATTENTION.md) for this experiment's
-configuration, isolated output paths, training, TensorBoard and inference commands.
-The original speaker snapshot is unchanged. The documents below the current
-experiment description retain historical upstream context.
+This independent Step-1 source snapshot uses local audio-query/video-key
+attention (radius 2 at 40 Hz), blocks video-query/audio-key attention, and keeps
+audio self-attention and video self-attention global. There is no visual-specific
+gate and no adaptive temporal band. It adds the frozen WavLM-Base+ REPA target
+from the existing adaptive-band REPA experiment, with tap 9 and weight 0.1.
+
+See [AV_LOCAL_NO_VA_WAVLM_REPA.md](AV_LOCAL_NO_VA_WAVLM_REPA.md) for the experiment
+contract, isolated outputs, validation and four-GPU training commands. All source
+snapshots remain separate. Other documents below retain historical context.
 
 # AlignDiT
 

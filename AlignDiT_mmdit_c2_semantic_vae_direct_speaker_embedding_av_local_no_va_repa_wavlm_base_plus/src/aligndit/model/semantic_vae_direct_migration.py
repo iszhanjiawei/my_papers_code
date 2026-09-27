@@ -170,8 +170,8 @@ def migrate_s2c_ema_into_model(
     shape_mismatches = sorted(
         key for key in common_keys if tuple(source_state[key].shape) != tuple(target_state[key].shape)
     )
-    # The speaker snapshot adds exactly one zero-initialized tensor. Keep the
-    # original strict S2c contract for all other keys and for non-speaker configs.
+    # The topology changes add no tensors. Validate the new speaker and REPA
+    # groups explicitly while retaining the original strict S2c contract.
     speaker_key = "transformer.speaker_proj.weight"
     has_speaker = getattr(model.transformer, "speaker_proj", None) is not None
     if has_speaker:
@@ -183,6 +183,24 @@ def migrate_s2c_ema_into_model(
             or torch.count_nonzero(speaker).item() != 0
         ):
             raise RuntimeError("S2c speaker migration requires a new, zero-initialized Linear(192, 768) weight")
+    has_repa = getattr(model.transformer, "repa_projector", None) is not None
+    if has_repa:
+        expected_repa_shapes = {
+            "transformer.repa_projector.0.weight": (2048, 768),
+            "transformer.repa_projector.0.bias": (2048,),
+            "transformer.repa_projector.2.weight": (2048, 2048),
+            "transformer.repa_projector.2.bias": (2048,),
+            "transformer.repa_projector.4.weight": (768, 2048),
+            "transformer.repa_projector.4.bias": (768,),
+        }
+        actual_repa_keys = {key for key in new_target if key.startswith("transformer.repa_projector.")}
+        if actual_repa_keys != set(expected_repa_shapes) or any(
+            tuple(target_state[key].shape) != shape or not torch.isfinite(target_state[key]).all()
+            for key, shape in expected_repa_shapes.items()
+        ):
+            raise RuntimeError(
+                "S2c REPA migration requires a new finite 768->2048->2048->768 three-layer projector"
+            )
     actual_counts = (
         len(source_state),
         len(target_state),
@@ -192,10 +210,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS + int(has_speaker),
+        EXPECTED_TARGET_KEYS + int(has_speaker) + 6 * int(has_repa),
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS + int(has_speaker),
+        EXPECTED_NEW_TARGET_KEYS + int(has_speaker) + 6 * int(has_repa),
     )
     if actual_counts != expected_counts:
         raise RuntimeError(

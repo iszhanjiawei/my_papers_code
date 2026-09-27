@@ -1,3 +1,6 @@
+> Historical parent documentation. This snapshot now uses the combined configuration
+> described in [AV_LOCAL_NO_VA_WAVLM_REPA.md](AV_LOCAL_NO_VA_WAVLM_REPA.md).
+
 # Step 1: local audio-query/video-key attention
 
 This independent source snapshot was copied from

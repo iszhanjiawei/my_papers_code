@@ -16,8 +16,10 @@ MM-DiT backbone for multimodal dubbing:
   `n_text_layers` are text-free audio-only DiT blocks
 - audio-stream parameter names are kept identical to DiTBlock so
   that the audio-only pretrained checkpoint loads directly by key matching
-- optional step-1 local attention restricts only audio queries reading video
-  keys on the aligned time grid; AA, VA and VV remain global
+- optional step-1 local attention restricts audio queries reading video keys
+  on the aligned time grid; video-query/audio-key attention can be disabled
+  independently, while AA and VV remain global and no visual gate is added
+- optional REPA projects an intermediate audio state during training only
 """
 
 from __future__ import annotations
@@ -50,6 +52,11 @@ def _validate_av_local_window_radius(radius):
             raise TypeError("av_local_window_radius must be a non-negative integer or None")
         if radius < 0:
             raise ValueError("av_local_window_radius must be non-negative")
+
+
+def _validate_block_video_audio_attention(value):
+    if type(value) is not bool:
+        raise TypeError("block_video_audio_attention must be a boolean")
 
 
 # 音频流输入层
@@ -167,7 +174,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
 
     audio stream: attn_norm / attn / cross_attn / ff_norm / ff (names kept for checkpoint compat)
     video stream: v_attn_norm / v_attn / v_ff_norm / v_ff (new parameters)
-    the two streams communicate via joint attention (concat q/k/v along sequence).
+    Audio queries attend jointly to both streams; video-to-audio attention is optional.
     """
 
     def __init__(
@@ -184,6 +191,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         text_dim=512,
         prompt_isolated_ca=True,
         av_local_window_radius=None,
+        block_video_audio_attention=False,
     ):
         super().__init__(
             dim=dim,
@@ -205,6 +213,8 @@ class MMDiTBlock_VT(DiTCrossBlock):
         self.prompt_isolated_ca = prompt_isolated_ca
         _validate_av_local_window_radius(av_local_window_radius)
         self.av_local_window_radius = av_local_window_radius
+        _validate_block_video_audio_attention(block_video_audio_attention)
+        self.block_video_audio_attention = block_video_audio_attention
 
         # video stream 视频流独立参数
         self.v_attn_norm = AdaLayerNorm(dim)
@@ -267,48 +277,87 @@ class MMDiTBlock_VT(DiTCrossBlock):
         q_a, k_a = self._apply_rope(q_a, k_a, rope)   # 将 Q 和 K 进行位置编码  
         q_v, k_v = self._apply_rope(q_v, k_v, v_rope) # 将 Q 和 K 进行位置编码
 
-        query = torch.cat([q_a, q_v], dim=2)
         key = torch.cat([k_a, k_v], dim=2)
         value = torch.cat([v_a, v_v], dim=2)
 
-        if self.attn_mask_enabled and mask is not None:
-            if v_mask is None:
-                v_mask = torch.ones((batch_size, n_v), dtype=torch.bool, device=mask.device)
-            key_mask = torch.cat([mask, v_mask], dim=1)
-            attn_mask = key_mask.unsqueeze(1).unsqueeze(1)  # 'b n -> b 1 1 n'
-            attn_mask = attn_mask.expand(batch_size, heads, n_a + n_v, n_a + n_v)
-        else:
-            attn_mask = None
+        if self.block_video_audio_attention:
+            # Split queries, not softmax normalization: each audio query still
+            # attends jointly over [audio, video] keys. Video queries read only
+            # global video keys, exactly removing VA without a visual gate.
+            # This also avoids allocating the unused VA quadrant at long lengths.
+            audio_attn_mask = video_attn_mask = None
+            if self.attn_mask_enabled and mask is not None:
+                if v_mask is None:
+                    v_mask = torch.ones((batch_size, n_v), dtype=torch.bool, device=mask.device)
+                key_mask = torch.cat([mask, v_mask], dim=1)
+                audio_attn_mask = key_mask[:, None, None, :]
+                video_attn_mask = v_mask[:, None, None, :]
+            if self.av_local_window_radius is not None:
+                # Use shared prefix-aware time coordinates for rectangular A/V
+                # lengths as well. Structural rules remain active in training
+                # even when the historical padding-mask policy passes None.
+                audio_positions = torch.arange(n_a, device=q_a.device)
+                video_positions = torch.arange(n_v, device=q_a.device)
+                local_av = (
+                    audio_positions[:, None] - video_positions[None, :]
+                ).abs() <= self.av_local_window_radius
+                allowed = torch.ones(
+                    (n_a, n_a + n_v), dtype=torch.bool, device=q_a.device
+                )
+                allowed[:, n_a:] = local_av
+                allowed = allowed[None, None]
+                audio_attn_mask = (
+                    allowed if audio_attn_mask is None else audio_attn_mask & allowed
+                )
 
-        if self.av_local_window_radius is not None:
-            # Step 1 changes only the audio-query/video-key quadrant. Use the
-            # shared sequence coordinates, including any reference prefix.
-            # This structural mask must also run during training, where the
-            # historical padding-mask path passes mask=None to this block.
-            audio_positions = torch.arange(n_a, device=query.device)
-            video_positions = torch.arange(n_v, device=query.device)
-            local_av = (
-                audio_positions[:, None] - video_positions[None, :]
-            ).abs() <= self.av_local_window_radius
-            allowed = torch.ones(
-                (n_a + n_v, n_a + n_v), dtype=torch.bool, device=query.device
+            out_a = F.scaled_dot_product_attention(
+                q_a, key, value, attn_mask=audio_attn_mask, dropout_p=0.0, is_causal=False
             )
-            allowed[:n_a, n_a:] = local_av
-            # SDPA boolean masks use True for allowed connections. Broadcast
-            # across batch/heads rather than allocating a per-head mask.
-            allowed = allowed[None, None]
-            if attn_mask is None:
-                attn_mask = allowed
+            out_v = F.scaled_dot_product_attention(
+                q_v, k_v, v_v, attn_mask=video_attn_mask, dropout_p=0.0, is_causal=False
+            )
+            out_a = out_a.transpose(1, 2).reshape(batch_size, n_a, heads * head_dim).to(q_a.dtype)
+            out_v = out_v.transpose(1, 2).reshape(batch_size, n_v, heads * head_dim).to(q_v.dtype)
+        else:
+            # Preserve the original step-1 execution path when VA is enabled.
+            query = torch.cat([q_a, q_v], dim=2)
+            if self.attn_mask_enabled and mask is not None:
+                if v_mask is None:
+                    v_mask = torch.ones((batch_size, n_v), dtype=torch.bool, device=mask.device)
+                key_mask = torch.cat([mask, v_mask], dim=1)
+                attn_mask = key_mask.unsqueeze(1).unsqueeze(1)  # 'b n -> b 1 1 n'
+                attn_mask = attn_mask.expand(batch_size, heads, n_a + n_v, n_a + n_v)
             else:
-                # The existing key mask is shared by heads. Keep its padding
-                # policy unchanged while intersecting with the new topology.
-                attn_mask = attn_mask[:, :1] & allowed
+                attn_mask = None
 
-        out = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
-        out = out.transpose(1, 2).reshape(batch_size, -1, heads * head_dim)
-        out = out.to(query.dtype)
+            if self.av_local_window_radius is not None:
+                # Step 1 changes only the audio-query/video-key quadrant. Use the
+                # shared sequence coordinates, including any reference prefix.
+                # This structural mask must also run during training, where the
+                # historical padding-mask path passes mask=None to this block.
+                audio_positions = torch.arange(n_a, device=query.device)
+                video_positions = torch.arange(n_v, device=query.device)
+                local_av = (
+                    audio_positions[:, None] - video_positions[None, :]
+                ).abs() <= self.av_local_window_radius
+                allowed = torch.ones(
+                    (n_a + n_v, n_a + n_v), dtype=torch.bool, device=query.device
+                )
+                allowed[:n_a, n_a:] = local_av
+                # SDPA boolean masks use True for allowed connections. Broadcast
+                # across batch/heads rather than allocating a per-head mask.
+                allowed = allowed[None, None]
+                if attn_mask is None:
+                    attn_mask = allowed
+                else:
+                    # The existing key mask is shared by heads. Keep its padding
+                    # policy unchanged while intersecting with the new topology.
+                    attn_mask = attn_mask[:, :1] & allowed
 
-        out_a, out_v = out[:, :n_a], out[:, n_a:]
+            out = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
+            out = out.transpose(1, 2).reshape(batch_size, -1, heads * head_dim)
+            out = out.to(query.dtype)
+            out_a, out_v = out[:, :n_a], out[:, n_a:]
 
         out_a = self.attn.to_out[0](out_a)
         out_a = self.attn.to_out[1](out_a)
@@ -341,7 +390,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         norm_x, x_gate_msa, x_shift_mlp, x_scale_mlp, x_gate_mlp = self.attn_norm(x, emb=t)
         norm_v, v_gate_msa, v_shift_mlp, v_scale_mlp, v_gate_mlp = self.v_attn_norm(v, emb=t)
 
-        # joint attention across audio and video streams 2、两流信息双向交换
+        # Apply the configured AV/VA topology; the residual AdaLN gates stay unchanged.
         attn_x, attn_v = self.joint_attn(norm_x, norm_v, mask=mask, v_mask=v_mask, rope=rope, v_rope=v_rope)
         # x_gate_msa 门控，是控制注意力输出以多大比例加回残差流的。门控都是加载处理网络之后的，用来控制网络输出的多少，而不是加在输入，是作用于输出，而不是输入
         x = x + x_gate_msa.unsqueeze(1) * attn_x # gate 控制音频流接受的信息量
@@ -406,6 +455,10 @@ class DiT_VT_MMDiT(DiT):
         speaker_dim=None,
         speaker_condition_start_layer=None,
         av_local_window_radius=None,
+        block_video_audio_attention=False,
+        repa_layer=None,
+        repa_target_dim=None,
+        repa_projector_dim=None,
     ):
         super().__init__(
             dim=dim,
@@ -432,6 +485,8 @@ class DiT_VT_MMDiT(DiT):
         if av_local_window_radius is not None and audio_video_ratio != 1:
             raise ValueError("AV local step 1 requires audio_video_ratio=1 on an aligned time grid")
         self.av_local_window_radius = av_local_window_radius
+        _validate_block_video_audio_attention(block_video_audio_attention)
+        self.block_video_audio_attention = block_video_audio_attention
         self.video_rope_scaled = video_rope_scaled
         self.prompt_isolated_ca = prompt_isolated_ca
         self.normalize_text_context = bool(normalize_text_context)
@@ -466,6 +521,23 @@ class DiT_VT_MMDiT(DiT):
                     f"n_text_layers <= speaker_condition_start_layer < depth, got "
                     f"{self.n_text_layers} <= {self.speaker_condition_start_layer} < {depth}"
                 )
+        self.repa_layer = repa_layer
+        self.repa_target_dim = repa_target_dim
+        if self.repa_layer is None:
+            if self.repa_target_dim is not None or repa_projector_dim is not None:
+                raise ValueError("repa_target_dim/repa_projector_dim require repa_layer")
+        else:
+            if type(self.repa_layer) is not int or not 0 <= self.repa_layer < self.n_mm_layers:
+                raise ValueError(
+                    "repa_layer must be a zero-based MM-DiT layer index in "
+                    f"[0, {self.n_mm_layers}), got {self.repa_layer!r}"
+                )
+            if type(self.repa_target_dim) is not int or self.repa_target_dim <= 0:
+                raise ValueError(f"repa_target_dim must be a positive integer, got {self.repa_target_dim!r}")
+            if repa_projector_dim is None:
+                repa_projector_dim = self.dim * 2
+            if type(repa_projector_dim) is not int or repa_projector_dim <= 0:
+                raise ValueError(f"repa_projector_dim must be a positive integer, got {repa_projector_dim!r}")
         try:
             ctc_layer_indices = tuple(layer_indices_ctc)
         except TypeError as error:
@@ -510,7 +582,11 @@ class DiT_VT_MMDiT(DiT):
         }
         self.transformer_blocks = nn.ModuleList(
             [
-                MMDiTBlock_VT(**text_block_kwargs, av_local_window_radius=av_local_window_radius)
+                MMDiTBlock_VT(
+                    **text_block_kwargs,
+                    av_local_window_radius=av_local_window_radius,
+                    block_video_audio_attention=block_video_audio_attention,
+                )
                 if i < self.n_mm_layers
                 else AudioTextDiTBlock(**text_block_kwargs)
                 if i < self.n_text_layers
@@ -556,6 +632,20 @@ class DiT_VT_MMDiT(DiT):
             # Preserve the parent Direct-C2 model at initialization. A second
             # zero gate here would block gradients into the projection.
             nn.init.constant_(self.speaker_proj.weight, 0)
+
+        # Build the auxiliary head last so a matched seed preserves all inherited
+        # weights. This projector is unused at inference.
+        self.repa_projector = (
+            nn.Sequential(
+                nn.Linear(self.dim, repa_projector_dim),
+                nn.SiLU(),
+                nn.Linear(repa_projector_dim, repa_projector_dim),
+                nn.SiLU(),
+                nn.Linear(repa_projector_dim, self.repa_target_dim),
+            )
+            if self.repa_layer is not None
+            else None
+        )
 
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
@@ -682,6 +772,7 @@ class DiT_VT_MMDiT(DiT):
         drop_speaker: bool | None = None,
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
+        return_repa: bool = False,
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
@@ -695,6 +786,10 @@ class DiT_VT_MMDiT(DiT):
             )
         if generation_mask.device != x.device:
             raise ValueError(f"generation_mask must be on {x.device}, got {generation_mask.device}")
+        if return_repa and self.repa_projector is None:
+            raise RuntimeError("return_repa=True requires a configured REPA projector")
+        if return_repa and (cfg_infer or cache):
+            raise ValueError("REPA activations are training-only and cannot be requested with cfg_infer/cache")
         if time.ndim == 0:
             time = time.repeat(batch)
 
@@ -829,6 +924,7 @@ class DiT_VT_MMDiT(DiT):
             residual = x
 
         intermediates_ctc = {}
+        repa_projection = None
         for layer_i, block in enumerate(self.transformer_blocks):
             is_mm = isinstance(block, MMDiTBlock_VT)
             has_tail_text = isinstance(block, AudioTextDiTBlock)
@@ -913,6 +1009,8 @@ class DiT_VT_MMDiT(DiT):
                 projector = self.projectors_ctc[self.layer_map_ctc[layer_i]]
                 z_tilde, z_lens = projector(x, lens)
                 intermediates_ctc[layer_i] = {"z_tilde": z_tilde, "z_lens": z_lens}
+            if return_repa and layer_i == self.repa_layer:
+                repa_projection = self.repa_projector(x)
 
         if self.long_skip_connection is not None:
             x = self.long_skip_connection(torch.cat((x, residual), dim=-1))
@@ -920,4 +1018,8 @@ class DiT_VT_MMDiT(DiT):
         x = self.norm_out(x, t)
         output = self.proj_out(x)
 
+        if return_repa:
+            if repa_projection is None:
+                raise RuntimeError(f"failed to collect REPA activation from layer {self.repa_layer}")
+            return output, intermediates_ctc, repa_projection
         return output, intermediates_ctc
