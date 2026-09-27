@@ -88,3 +88,22 @@ These checks cover independent reference/target lengths, real tiny-model CFG
 sampling, text-induced extension, the sampler duration limit, deterministic
 pairing, separate speaker/emotion comparators, full identifiers, corpus WER,
 and manifest/output integrity.
+
+## Verified run: 2026-09-27
+
+GPU 0 (RTX 4090) completed all 213 pairs using EMA update 150000. The 28 CPU
+tests, three-item real-weight smoke run, and full independent verifier passed.
+The first three formal WAV hashes equal the smoke outputs. No pair required a
+text-duration extension. All 213 WAVs and AV features were verified; total target
+audio duration is 721.059 seconds.
+
+| SPKSIM | Corpus WER | EMOSIM (scores) | AV-HuBERT similarity | EMO embedding cosine |
+|---:|---:|---:|---:|---:|
+| 0.47041 | 0.05593 | 0.58239 | 0.51039 | 0.94584 |
+
+Corpus WER is 133 / 2378 = 5.59294%. The pairing manifest SHA256 is
+`cd1ab0adf681946c389a5e674eb44d0c923a686a0f9bcf5418794d0a3e72c729`.
+The default output directory contains `inference_summary.json`, five metric
+JSONL/summary pairs, and `_verified_summary.json`. Full settings, evidence, and
+limitations are recorded in section 27 of
+[`实验结果总汇.md`](../实验结果/实验结果总汇.md).
