@@ -183,6 +183,22 @@ def migrate_s2c_ema_into_model(
             or torch.count_nonzero(speaker).item() != 0
         ):
             raise RuntimeError("S2c speaker migration requires a new, zero-initialized Linear(192, 768) weight")
+    context_projector = getattr(model.transformer, "context_alignment_projector", None)
+    context_keys = {
+        "transformer.context_alignment_projector.weight": (1024, 768),
+        "transformer.context_alignment_projector.bias": (1024,),
+    }
+    actual_context_keys = {key for key in target_keys if key.startswith("transformer.context_alignment_projector.")}
+    if context_projector is not None:
+        if actual_context_keys != set(context_keys) or getattr(model.transformer, "context_alignment_layer", None) != 11:
+            raise RuntimeError("InfoNCE migration requires exactly a Linear(768, 1024) context projector at block 11")
+        for key, shape in context_keys.items():
+            value = target_state[key]
+            if key not in new_target or tuple(value.shape) != shape or not torch.isfinite(value).all():
+                raise RuntimeError(f"Invalid newly initialized InfoNCE projector tensor: {key}")
+    elif actual_context_keys:
+        raise RuntimeError("Unexpected context projector tensors without an InfoNCE projector")
+    extra_context_keys = len(context_keys) if context_projector is not None else 0
     actual_counts = (
         len(source_state),
         len(target_state),
@@ -192,10 +208,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS + int(has_speaker),
+        EXPECTED_TARGET_KEYS + int(has_speaker) + extra_context_keys,
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS + int(has_speaker),
+        EXPECTED_NEW_TARGET_KEYS + int(has_speaker) + extra_context_keys,
     )
     if actual_counts != expected_counts:
         raise RuntimeError(

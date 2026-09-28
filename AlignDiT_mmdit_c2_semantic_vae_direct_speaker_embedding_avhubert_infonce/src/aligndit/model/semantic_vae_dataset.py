@@ -12,6 +12,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+from aligndit.model.audio_teacher_cache import DEFAULT_AUDIO_TEACHER_IDENTITY, AudioTeacherCache
 from aligndit.model.speaker_embedding import (
     DEFAULT_SPEAKER_EMBEDDING_DIM,
     validate_speaker_cache_metadata,
@@ -119,6 +120,9 @@ class SemanticVaeCelebVDubDataset(Dataset):
         speaker_embedding_dim: int = DEFAULT_SPEAKER_EMBEDDING_DIM,
         speaker_embedding_model_id: str | None = None,
         speaker_embedding_checkpoint_sha256: str | None = None,
+        audio_teacher_cache_dir: str | Path | None = None,
+        audio_teacher_audio_root: str | Path | None = None,
+        audio_teacher_expected_identity: str = DEFAULT_AUDIO_TEACHER_IDENTITY,
     ):
         self.manifest_path = _regular_file(manifest_path, label="CelebV-Dub train manifest")
         if self.manifest_path.name != "train.jsonl":
@@ -270,6 +274,19 @@ class SemanticVaeCelebVDubDataset(Dataset):
         self.records = records
         self.ctc_feasible_count = feasible_count
         self.ctc_infeasible_count = infeasible_count
+        self.audio_teacher_cache: AudioTeacherCache | None = None
+        self.audio_teacher_contract: dict | None = None
+        if audio_teacher_cache_dir is not None:
+            if audio_teacher_audio_root is None:
+                raise ValueError("audio_teacher_audio_root is required with audio_teacher_cache_dir")
+            self.audio_teacher_cache = AudioTeacherCache(
+                audio_teacher_cache_dir,
+                audio_teacher_audio_root,
+                expected_identity=audio_teacher_expected_identity,
+            )
+            self.audio_teacher_contract = self.audio_teacher_cache.contract
+        elif audio_teacher_audio_root is not None:
+            raise ValueError("audio_teacher_cache_dir is required with audio_teacher_audio_root")
         self.speaker_embedding_cache_dir: Path | None = None
         self.speaker_embedding_dim = speaker_embedding_dim
         self.speaker_embedding_contract: dict | None = None
@@ -398,6 +415,10 @@ class SemanticVaeCelebVDubDataset(Dataset):
         }
         if self.speaker_embedding_cache_dir is not None:
             result["speaker_embedding"] = torch.from_numpy(self._load_speaker_embedding_array(record))
+        if self.audio_teacher_cache is not None:
+            teacher, valid_frames = self.audio_teacher_cache.load(record)
+            result["audio_teacher"] = torch.from_numpy(teacher)
+            result["audio_teacher_valid_length"] = valid_frames
         return result
 
     @staticmethod
@@ -426,4 +447,23 @@ class SemanticVaeCelebVDubDataset(Dataset):
             if not all(has_speaker_embedding):
                 raise RuntimeError("speaker_embedding must be present for every sample in a batch")
             result["speaker_embedding"] = torch.stack([item["speaker_embedding"] for item in batch])
+        has_audio_teacher = ["audio_teacher" in item for item in batch]
+        if any(has_audio_teacher):
+            if not all(has_audio_teacher):
+                raise RuntimeError("audio_teacher must be present for every sample in a batch")
+            teacher_lengths = torch.tensor([item["audio_teacher"].shape[0] for item in batch], dtype=torch.long)
+            teacher_valid_lengths = torch.tensor(
+                [item["audio_teacher_valid_length"] for item in batch], dtype=torch.long
+            )
+            if torch.any(teacher_valid_lengths < 0) or torch.any(teacher_valid_lengths > teacher_lengths):
+                raise ValueError("audio_teacher valid lengths must lie within the original feature lengths")
+            max_teacher_length = int(teacher_lengths.max())
+            result["audio_teacher"] = torch.stack(
+                [
+                    F.pad(item["audio_teacher"], (0, 0, 0, max_teacher_length - item["audio_teacher"].shape[0]))
+                    for item in batch
+                ]
+            )
+            result["audio_teacher_lengths"] = teacher_lengths
+            result["audio_teacher_valid_lengths"] = teacher_valid_lengths
         return result

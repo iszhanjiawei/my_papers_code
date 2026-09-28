@@ -297,6 +297,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         text=None,
         text_mask=None,
         generation_mask=None,
+        return_ca_output=False,
     ):
         if self.prompt_isolated_ca:
             _validate_generation_mask(x, generation_mask)
@@ -318,6 +319,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         ca_output, _ = self.cross_attn(
             norm_ca, text, text, key_padding_mask=~text_mask if text_mask is not None else None, need_weights=False
         )
+        raw_ca_output = ca_output  # Before prompt masking, timestep gate and residual addition.
         # 3.3 In the isolated variants, only synthesized audio queries receive
         # the text residual; C2 deliberately leaves the residual global.
         if self.prompt_isolated_ca:
@@ -331,6 +333,8 @@ class MMDiTBlock_VT(DiTCrossBlock):
         norm = self.v_ff_norm(v) * (1 + v_scale_mlp[:, None]) + v_shift_mlp[:, None]
         v = v + v_gate_mlp.unsqueeze(1) * self.v_ff(norm) # 5、各流独立 FFN
 
+        if return_ca_output:
+            return x, v, raw_ca_output
         return x, v
 
 
@@ -368,6 +372,8 @@ class DiT_VT_MMDiT(DiT):
         normalize_text_context=False,
         speaker_dim=None,
         speaker_condition_start_layer=None,
+        context_alignment_layer=None,
+        context_alignment_dim=1024,
     ):
         super().__init__(
             dim=dim,
@@ -515,6 +521,18 @@ class DiT_VT_MMDiT(DiT):
             # zero gate here would block gradients into the projection.
             nn.init.constant_(self.speaker_proj.weight, 0)
 
+        self.context_alignment_layer = context_alignment_layer
+        self.context_alignment_projector = None
+        if context_alignment_layer is not None:
+            if type(context_alignment_layer) is not int or not 0 <= context_alignment_layer < self.n_mm_layers:
+                raise ValueError("context_alignment_layer must be a zero-based multimodal block index")
+            if type(context_alignment_dim) is not int or context_alignment_dim <= 0:
+                raise ValueError("context_alignment_dim must be a positive integer")
+            # Add the training-only head after every inherited initialization,
+            # preserving both the baseline weights and the caller's RNG stream.
+            with torch.random.fork_rng(devices=[]):
+                self.context_alignment_projector = nn.Linear(self.dim, context_alignment_dim)
+
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
             if speaker_embedding is not None:
@@ -640,9 +658,15 @@ class DiT_VT_MMDiT(DiT):
         drop_speaker: bool | None = None,
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
+        return_context_alignment: bool = False,
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
+        if return_context_alignment:
+            if self.context_alignment_projector is None:
+                raise ValueError("return_context_alignment requires a configured alignment projector")
+            if cfg_infer or cache:
+                raise ValueError("context alignment is a training-only auxiliary output")
         if generation_mask is None:
             raise ValueError("generation_mask is required to separate prompt and synthesized audio regions")
         if generation_mask.dtype != torch.bool:
@@ -787,8 +811,10 @@ class DiT_VT_MMDiT(DiT):
             residual = x
 
         intermediates_ctc = {}
+        context_projection = None
         for layer_i, block in enumerate(self.transformer_blocks):
             is_mm = isinstance(block, MMDiTBlock_VT)
+            collect_context = return_context_alignment and layer_i == self.context_alignment_layer
             has_tail_text = isinstance(block, AudioTextDiTBlock)
             block_mask = None if self.training else mask  # memory issue
             block_v_mask = None if self.training else v_mask
@@ -800,7 +826,7 @@ class DiT_VT_MMDiT(DiT):
             if self.checkpoint_activations:
                 # https://pytorch.org/docs/stable/checkpoint.html#torch.utils.checkpoint.checkpoint
                 if is_mm:
-                    x, v = torch.utils.checkpoint.checkpoint(
+                    mm_outputs = torch.utils.checkpoint.checkpoint(
                         self.ckpt_wrapper(block),
                         x,
                         v,
@@ -812,6 +838,7 @@ class DiT_VT_MMDiT(DiT):
                         text_embed,
                         text_mask,
                         generation_mask,
+                        collect_context,
                         use_reentrant=False,
                     )
                 elif has_tail_text:
@@ -837,7 +864,7 @@ class DiT_VT_MMDiT(DiT):
                     )
             else:
                 if is_mm:
-                    x, v = block(
+                    mm_outputs = block(
                         x,
                         v,
                         block_t,
@@ -848,6 +875,7 @@ class DiT_VT_MMDiT(DiT):
                         text=text_embed,
                         text_mask=text_mask,
                         generation_mask=generation_mask,
+                        return_ca_output=collect_context,
                     )
                 elif has_tail_text:
                     x = block(
@@ -867,6 +895,13 @@ class DiT_VT_MMDiT(DiT):
                         rope=rope,
                     )
 
+            if is_mm:
+                if collect_context:
+                    x, v, raw_context = mm_outputs
+                    context_projection = self.context_alignment_projector(raw_context)
+                else:
+                    x, v = mm_outputs
+
             if not cache and layer_i in self.layer_map_ctc:  # hack
                 projector = self.projectors_ctc[self.layer_map_ctc[layer_i]]
                 z_tilde, z_lens = projector(x, lens)
@@ -878,4 +913,8 @@ class DiT_VT_MMDiT(DiT):
         x = self.norm_out(x, t)
         output = self.proj_out(x)
 
+        if return_context_alignment:
+            if context_projection is None:
+                raise RuntimeError("configured raw cross-attention activation was not collected")
+            return output, intermediates_ctc, context_projection
         return output, intermediates_ctc

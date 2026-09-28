@@ -1,0 +1,22 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+datasets:
+  audio_teacher_cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/avhubert_audio_teacher_cache/aa9876bf51d0af280b87c575d53b8c0e408f1e3e677e74d341d45673f6b2a770
+  audio_teacher_audio_root: ${oc.env:ROOT_PREFIX,''}/zjw524/datasets/CelebV-Dub
+  audio_teacher_expected_identity: aa9876bf51d0af280b87c575d53b8c0e408f1e3e677e74d341d45673f6b2a770
+
+model:
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_avhubert_infonce_l12_w005_t007_gap5
+  infonce_lambda: 0.05
+  infonce_temperature: 0.07
+  infonce_min_negative_frames: 5
+  infonce_warmup_updates: 10000
+  arch:
+    # Raw text cross-attention context from the final (12th) multimodal block.
+    context_alignment_layer: 11
+    context_alignment_dim: 1024
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_avhubert_infonce_l12_w005_t007_gap5_40hz_CelebVDub_char

@@ -10,6 +10,7 @@ d - dimension
 
 from __future__ import annotations
 
+import math
 from random import random
 from typing import Callable
 
@@ -18,6 +19,7 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 from torchdiffeq import odeint
 
+from aligndit.model.avhubert_infonce import temporal_context_infonce
 from f5_tts.model.cfm import CFM
 from f5_tts.model.utils import (
     exists,
@@ -37,6 +39,9 @@ class CFM_VT(CFM):
         video_drop_prob=0.2,
         audio_video_ratio=4,
         ctc_lambda=0.1,
+        infonce_lambda=0.0,
+        infonce_temperature=0.07,
+        infonce_min_negative_frames=5,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -49,6 +54,17 @@ class CFM_VT(CFM):
 
         # ctc loss
         self.ctc_lambda = ctc_lambda
+        if not math.isfinite(float(infonce_lambda)) or infonce_lambda < 0:
+            raise ValueError("infonce_lambda must be finite and nonnegative")
+        if not math.isfinite(float(infonce_temperature)) or infonce_temperature <= 0:
+            raise ValueError("infonce_temperature must be finite and positive")
+        if type(infonce_min_negative_frames) is not int or infonce_min_negative_frames < 1:
+            raise ValueError("infonce_min_negative_frames must be a positive integer")
+        self.infonce_lambda = float(infonce_lambda)
+        self.infonce_temperature = float(infonce_temperature)
+        self.infonce_min_negative_frames = infonce_min_negative_frames
+        if self.infonce_lambda > 0 and getattr(self.transformer, "context_alignment_projector", None) is None:
+            raise ValueError("positive infonce_lambda requires a configured context alignment projector")
 
     @torch.no_grad()
     def sample(
@@ -257,6 +273,9 @@ class CFM_VT(CFM):
         video: float["b nv d"],  # noqa: F722
         speaker_embedding: float["b ds"] | None = None,
         *,
+        audio_teacher: torch.Tensor | None = None,
+        audio_teacher_lengths: torch.Tensor | None = None,
+        audio_teacher_valid_lengths: torch.Tensor | None = None,
         lens: int["b"] | None = None,  # noqa: F821
         text_lens: int["b"] | None = None,  # noqa: F821
         video_lens: int["b"] | None = None,  # noqa: F821
@@ -352,7 +371,15 @@ class CFM_VT(CFM):
             drop_video = True
 
         # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
-        pred, intermediates_ctc = self.transformer(
+        # Keep the head in the DDP graph on every configured training step,
+        # including zero-weight warmup and independently sampled CFG dropouts.
+        use_infonce = getattr(self.transformer, "context_alignment_projector", None) is not None
+        if use_infonce and any(
+            value is None for value in (audio_teacher, audio_teacher_lengths, audio_teacher_valid_lengths)
+        ):
+            raise ValueError("context alignment requires cached audio_teacher and both teacher lengths")
+        alignment_kwargs = {"return_context_alignment": True} if use_infonce else {}
+        transformer_outputs = self.transformer(
             x=φ,
             cond=cond,
             text=text,
@@ -369,7 +396,12 @@ class CFM_VT(CFM):
             speaker_embedding=speaker_embedding,
             # Use the final prompt dropout, including all-condition dropout.
             drop_speaker=drop_audio_cond,
+            **alignment_kwargs,
         )
+        if use_infonce:
+            pred, intermediates_ctc, projected_context = transformer_outputs
+        else:
+            pred, intermediates_ctc = transformer_outputs
 
         # flow matching loss
         loss = F.mse_loss(pred, flow, reduction="none")
@@ -400,5 +432,25 @@ class CFM_VT(CFM):
             ctc_loss /= len(intermediates_ctc)
             loss += ctc_loss * self.ctc_lambda
             component_losses["ctc_loss"] = ctc_loss.item()
+
+        if use_infonce:
+            infonce_loss, infonce_stats = temporal_context_infonce(
+                projected_context,
+                audio_teacher,
+                lens,
+                audio_teacher_lengths,
+                audio_teacher_valid_lengths,
+                rand_span_mask,
+                temperature=self.infonce_temperature,
+                min_negative_frames=self.infonce_min_negative_frames,
+                enabled=self.infonce_lambda > 0 and not drop_text and not drop_video,
+            )
+            weighted_infonce = infonce_loss * self.infonce_lambda
+            loss = loss + weighted_infonce
+            component_losses.update(infonce_stats)
+            component_losses["infonce_condition_active"] = float(not drop_text and not drop_video)
+            component_losses["infonce_loss_active"] = float(self.infonce_lambda > 0 and not drop_text and not drop_video)
+            component_losses["infonce_loss"] = infonce_loss.detach().item()
+            component_losses["infonce_weighted_loss"] = weighted_infonce.detach().item()
 
         return loss, component_losses, cond, pred

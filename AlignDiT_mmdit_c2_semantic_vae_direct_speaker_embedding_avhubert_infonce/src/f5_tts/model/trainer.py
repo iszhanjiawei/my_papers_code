@@ -144,6 +144,13 @@ class Trainer:
     def is_main(self):
         return self.accelerator.is_main_process
 
+    def _checkpoint_metadata(self):
+        """Optional experiment identity; inherited checkpoints stay unchanged."""
+        return {}
+
+    def _validate_checkpoint_metadata(self, checkpoint):
+        """Experiment subclasses can reject incompatible resumes before loading."""
+
     def save_checkpoint(self, update, last=False):
         self.accelerator.wait_for_everyone()
         if self.is_main:
@@ -154,6 +161,7 @@ class Trainer:
                 scheduler_state_dict=self.scheduler.state_dict(),
                 update=update,
             )
+            checkpoint.update(self._checkpoint_metadata())
             if not os.path.exists(self.checkpoint_path):
                 os.makedirs(self.checkpoint_path)
             if last:
@@ -219,6 +227,8 @@ class Trainer:
             checkpoint = torch.load(
                 f"{self.checkpoint_path}/{latest_checkpoint}", weights_only=True, map_location="cpu"
             )
+
+        self._validate_checkpoint_metadata(checkpoint)
 
         # patch for backward compatibility, 305e3ea
         for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_spec.mel_stft.spectrogram.window"]:

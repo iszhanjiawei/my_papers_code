@@ -19,6 +19,7 @@ import torch
 import torchaudio
 from hydra import compose, initialize_config_dir
 from hydra.utils import get_class
+from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from aligndit.model.cfm_vt import CFM_VT
@@ -154,7 +155,30 @@ def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, de
     checkpoint = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=True)
     checkpoint_schema = checkpoint.get("checkpoint_schema_version")
     training_policy = checkpoint.get("training_policy")
-    if checkpoint_schema is not None or training_policy is not None:
+    has_alignment = arch.get("context_alignment_layer") is not None
+    if has_alignment or "avhubert_infonce_schema_version" in checkpoint:
+        if not has_alignment or checkpoint.get("avhubert_infonce_schema_version") != 1:
+            raise RuntimeError("The inference model and InfoNCE checkpoint schema must agree")
+        expected_keys = {
+            "ema_model_state_dict", "model_state_dict", "optimizer_state_dict",
+            "scheduler_state_dict", "update", "avhubert_infonce_schema_version",
+            "avhubert_infonce_training_contract",
+        }
+        if set(checkpoint) != expected_keys:
+            raise RuntimeError("Unexpected InfoNCE checkpoint fields")
+        contract = checkpoint["avhubert_infonce_training_contract"]
+        if not isinstance(contract, dict) or contract.get("schema_version") != 1:
+            raise RuntimeError("Missing or unsupported InfoNCE training contract")
+        trained_config = contract.get("configuration", {})
+        trained_model = trained_config.get("model", {})
+        for key in ("arch", "audio_representation"):
+            if trained_model.get(key) != OmegaConf.to_container(config.model[key], resolve=True):
+                raise RuntimeError(f"InfoNCE inference {key} differs from its training contract")
+        trained_data = trained_config.get("datasets", {})
+        for key in ("expected_normalization_sha256", "expected_vocab_sha256", "audio_teacher_expected_identity"):
+            if trained_data.get(key) != config.datasets.get(key):
+                raise RuntimeError(f"InfoNCE inference {key} differs from its training contract")
+    elif checkpoint_schema is not None or training_policy is not None:
         if checkpoint_schema != 1 or training_policy != EXPECTED_MINIMAL_FIX_POLICY:
             raise RuntimeError(
                 "Unsupported guarded checkpoint contract: "
@@ -427,7 +451,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=Path(__file__).parents[2]
-        / "config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml",
+        / "config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_avhubert_infonce.yaml",
     )
     parser.add_argument(
         "--cache-root",

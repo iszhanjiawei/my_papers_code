@@ -1,3 +1,8 @@
+> This is the independent Semantic-VAE speaker + AV-HuBERT InfoNCE experiment.
+> Start with [AVHUBERT_INFONCE.md](AVHUBERT_INFONCE.md) for the teacher cache,
+> training policy, validation and launch instructions. The upstream documentation
+> below also describes older configurations and datasets.
+
 # Current experiment
 
 This snapshot adds frozen CAM++ speaker conditioning to Semantic-VAE Direct-C2
