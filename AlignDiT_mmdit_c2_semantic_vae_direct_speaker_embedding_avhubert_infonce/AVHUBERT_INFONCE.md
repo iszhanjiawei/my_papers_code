@@ -130,6 +130,22 @@ data, teacher and optimization settings. Resume rejects a different contract.
 Changing only the run limit, worker count or checkpoint/log locations does not
 change the optimization identity.
 
+Four-GPU integration validation on 2026-09-29 completed 20 updates at the full
+3,600-frame/GPU budget, then resumed the same checkpoint to update 24. All 24
+TensorBoard scalar tags have continuous, finite values for steps 1..24. At
+step 21 the InfoNCE weight was 0.0001, loss 5.45723, valid anchors 1,793 and
+projection gradient norm 1.95718e-5. Online/EMA projection tensors and their
+optimizer moments are present and finite. These are wiring checks, not quality
+metrics. Checkpoint resume inherits the baseline's lack of per-rank RNG-state
+storage, so it does not promise bitwise reproduction across interruptions.
+
+The update-24 EMA also passed a two-step CFG latent-generation check on a real
+98-frame example, producing finite `[1,196,64]` latents. Instrumented checks
+confirmed that neither the teacher cache nor the auxiliary projection was used
+by sampling. This did not evaluate decoded audio quality. Reports and logs are
+kept under the ignored `logs/` directory (`ema_inference_smoke24.json`,
+`train_avhubert_infonce_smoke20.log`, `train_avhubert_infonce_smoke_resume24.log`).
+
 ```bash
 mkdir -p logs
 setsid env PYTHONUNBUFFERED=1 \
@@ -153,7 +169,9 @@ Its TensorBoard logdir is `runs/<run-name>` within this snapshot. Rank 0 records
 total, flow, CTC, raw/weighted InfoNCE, weights, valid anchors, negative counts,
 positive/negative similarity, retrieval accuracy and projection gradient norms.
 Losses are rank-0 batch diagnostics, not global validation metrics. Zero
-InfoNCE on a dropped-condition batch is expected. The TensorBoard launcher
+InfoNCE on a dropped-condition batch is expected. Projection gradient norms
+are measured after DDP reduction and may therefore be nonzero even when rank 0
+dropped its conditions. The TensorBoard launcher
 defaults to port 6006 and supports `TENSORBOARD_PORT` / `TENSORBOARD_LOGDIR`.
 
 ## Inference and evaluation
