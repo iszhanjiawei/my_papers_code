@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 
 sys.path.append(os.getcwd())
@@ -19,6 +20,20 @@ from f5_tts.eval.utils_eval import run_sim
 
 
 rel_path = str(files("aligndit").joinpath("../../"))
+
+
+def attach_full_relative_wav_ids(results, test_set):
+    """Replace ambiguous clip basenames with split/video/clip identifiers."""
+
+    wav_ids = [
+        Path(*Path(gen_wav).with_suffix("").parts[-3:]).as_posix()
+        for _, subset in test_set
+        for gen_wav, _, _ in subset
+    ]
+    if len(results) != len(wav_ids):
+        raise RuntimeError(f"Metric result count mismatch: {len(results)} != {len(wav_ids)}")
+    for result, wav_id in zip(results, wav_ids, strict=True):
+        result["wav"] = wav_id
 
 
 def get_args():
@@ -83,6 +98,7 @@ def main():
             results = pool.map(run_asr_wer, pool_args)
             for r in results:
                 full_results.extend(r)
+        attach_full_relative_wav_ids(full_results, test_set)
 
         refs = [r["truth"] for r in full_results]
         hypos = [r["hypo"] for r in full_results]
@@ -100,6 +116,7 @@ def main():
             results = pool.map(run_sim, pool_args)
             for r in results:
                 full_results.extend(r)
+        attach_full_relative_wav_ids(full_results, test_set)
 
         with open(result_path, "w") as f:
             for line in full_results:
@@ -114,6 +131,7 @@ def main():
             results = pool.map(run_emosim, pool_args)
             for r in results:
                 full_results.extend(r)
+        attach_full_relative_wav_ids(full_results, test_set)
 
         with open(result_path, "w") as f:
             for line in full_results:
@@ -128,6 +146,7 @@ def main():
             results = pool.map(run_emoembed, pool_args)
             for r in results:
                 full_results.extend(r)
+        attach_full_relative_wav_ids(full_results, test_set)
 
         with open(result_path, "w") as f:
             for line in full_results:
@@ -143,6 +162,7 @@ def main():
             results = pool.map(run_avsync, pool_args)
             for r in results:
                 full_results.extend(r)
+        attach_full_relative_wav_ids(full_results, test_set)
 
         with open(result_path, "w") as f:
             for line in full_results:
