@@ -217,7 +217,7 @@ def run(args):
     print(f"Strict initialized EMA model load passed, update={args.step}", flush=True)
     time_grid = get_epss_timesteps(args.nfe, device=device, dtype=torch.float32)
     time_grid = time_grid + args.sway * (torch.cos(torch.pi / 2 * time_grid) - 1 + time_grid)
-    config = {"method": "Ours_150k", "checkpoint": str(args.checkpoint),
+    config = {"method": f"Ours_{args.step // 1000}k", "checkpoint": str(args.checkpoint),
               "checkpoint_sha256": sha256_file(args.checkpoint), "checkpoint_update": args.step,
               "use_ema": True, "config": str(args.config), "config_sha256": sha256_file(args.config),
               "resolved_config": OmegaConf.to_container(cfg, resolve=True),
