@@ -1,0 +1,36 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus
+  - _self_
+
+# Copy of the requested model; only dataset, local paths and Chem run length differ.
+datasets:
+  name: Chem
+  dataset_name: Chem
+  cache_root: data_chem/svae1000k_sample_seed666_fp32
+  manifest_path: ${datasets.cache_root}/manifests/train.jsonl
+  expected_manifest_sha256: 0cba1fedd886cfcd46b1617cfca26fc6598cff7f75abdcceea8cbfca2fbe67c9
+  expected_inventory_sha256: 996727b07fb7b958db59e7763932ad34a474c61c81eafe5908ea060b87088cff
+  vocab_path: ${datasets.cache_root}/manifests/vocab.txt
+  expected_vocab_sha256: 89a4067c49db9330a6dac21ec752fded01b69ecf9d2727f1f7ff3c52fa544376
+  expected_record_count: 5821
+  expected_inventory_count: 6328
+  expected_split_counts: {train: 5821, val: 311, test: 196}
+  expected_ctc_feasible_count: 5821
+  expected_ctc_infeasible_count: 0
+  num_workers: 8
+  speaker_embedding_cache_dir: data_chem/campplus_spk_emb_zh_en_16k
+  repa_feature_cache_dir: data_chem/wavlm_base_plus_repa_final_fp16
+
+optim:
+  # Explicit update horizon replaces the inherited CelebVDub 200-epoch horizon.
+  # LinearLR factors, global LR 5e-5 and 20k warmup remain unchanged.
+  scheduler_total_updates: 120000
+  run_until_update: 120000
+
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_Chem_120k
+
+ckpts:
+  save_per_updates: 20000
+  last_per_updates: 5000
+  save_dir: ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_Chem_120k

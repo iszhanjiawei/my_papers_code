@@ -1,0 +1,14 @@
+# Missing optional dependencies needed to import the official Semantic-VAE.
+# Install with --no-deps in the existing aligndit environment. In particular,
+# keep its current torch/torchaudio/numpy/protobuf and TensorBoard versions.
+argbind==0.3.9
+descript-audiotools==0.7.2
+docstring-parser==0.17.0
+ffmpy==1.0.0
+flatten-dict==0.5.0
+importlib-resources==7.1.0
+julius==0.2.8
+markdown2==2.5.5
+pyloudnorm==0.2.0
+randomname==0.2.1
+torch-stoi==0.2.3
