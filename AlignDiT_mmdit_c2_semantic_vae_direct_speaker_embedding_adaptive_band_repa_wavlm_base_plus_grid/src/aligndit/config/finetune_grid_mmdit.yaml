@@ -1,0 +1,35 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus
+  - _self_
+
+# An independent GRID experiment. Preserve the parent's architecture, S2c EMA
+# initialization, LibriSpeech latent normalization and character vocabulary.
+datasets:
+  name: GRID
+  cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/GRID_mmdit_svae
+  contract_path: ${datasets.cache_root}/data_contract.json
+  manifest_path: ${datasets.cache_root}/manifests/train.jsonl
+  allow_subset: false
+  # GRID checks hashes/counts against the audited cache contract, never the
+  # inherited CelebV-Dub manifest or its hard-coded sample counts.
+  expected_manifest_sha256: null
+  expected_inventory_sha256: null
+  expected_record_count: 29557
+  speaker_embedding_cache_dir: ${datasets.cache_root}/speaker_embeddings
+  repa_feature_cache_dir: ${datasets.cache_root}/repa
+  num_workers: 4
+
+optim:
+  total_updates: 100000
+  run_until_update: 100000
+  # Safety bound only; the GRID trainer derives epochs needed for total_updates.
+  epochs: 1000
+
+model:
+  name: AlignDiT_MMDiT_GRID_svae_speaker_adaptive_band_repa_wavlm_base_plus
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_GRID_svae_speaker_adaptive_band_repa_wavlm_base_plus_100k
+  save_per_updates: 20000
+  keep_last_n_checkpoints: -1
+  last_per_updates: 5000

@@ -18,6 +18,9 @@ from f5_tts.model.utils import exists
 
 # trainer
 class Trainer_VT(Trainer):
+    def _prepare_batch_sampler(self, batch_sampler):
+        return batch_sampler
+
     def _before_update(self, global_update: int) -> None:
         """Optional per-update hook; the historical C2 path is a no-op."""
 
@@ -37,6 +40,21 @@ class Trainer_VT(Trainer):
     def _reached_run_limit(self, global_update: int) -> bool:
         run_until_update = getattr(self, "run_until_update", None)
         return run_until_update is not None and global_update >= run_until_update
+
+    def _set_dataloader_epoch(self, train_dataloader, current_dataloader, epoch):
+        if hasattr(train_dataloader, "batch_sampler") and hasattr(train_dataloader.batch_sampler, "set_epoch"):
+            train_dataloader.batch_sampler.set_epoch(epoch)
+        elif (
+            hasattr(train_dataloader, "batch_sampler")
+            and hasattr(train_dataloader.batch_sampler, "batch_sampler")
+            and hasattr(train_dataloader.batch_sampler.batch_sampler, "set_epoch")
+        ):
+            train_dataloader.batch_sampler.batch_sampler.set_epoch(epoch)
+        if hasattr(self, "total_optimizer_updates") and hasattr(current_dataloader, "set_epoch"):
+            # GRID must also advance Accelerate's loader iteration counter.
+            # Otherwise a fresh/resumed single-rank loader resets the sampler
+            # epoch to zero when its iterator is created.
+            current_dataloader.set_epoch(epoch)
 
     def load_pretrained(self, pretrained_path):
         self.accelerator.wait_for_everyone()
@@ -152,6 +170,7 @@ class Trainer_VT(Trainer):
                 random_seed=resumable_with_seed,  # This enables reproducible shuffling
                 drop_residual=False,
             )
+            batch_sampler = self._prepare_batch_sampler(batch_sampler)
             train_dataloader = DataLoader(
                 train_dataset,
                 collate_fn=train_dataset.collate_fn,
@@ -159,6 +178,7 @@ class Trainer_VT(Trainer):
                 pin_memory=True,
                 persistent_workers=num_workers > 0,
                 batch_sampler=batch_sampler,
+                generator=generator if hasattr(self, "total_optimizer_updates") else None,
             )
         else:
             raise ValueError(f"batch_size_type must be either 'sample' or 'frame', but received {self.batch_size_type}")
@@ -170,7 +190,14 @@ class Trainer_VT(Trainer):
         )  # consider a fixed warmup steps while using accelerate multi-gpu ddp
         # otherwise by default with split_batches=False, warmup steps change with num_processes
         total_updates = math.ceil(len(train_dataloader) / self.grad_accumulation_steps) * self.epochs
+        # GRID opts into an optimizer-update horizon; inherited experiments keep
+        # their original epoch-derived schedule exactly.
+        optimizer_horizon = getattr(self, "total_optimizer_updates", None)
+        if optimizer_horizon is not None:
+            total_updates = optimizer_horizon * self.accelerator.num_processes
         decay_updates = total_updates - warmup_updates
+        if decay_updates <= 0:
+            raise ValueError("Training horizon must exceed the learning-rate warmup")
         warmup_scheduler = LinearLR(self.optimizer, start_factor=1e-8, end_factor=1.0, total_iters=warmup_updates)
         decay_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=1e-8, total_iters=decay_updates)
         self.scheduler = SequentialLR(
@@ -179,6 +206,11 @@ class Trainer_VT(Trainer):
         train_dataloader, self.scheduler = self.accelerator.prepare(
             train_dataloader, self.scheduler
         )  # actual multi_gpu updates = single_gpu updates / gpu nums
+        if optimizer_horizon is not None:
+            updates_per_epoch = math.ceil(len(train_dataloader) / self.grad_accumulation_steps)
+            if updates_per_epoch == 0:
+                raise ValueError("No training batches remain after distributed sharding")
+            self.epochs = math.ceil(optimizer_horizon / updates_per_epoch)
         start_update = self.load_checkpoint()
         global_update = start_update
         run_until_update = getattr(self, "run_until_update", None)
@@ -212,15 +244,7 @@ class Trainer_VT(Trainer):
                 progress_bar_initial = 0
                 current_dataloader = train_dataloader
 
-            # Set epoch for the batch sampler if it exists
-            if hasattr(train_dataloader, "batch_sampler") and hasattr(train_dataloader.batch_sampler, "set_epoch"):
-                train_dataloader.batch_sampler.set_epoch(epoch)
-            elif (
-                hasattr(train_dataloader, "batch_sampler")
-                and hasattr(train_dataloader.batch_sampler, "batch_sampler")
-                and hasattr(train_dataloader.batch_sampler.batch_sampler, "set_epoch")
-            ):
-                train_dataloader.batch_sampler.batch_sampler.set_epoch(epoch)
+            self._set_dataloader_epoch(train_dataloader, current_dataloader, epoch)
 
             progress_bar = tqdm(
                 range(math.ceil(len(train_dataloader) / self.grad_accumulation_steps)),

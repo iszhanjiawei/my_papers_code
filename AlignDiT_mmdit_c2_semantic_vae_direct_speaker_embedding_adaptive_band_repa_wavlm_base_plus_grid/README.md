@@ -1,9 +1,11 @@
-# Current experiment
+# GRID training experiment
 
-This independent copy of the adaptive-band speaker experiment adds WavLM-Base+
-REPA with fixed weight 0.1. The adaptive temporal band and delayed CTC schedule
-remain enabled. See [ADAPTIVE_BAND_WAVLM_REPA.md](ADAPTIVE_BAND_WAVLM_REPA.md)
-for the combined experiment's configuration, validation and launch commands.
+这是 AlignDiT-MM-DiT（Semantic-VAE + CAM++ speaker embedding + adaptive band +
+WavLM-Base+ REPA）的独立 GRID 副本。源项目未修改。训练配置为 100,000 次参数更新，
+每 20,000 步保留编号权重，每 5,000 步更新恢复权重。
+
+请使用 [GRID_TRAINING.md](GRID_TRAINING.md) 中的 GRID 数据准备和训练入口。
+下方原版说明以及继承的 CelebV-Dub 文档用于保留来源，不是本次 GRID 启动步骤。
 
 # AlignDiT
 

@@ -16,4 +16,16 @@
 #   - yaml 配置用 ${oc.env:ROOT_PREFIX,''} 读取(Hydra/OmegaConf);
 #   - python 用 os.environ.get("ROOT_PREFIX", "") 读取.
 # =====================================================================
-export ROOT_PREFIX="${ROOT_PREFIX:-}"
+if [[ -z "${ROOT_PREFIX+x}" ]]; then
+    if [[ -d /zjw524/projects ]]; then
+        ROOT_PREFIX=""
+    elif [[ -d /home/zjw524/projects ]]; then
+        ROOT_PREFIX="/home"
+    elif [[ -d /s7home/zjw524/projects ]]; then
+        ROOT_PREFIX="/s7home"
+    else
+        echo "Set ROOT_PREFIX to the parent of your zjw524 directory" >&2
+        return 1 2>/dev/null || exit 1
+    fi
+fi
+export ROOT_PREFIX
