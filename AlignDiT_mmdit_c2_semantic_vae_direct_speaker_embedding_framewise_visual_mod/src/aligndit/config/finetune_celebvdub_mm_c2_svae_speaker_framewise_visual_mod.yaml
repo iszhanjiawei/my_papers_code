@@ -1,0 +1,16 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+# Isolated copy of the original speaker baseline. All joint-attention directions,
+# speaker/text pathways, flow/CTC losses and training settings are unchanged.
+# Add only framewise visual AdaLN increments; no REPA, InfoNCE or local/adaptive mask.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_framewise_visual_mod_ctc003_warmup10k30k
+  arch:
+    framewise_visual_modulation: true
+    visual_modulation_mode: framewise
+    visual_modulation_hidden_dim: 128
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_framewise_visual_mod_ctc003_warmup10k30k_40hz_CelebVDub_char
