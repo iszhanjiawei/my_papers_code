@@ -1,0 +1,14 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_local_visual_text_gate_ctc003_warmup
+  - _self_
+
+# Flowley PSCA: beta_l = 1 - l/(N_audio_tail - 1), with beta=1 for N=1.
+# Keep the 0.5 s outer radius; progressively attenuate the cosine fade zone.
+# The twelve audio blocks 6..17 use beta=[1, 10/11, ..., 1/11, 0].
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_mm6_audio12_text_gate_flowley_progressive_ctc003_warmup10k30k
+  arch:
+    local_visual_window_schedule: flowley_progressive
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_mm6_audio12_text_gate_flowley_progressive_ctc003_warmup10k30k_40hz_CelebVDub_char

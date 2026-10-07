@@ -1,0 +1,15 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_local_visual_ctc003_warmup
+  - _self_
+
+# Add independently gated text attention to all twelve audio-stream blocks.
+# n_text_layers remains the legacy MM/text block boundary (6); the new flag
+# extends conditioning without replacing the existing local visual adapters.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_mm6_audio12_local_visual_text_gate_ctc003_warmup10k30k
+  arch:
+    audio_tail_text_attention: true
+    tail_text_gate_init: 1.0e-5
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_mm6_audio12_local_visual_text_gate_ctc003_warmup10k30k_40hz_CelebVDub_char
