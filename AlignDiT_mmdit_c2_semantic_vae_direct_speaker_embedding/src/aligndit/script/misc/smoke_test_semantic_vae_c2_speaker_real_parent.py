@@ -106,43 +106,17 @@ def main() -> None:
         parent_contract_sha256=ckpts.expected_parent_contract_sha256,
         parent_ema_step=ema_step,
     )
-    local_enabled = bool(config.model.arch.get("audio_local_visual_attention", False))
-    local_modules = {
-        layer: block.local_visual_attn
-        for layer, block in enumerate(model.transformer.transformer_blocks)
-        if getattr(block, "local_visual_attn", None) is not None
-    }
-    assert set(local_modules) == (set(range(12, 18)) if local_enabled else set())
-    expected_local_suffixes = {
-        "gate", "to_q.weight", "to_q.bias", "to_k.weight", "to_k.bias",
-        "to_v.weight", "to_v.bias", "to_out.weight", "to_out.bias",
-        "q_norm.weight", "k_norm.weight",
-    }
-    local_keys = {
-        f"transformer.transformer_blocks.{layer}.local_visual_attn.{suffix}"
-        for layer in local_modules for suffix in expected_local_suffixes
-    }
-    assert len(local_keys) == (66 if local_enabled else 0)
-    assert local_keys == {key for key in model.state_dict() if ".local_visual_attn." in key}
-    assert local_keys.issubset(migration.new_target_keys)
-    for module in local_modules.values():
-        assert tuple(module.gate.shape) == (768,)
-        assert torch.equal(module.gate, torch.full_like(module.gate, float(config.model.arch.local_visual_gate_init)))
     assert migration.source_key_count == 313
-    assert migration.target_key_count == 704 + len(local_keys)
+    assert migration.target_key_count == 704
     assert migration.loaded_key_count == 303
     assert len(migration.ignored_source_keys) == 10
-    assert len(migration.new_target_keys) == 401 + len(local_keys)
+    assert len(migration.new_target_keys) == 401
     assert "transformer.speaker_proj.weight" in migration.new_target_keys
     assert not torch.count_nonzero(model.transformer.speaker_proj.weight)
     for key, value in model.state_dict().items():
         if key in source_state:
             assert torch.equal(value, source_state[key]), f"Migration changed parent tensor {key}"
-    print(
-        f"[OK] strict migration: source=313, target={migration.target_key_count}, loaded=303, "
-        f"ignored=10, new={len(migration.new_target_keys)}, local={len(local_keys)}; loaded tensors exact",
-        flush=True,
-    )
+    print("[OK] strict migration: source=313, target=704, loaded=303, ignored=10, new=401; loaded tensors exact", flush=True)
     del source_state
     gc.collect()
 
@@ -181,22 +155,6 @@ def main() -> None:
         assert speaker_grad is not None and torch.isfinite(speaker_grad).all()
         speaker_grad_norm = float(speaker_grad.float().norm())
         assert speaker_grad_norm > 0
-        local_gradient_norms = {}
-        for layer, module in local_modules.items():
-            for name, parameter in (
-                ("gate", module.gate), ("to_q", module.to_q.weight),
-                ("to_k", module.to_k.weight), ("to_v", module.to_v.weight),
-                ("to_out", module.to_out.weight),
-            ):
-                gradient = parameter.grad
-                label = f"layer_{layer}/{name}"
-                assert gradient is not None and torch.isfinite(gradient).all(), f"Invalid local gradient: {label}"
-                gradient_norm = float(gradient.float().norm())
-                assert gradient_norm > 0, f"Local gradient is zero: {label}"
-                local_gradient_norms[label] = gradient_norm
-            assert torch.equal(
-                module.gate, torch.full_like(module.gate, float(config.model.arch.local_visual_gate_init))
-            ), "test must not update local gates"
         global_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), config.optim.max_grad_norm))
         assert math.isfinite(global_norm) and global_norm > 0
         assert not torch.count_nonzero(model.transformer.speaker_proj.weight), "test must not update weights"
@@ -208,8 +166,6 @@ def main() -> None:
             "global_grad_norm_pre_clip": global_norm,
             "cuda_peak_allocated_gib": torch.cuda.max_memory_allocated(device) / 1024**3,
         }
-        if local_enabled:
-            result["local_visual_grad_norms_pre_clip"] = local_gradient_norms
         results.append(result)
         print(json.dumps(result, sort_keys=True), flush=True)
         del loss, prediction

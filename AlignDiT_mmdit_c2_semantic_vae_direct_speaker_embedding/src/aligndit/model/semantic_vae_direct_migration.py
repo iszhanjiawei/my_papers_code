@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -21,19 +20,6 @@ EMA_BOOKKEEPING_KEYS = frozenset({"initted", "step"})
 S2C_IGNORED_PROJECTOR_KEYS = frozenset(
     {f"transformer.projectors.0.model.{layer}.{suffix}" for layer in (0, 1, 3, 4, 6) for suffix in ("bias", "weight")}
 )
-LOCAL_VISUAL_ADAPTER_SHAPES = {
-    "gate": (768,),
-    "to_q.weight": (768, 768),
-    "to_q.bias": (768,),
-    "to_k.weight": (768, 1024),
-    "to_k.bias": (768,),
-    "to_v.weight": (768, 1024),
-    "to_v.bias": (768,),
-    "to_out.weight": (768, 768),
-    "to_out.bias": (768,),
-    "q_norm.weight": (768,),
-    "k_norm.weight": (768,),
-}
 
 
 @dataclass(frozen=True)
@@ -165,54 +151,6 @@ def load_s2c_ema_state(
     return source_state, int(step)
 
 
-def _validate_local_visual_adapters(
-    model: nn.Module,
-    target_state: dict[str, torch.Tensor],
-    new_target: list[str],
-) -> frozenset[str]:
-    """Allow exactly the six new audio-tail adapters when configured.
-
-    The parent audio tensors retain their original names and shapes. This
-    whitelist only extends the existing migration contract; it must not allow
-    arbitrary missing tensors through a broad adapter-prefix exception.
-    """
-    backbone = model.transformer
-    enabled = bool(getattr(backbone, "audio_local_visual_attention", False))
-    expected_shapes = {
-        f"transformer.transformer_blocks.{layer}.local_visual_attn.{suffix}": shape
-        for layer in range(12, 18)
-        for suffix, shape in LOCAL_VISUAL_ADAPTER_SHAPES.items()
-    } if enabled else {}
-    expected_keys = frozenset(expected_shapes)
-    actual_keys = {key for key in target_state if ".local_visual_attn." in key}
-    if actual_keys != expected_keys:
-        raise RuntimeError(
-            "S2c local visual adapter key mismatch: "
-            f"missing={sorted(expected_keys - actual_keys)}, "
-            f"unexpected={sorted(actual_keys - expected_keys)}"
-        )
-    if not expected_keys.issubset(new_target):
-        raise RuntimeError("S2c local visual adapters must be new target tensors, absent from the audio parent")
-    for key, shape in expected_shapes.items():
-        if tuple(target_state[key].shape) != shape:
-            raise RuntimeError(
-                f"S2c local visual adapter shape mismatch for {key}: "
-                f"expected={shape}, actual={tuple(target_state[key].shape)}"
-            )
-    if enabled:
-        gate_init = float(getattr(backbone, "local_visual_gate_init", 1e-5))
-        if not math.isfinite(gate_init):
-            raise RuntimeError("S2c local visual gate initialization must be finite")
-        for layer in range(12, 18):
-            key = f"transformer.transformer_blocks.{layer}.local_visual_attn.gate"
-            gate = target_state[key]
-            if not torch.equal(gate, torch.full_like(gate, gate_init)):
-                raise RuntimeError(
-                    f"S2c local visual migration requires a fresh gate initialized to {gate_init}: {key}"
-                )
-    return expected_keys
-
-
 def migrate_s2c_ema_into_model(
     model: nn.Module,
     source_state: dict[str, torch.Tensor],
@@ -232,7 +170,6 @@ def migrate_s2c_ema_into_model(
     shape_mismatches = sorted(
         key for key in common_keys if tuple(source_state[key].shape) != tuple(target_state[key].shape)
     )
-    local_visual_keys = _validate_local_visual_adapters(model, target_state, new_target)
     # The speaker snapshot adds exactly one zero-initialized tensor. Keep the
     # original strict S2c contract for all other keys and for non-speaker configs.
     speaker_key = "transformer.speaker_proj.weight"
@@ -255,10 +192,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS + int(has_speaker) + len(local_visual_keys),
+        EXPECTED_TARGET_KEYS + int(has_speaker),
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS + int(has_speaker) + len(local_visual_keys),
+        EXPECTED_NEW_TARGET_KEYS + int(has_speaker),
     )
     if actual_counts != expected_counts:
         raise RuntimeError(

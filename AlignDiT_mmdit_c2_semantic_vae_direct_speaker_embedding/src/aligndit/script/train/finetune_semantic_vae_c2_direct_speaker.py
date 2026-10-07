@@ -118,18 +118,6 @@ def main(model_cfg):
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
-        if bool(model_arc.get("audio_local_visual_attention", False)):
-            contract["audio_local_visual_attention"] = {
-                "layers_zero_based": list(range(int(model_arc.n_mm_layers), int(model_arc.depth))),
-                "condition": "visual features only; separate audio-stream residual attention",
-                "window_schedule": "same window in every audio-only block",
-                "audio_frame_rate": float(model_arc.audio_frame_rate),
-                "window_radius_seconds": float(model_arc.local_visual_window_radius_seconds),
-                "window_reference_fps": float(model_arc.local_visual_window_reference_fps),
-                "window_core_radius": float(model_arc.local_visual_window_core_radius),
-                "window_fade_scale": float(model_arc.local_visual_window_fade_scale),
-                "gate_initial_value": float(model_arc.local_visual_gate_init),
-            }
         contract_path = save_dir / "speaker_training_contract.json"
         if contract_path.exists():
             previous = json.loads(contract_path.read_text())
