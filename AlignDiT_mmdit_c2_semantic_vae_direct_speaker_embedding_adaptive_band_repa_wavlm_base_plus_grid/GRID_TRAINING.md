@@ -98,3 +98,28 @@ ${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_GRID_svae_speaker_adapt
 详细运行证据在忽略 Git 的 `logs/smoke_grid_real.log`、
 `logs/train_grid_smoke.log`、`logs/train_grid_smoke_resume.log`。
 短检查只验证执行链路；长期训练稳定性和配音质量需看正式训练及后续评测结果。
+
+## 正式训练与 100k 评估结果（2026-10-07）
+
+正式训练已完成 100,000 optimizer updates，并保存 `model_100000.pt` 与
+`model_last.pt`。本次评估使用 `model_100000.pt` 的 EMA 参数；checkpoint SHA256 为
+`e435062c33a26115eac145a2de018ddcdb86b50a40869d3731c22afb8274afa3`。
+
+评估覆盖共享 GRID validation manifest 的全部 3,281 条样本，采用 Setting 2：每个目标使用
+同说话人、不同 validation 句子的参考音频提取 prompt latent 和 CAM++，推理时不读取目标音频。
+采样参数为 Euler/EPSS、NFE 32、sway -1、text/video CFG 5/2，基础 seed 666，并按
+manifest 全局序号为每条样本派生 seed。指标均用完整集合计算；WER 使用数字展开并按全语料
+词级编辑距离统计。
+
+| Checkpoint | 样本数 | SPKSIM ↑ | WER ↓ | EMOSIM ↑ | AVSync ↑ |
+|---|---:|---:|---:|---:|---:|
+| EMA 100k | 3,281 | 0.66492 | 0.49101 | 0.80150 | 0.68977 |
+
+完整 WAV、逐样本指标、日志及机器可读汇总保存在：
+
+```text
+${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_GRID_svae_speaker_adaptive_band_repa_wavlm_base_plus_100k/eval_grid_setting2_100000_seed666_cfg5_2
+```
+
+`metrics_summary.json` SHA256 为
+`9865e56fa34ca4ba7d5493ea399e0af3fe530742884fe08742329cfc13cd4ccb`。
