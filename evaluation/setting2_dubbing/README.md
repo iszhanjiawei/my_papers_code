@@ -7,7 +7,7 @@
 使用仓库外 `aligndit-baseline_1003/alignDiT_baseline/AlignDiT` 的原模型及训练配置，
 严格加载 `aligndit-baseline_1003/ckpts/model_{100000,150000,200000}.pt` 的 EMA。
 字符词表、16 kHz HiFi-GAN、原始参考 Tacotron mel、reference visual zeroing、
-视频时长、seed 0、float32、32 步 Euler、sway=-1、CFG text/video=5/2 保持既有配置。
+视频时长、seed 0、float32、32 NFE Euler/EPSS、sway=-1、CFG text/video=5/2 保持既有配置。
 
 此入口由 benchmark 的已审计 baseline 推理脚本派生，保留 EMA 加载、采样、声码器、
 参考音量处理和 prompt 裁剪；目标文本改为显式真实台词，并验证数据包 SHA256。
