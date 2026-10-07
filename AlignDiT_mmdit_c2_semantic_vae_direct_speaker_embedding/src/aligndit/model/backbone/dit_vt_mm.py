@@ -12,8 +12,9 @@ MM-DiT backbone for multimodal dubbing:
   `n_mm_layers` blocks, with aligned RoPE across the two frame rates
 - text is injected via cross-attention in the first `n_text_layers` blocks;
   `prompt_isolated_ca` controls whether only synthesized frames receive it
-- blocks after `n_mm_layers` stop video interaction; blocks after
-  `n_text_layers` are text-free audio-only DiT blocks
+- blocks after `n_mm_layers` stop joint video interaction; blocks after
+  `n_text_layers` are text-free audio DiT blocks, optionally with gated
+  local visual cross-attention before their FFN
 - audio-stream parameter names are kept identical to DiTBlock so
   that the audio-only pretrained checkpoint loads directly by key matching
 """
@@ -25,6 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from x_transformers.x_transformers import apply_rotary_pos_emb
 
+from aligndit.model.local_visual_attention import GatedLocalVisualAttention
 from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
@@ -150,6 +152,30 @@ class AudioTextDiTBlock(DiTCrossBlock):
         norm = self.ff_norm(x) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
         x = x + gate_mlp.unsqueeze(1) * self.ff(norm)
         return x
+
+
+class AudioVisualDiTBlock(DiTBlock):
+    """Pretrained audio block plus a gated visual residual before its FFN."""
+
+    def __init__(self, *, local_visual_kwargs, **kwargs):
+        super().__init__(**kwargs)
+        self.local_visual_attn = GatedLocalVisualAttention(
+            dim=kwargs["dim"], heads=kwargs["heads"], dim_head=kwargs["dim_head"],
+            **local_visual_kwargs,
+        )
+
+    def forward(
+        self, x, t, mask=None, rope=None, video=None,
+        local_audio_mask=None, local_video_mask=None, generation_mask=None,
+    ):
+        norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.attn_norm(x, emb=t)
+        x = x + gate_msa.unsqueeze(1) * self.attn(x=norm, mask=mask, rope=rope)
+        x = x + self.local_visual_attn(
+            x, video, audio_mask=local_audio_mask, video_mask=local_video_mask,
+            generation_mask=generation_mask,
+        )
+        norm = self.ff_norm(x) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        return x + gate_mlp.unsqueeze(1) * self.ff(norm)
 
 
 class MMDiTBlock_VT(DiTCrossBlock):
@@ -368,6 +394,13 @@ class DiT_VT_MMDiT(DiT):
         normalize_text_context=False,
         speaker_dim=None,
         speaker_condition_start_layer=None,
+        audio_local_visual_attention=False,
+        audio_frame_rate=40.0,
+        local_visual_window_radius_seconds=0.5,
+        local_visual_window_reference_fps=8.0,
+        local_visual_window_core_radius=0.0,
+        local_visual_window_fade_scale=1.0,
+        local_visual_gate_init=1e-5,
     ):
         super().__init__(
             dim=dim,
@@ -400,6 +433,10 @@ class DiT_VT_MMDiT(DiT):
         self.last_text_context_post_rms: torch.Tensor | None = None
         self.n_mm_layers = n_mm_layers
         self.n_text_layers = n_mm_layers if n_text_layers is None else n_text_layers
+        self.audio_local_visual_attention = bool(audio_local_visual_attention)
+        self.local_visual_gate_init = float(local_visual_gate_init)
+        if self.audio_local_visual_attention and self.n_text_layers >= depth:
+            raise ValueError("audio_local_visual_attention requires a text-free audio tail")
         if not 0 <= self.n_mm_layers <= self.n_text_layers <= depth:
             raise ValueError(
                 "expected 0 <= n_mm_layers <= n_text_layers <= depth, got "
@@ -466,12 +503,24 @@ class DiT_VT_MMDiT(DiT):
             "text_dim": text_dim,
             "prompt_isolated_ca": prompt_isolated_ca,
         }
+        local_visual_kwargs = {
+            "visual_dim": video_dim,
+            "audio_frame_rate": audio_frame_rate,
+            "audio_video_ratio": audio_video_ratio,
+            "window_radius_seconds": local_visual_window_radius_seconds,
+            "window_reference_fps": local_visual_window_reference_fps,
+            "window_core_radius": local_visual_window_core_radius,
+            "window_fade_scale": local_visual_window_fade_scale,
+            "gate_init": local_visual_gate_init,
+        }
         self.transformer_blocks = nn.ModuleList(
             [
                 MMDiTBlock_VT(**text_block_kwargs)
                 if i < self.n_mm_layers
                 else AudioTextDiTBlock(**text_block_kwargs)
                 if i < self.n_text_layers
+                else AudioVisualDiTBlock(**audio_block_kwargs, local_visual_kwargs=local_visual_kwargs)
+                if self.audio_local_visual_attention
                 else DiTBlock(**audio_block_kwargs)
                 for i in range(depth)
             ]
@@ -656,6 +705,25 @@ class DiT_VT_MMDiT(DiT):
         if time.ndim == 0:
             time = time.repeat(batch)
 
+        # Keep the new local K/V on the original visual timeline, without
+        # globally mixed MM-DiT states or the optional Conformer conditioner.
+        # In S1 inference the prompt prefix is already present in this timeline;
+        # complementary_mask removes it without shifting generated frame times.
+        local_video = video
+        local_video_mask = None
+        if self.audio_local_visual_attention:
+            local_video_mask = (
+                video_mask.clone() if video_mask is not None
+                else torch.ones((batch, video_len), dtype=torch.bool, device=x.device)
+            )
+            if mask is not None:
+                valid_video = mask[:, :: self.audio_video_ratio][:, :video_len]
+                if valid_video.shape[1] < video_len:
+                    valid_video = F.pad(valid_video, (0, video_len - valid_video.shape[1]), value=False)
+                local_video_mask = local_video_mask & valid_video
+            if complementary_mask is not None:
+                local_video_mask = local_video_mask & ~complementary_mask
+
         # t: conditioning time, x: noised input audio (stream 1), v: video (stream 2)
         t = self.time_embed(time)
         if drop_speaker is None:
@@ -724,6 +792,14 @@ class DiT_VT_MMDiT(DiT):
                 speaker_delta_list.append(speaker_delta_null)
 
             rep_n = len(x_list)
+            if self.audio_local_visual_attention:
+                # Branch-major CFG: full, text-only, unconditional (or two
+                # branches when one modality is explicitly ignored).
+                local_video = local_video.repeat(rep_n, 1, 1)
+                local_video_mask = torch.cat(
+                    [local_video_mask if not drop_video else torch.zeros_like(local_video_mask)]
+                    + [torch.zeros_like(local_video_mask)] * (rep_n - 1), dim=0,
+                )
             x = torch.cat(x_list, dim=0)
             v = torch.cat(v_list, dim=0)
             # Match the branch-major ordering of torch.cat for batch > 1.
@@ -743,6 +819,8 @@ class DiT_VT_MMDiT(DiT):
             speaker_delta = torch.cat(speaker_delta_list, dim=0) if speaker_delta_list else None
 
         else:
+            if self.audio_local_visual_attention and drop_video:
+                local_video_mask = torch.zeros_like(local_video_mask)
             x, text_embed, v = self.get_input_embed(
                 **embed_kwargs,
                 drop_audio_cond=drop_audio_cond,
@@ -790,6 +868,7 @@ class DiT_VT_MMDiT(DiT):
         for layer_i, block in enumerate(self.transformer_blocks):
             is_mm = isinstance(block, MMDiTBlock_VT)
             has_tail_text = isinstance(block, AudioTextDiTBlock)
+            has_local_visual = isinstance(block, AudioVisualDiTBlock)
             block_mask = None if self.training else mask  # memory issue
             block_v_mask = None if self.training else v_mask
             block_t = (
@@ -826,6 +905,13 @@ class DiT_VT_MMDiT(DiT):
                         generation_mask,
                         use_reentrant=False,
                     )
+                elif has_local_visual:
+                    x = torch.utils.checkpoint.checkpoint(
+                        self.ckpt_wrapper(block),
+                        x, block_t, block_mask, rope, local_video,
+                        mask, local_video_mask, generation_mask,
+                        use_reentrant=False,
+                    )
                 else:
                     x = torch.utils.checkpoint.checkpoint(
                         self.ckpt_wrapper(block),
@@ -857,6 +943,12 @@ class DiT_VT_MMDiT(DiT):
                         rope=rope,
                         text=text_embed,
                         text_mask=text_mask,
+                        generation_mask=generation_mask,
+                    )
+                elif has_local_visual:
+                    x = block(
+                        x, block_t, mask=block_mask, rope=rope, video=local_video,
+                        local_audio_mask=mask, local_video_mask=local_video_mask,
                         generation_mask=generation_mask,
                     )
                 else:
