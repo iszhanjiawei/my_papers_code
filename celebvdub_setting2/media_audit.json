@@ -1,0 +1,3337 @@
+[
+  {
+    "id": "test/-2KGPYEFnsU/3_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-2KGPYEFnsU/3_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-2KGPYEFnsU/3_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "47"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-2KGPYEFnsU/3_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-2KGPYEFnsU/3_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "47"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-2KGPYEFnsU/5_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-2KGPYEFnsU/5_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-2KGPYEFnsU/5_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "40"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-2KGPYEFnsU/5_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-2KGPYEFnsU/5_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "40"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-3KCgSpt3hU/1_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-3KCgSpt3hU/1_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-3KCgSpt3hU/1_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "44"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-3KCgSpt3hU/1_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-3KCgSpt3hU/1_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "44"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-4GNkXEUOwY/0_1_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-4GNkXEUOwY/0_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-4GNkXEUOwY/0_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1448,
+          "height": 1322,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "161"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-4GNkXEUOwY/0_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-4GNkXEUOwY/0_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "161"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-4GNkXEUOwY/4_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-4GNkXEUOwY/4_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-4GNkXEUOwY/4_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1472,
+          "height": 1350,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "107"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-4GNkXEUOwY/4_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-4GNkXEUOwY/4_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "107"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-4GNkXEUOwY/4_6_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-4GNkXEUOwY/4_6_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-4GNkXEUOwY/4_6_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1472,
+          "height": 1350,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "118"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-4GNkXEUOwY/4_6_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-4GNkXEUOwY/4_6_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "118"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-4GNkXEUOwY/5_1_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-4GNkXEUOwY/5_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-4GNkXEUOwY/5_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1320,
+          "height": 1210,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "160"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-4GNkXEUOwY/5_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-4GNkXEUOwY/5_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "160"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-4GNkXEUOwY/6_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-4GNkXEUOwY/6_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-4GNkXEUOwY/6_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1410,
+          "height": 1292,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "52"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-4GNkXEUOwY/6_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-4GNkXEUOwY/6_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "52"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-4GNkXEUOwY/6_0_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-4GNkXEUOwY/6_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-4GNkXEUOwY/6_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1410,
+          "height": 1292,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "100"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-4GNkXEUOwY/6_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-4GNkXEUOwY/6_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "100"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-4GNkXEUOwY/6_0_3",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-4GNkXEUOwY/6_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-4GNkXEUOwY/6_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1410,
+          "height": 1292,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "82"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-4GNkXEUOwY/6_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-4GNkXEUOwY/6_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "82"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-8cZ4rlEdIU/2_1_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-8cZ4rlEdIU/2_1_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-8cZ4rlEdIU/2_1_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 952,
+          "height": 920,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "213"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-8cZ4rlEdIU/2_1_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-8cZ4rlEdIU/2_1_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "213"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-8cZ4rlEdIU/2_1_10",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-8cZ4rlEdIU/2_1_10.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-8cZ4rlEdIU/2_1_10.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 952,
+          "height": 920,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "134"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-8cZ4rlEdIU/2_1_10.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-8cZ4rlEdIU/2_1_10.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "134"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-8cZ4rlEdIU/2_1_11",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-8cZ4rlEdIU/2_1_11.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-8cZ4rlEdIU/2_1_11.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 952,
+          "height": 920,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "73"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-8cZ4rlEdIU/2_1_11.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-8cZ4rlEdIU/2_1_11.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "73"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-8cZ4rlEdIU/2_1_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-8cZ4rlEdIU/2_1_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-8cZ4rlEdIU/2_1_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 952,
+          "height": 920,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "164"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-8cZ4rlEdIU/2_1_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-8cZ4rlEdIU/2_1_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "164"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-8cZ4rlEdIU/2_1_4",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-8cZ4rlEdIU/2_1_4.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-8cZ4rlEdIU/2_1_4.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 952,
+          "height": 920,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "98"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-8cZ4rlEdIU/2_1_4.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-8cZ4rlEdIU/2_1_4.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "98"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-8cZ4rlEdIU/2_1_6",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-8cZ4rlEdIU/2_1_6.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-8cZ4rlEdIU/2_1_6.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 952,
+          "height": 920,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "69"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-8cZ4rlEdIU/2_1_6.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-8cZ4rlEdIU/2_1_6.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "69"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-8cZ4rlEdIU/2_1_8",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-8cZ4rlEdIU/2_1_8.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-8cZ4rlEdIU/2_1_8.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 952,
+          "height": 920,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "58"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-8cZ4rlEdIU/2_1_8.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-8cZ4rlEdIU/2_1_8.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "58"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-8ya_8Co8Ss/4_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-8ya_8Co8Ss/4_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-8ya_8Co8Ss/4_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 712,
+          "height": 652,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "123"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-8ya_8Co8Ss/4_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-8ya_8Co8Ss/4_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "123"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-8ya_8Co8Ss/5_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-8ya_8Co8Ss/5_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-8ya_8Co8Ss/5_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 712,
+          "height": 688,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "83"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-8ya_8Co8Ss/5_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-8ya_8Co8Ss/5_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "83"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-9SgTWyhQL4/0_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-9SgTWyhQL4/0_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-9SgTWyhQL4/0_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1002,
+          "height": 918,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "217"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-9SgTWyhQL4/0_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-9SgTWyhQL4/0_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "217"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-9SgTWyhQL4/0_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-9SgTWyhQL4/0_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-9SgTWyhQL4/0_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1002,
+          "height": 918,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "56"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-9SgTWyhQL4/0_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-9SgTWyhQL4/0_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "56"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-9SgTWyhQL4/2_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-9SgTWyhQL4/2_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-9SgTWyhQL4/2_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1054,
+          "height": 966,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "146"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-9SgTWyhQL4/2_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-9SgTWyhQL4/2_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "146"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-9SgTWyhQL4/3_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-9SgTWyhQL4/3_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-9SgTWyhQL4/3_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1062,
+          "height": 974,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "138"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-9SgTWyhQL4/3_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-9SgTWyhQL4/3_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "138"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-9SgTWyhQL4/3_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-9SgTWyhQL4/3_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-9SgTWyhQL4/3_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1062,
+          "height": 974,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "62"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-9SgTWyhQL4/3_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-9SgTWyhQL4/3_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "62"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-C77OR13vPU/13_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-C77OR13vPU/13_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-C77OR13vPU/13_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 954,
+          "height": 874,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "39"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-C77OR13vPU/13_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-C77OR13vPU/13_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "39"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-C77OR13vPU/25_0_3",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-C77OR13vPU/25_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-C77OR13vPU/25_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 920,
+          "height": 842,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "52"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-C77OR13vPU/25_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-C77OR13vPU/25_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "52"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-C77OR13vPU/25_0_4",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-C77OR13vPU/25_0_4.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-C77OR13vPU/25_0_4.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 920,
+          "height": 842,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "52"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-C77OR13vPU/25_0_4.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-C77OR13vPU/25_0_4.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "52"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-HWkUQJjVrI/1_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-HWkUQJjVrI/1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-HWkUQJjVrI/1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "127"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-HWkUQJjVrI/1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-HWkUQJjVrI/1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "127"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-HWkUQJjVrI/4_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-HWkUQJjVrI/4_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-HWkUQJjVrI/4_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "56"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-HWkUQJjVrI/4_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-HWkUQJjVrI/4_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "56"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "95"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "95"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_11",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_11.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_11.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "138"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_11.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_11.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "138"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_12",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_12.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_12.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "103"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_12.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_12.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "103"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_13",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_13.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_13.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "203"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_13.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_13.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "203"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_14",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_14.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_14.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "78"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_14.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_14.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "78"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_16",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_16.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_16.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "65"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_16.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_16.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "65"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "162"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "162"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_3",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "35"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "35"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_6",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_6.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_6.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "82"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_6.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_6.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "82"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/0_1_8",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/0_1_8.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/0_1_8.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1386,
+          "height": 1270,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "130"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/0_1_8.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/0_1_8.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "130"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/1_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/1_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/1_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1252,
+          "height": 1230,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "326"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/1_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/1_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "326"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/1_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/1_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/1_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1252,
+          "height": 1230,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "82"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/1_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/1_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "82"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/2_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/2_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/2_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1390,
+          "height": 1274,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "74"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/2_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/2_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "74"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/2_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/2_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/2_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1390,
+          "height": 1274,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "151"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/2_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/2_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "151"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/2_0_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/2_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/2_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1390,
+          "height": 1274,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "214"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/2_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/2_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "214"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/2_0_3",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/2_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/2_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1390,
+          "height": 1274,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "230"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/2_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/2_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "230"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/2_0_4",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/2_0_4.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/2_0_4.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1390,
+          "height": 1274,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "140"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/2_0_4.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/2_0_4.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "140"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/2_0_7",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/2_0_7.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/2_0_7.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1390,
+          "height": 1274,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "131"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/2_0_7.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/2_0_7.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "131"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/2_0_8",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/2_0_8.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/2_0_8.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1390,
+          "height": 1274,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "112"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/2_0_8.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/2_0_8.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "112"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-J5F6VD1MN4/2_0_9",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-J5F6VD1MN4/2_0_9.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-J5F6VD1MN4/2_0_9.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1390,
+          "height": 1274,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "92"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-J5F6VD1MN4/2_0_9.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-J5F6VD1MN4/2_0_9.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "92"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-JKZeB_NZm0/11_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-JKZeB_NZm0/11_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-JKZeB_NZm0/11_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1310,
+          "height": 1258,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "93"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-JKZeB_NZm0/11_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-JKZeB_NZm0/11_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "93"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-JKZeB_NZm0/11_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-JKZeB_NZm0/11_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-JKZeB_NZm0/11_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1310,
+          "height": 1258,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "87"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-JKZeB_NZm0/11_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-JKZeB_NZm0/11_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "87"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-JKZeB_NZm0/11_1_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-JKZeB_NZm0/11_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-JKZeB_NZm0/11_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1310,
+          "height": 1258,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "114"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-JKZeB_NZm0/11_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-JKZeB_NZm0/11_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "114"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-JKZeB_NZm0/12_4_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-JKZeB_NZm0/12_4_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-JKZeB_NZm0/12_4_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1578,
+          "height": 1440,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "77"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-JKZeB_NZm0/12_4_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-JKZeB_NZm0/12_4_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "77"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-JKZeB_NZm0/12_4_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-JKZeB_NZm0/12_4_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-JKZeB_NZm0/12_4_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1578,
+          "height": 1440,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "64"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-JKZeB_NZm0/12_4_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-JKZeB_NZm0/12_4_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "64"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-JKZeB_NZm0/16_1_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-JKZeB_NZm0/16_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-JKZeB_NZm0/16_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1280,
+          "height": 1250,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "350"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-JKZeB_NZm0/16_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-JKZeB_NZm0/16_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "350"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-JKZeB_NZm0/7_2_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-JKZeB_NZm0/7_2_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-JKZeB_NZm0/7_2_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1298,
+          "height": 1232,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "68"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-JKZeB_NZm0/7_2_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-JKZeB_NZm0/7_2_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "68"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-JKZeB_NZm0/9_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-JKZeB_NZm0/9_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-JKZeB_NZm0/9_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1340,
+          "height": 1266,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "160"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-JKZeB_NZm0/9_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-JKZeB_NZm0/9_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "160"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/0_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/0_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/0_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1150,
+          "height": 1054,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "150"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/0_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/0_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "150"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/19_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/19_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/19_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1032,
+          "height": 946,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "193"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/19_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/19_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "193"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/23_3_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/23_3_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/23_3_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1146,
+          "height": 1048,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "36"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/23_3_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/23_3_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "36"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/23_3_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/23_3_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/23_3_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1146,
+          "height": 1048,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "31"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/23_3_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/23_3_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "31"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/23_6_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/23_6_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/23_6_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1146,
+          "height": 1048,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "120"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/23_6_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/23_6_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "120"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/2_1_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/2_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/2_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1070,
+          "height": 1002,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "47"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/2_1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/2_1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "47"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/38_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/38_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/38_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1066,
+          "height": 976,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "137"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/38_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/38_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "137"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/51_8_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/51_8_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/51_8_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 982,
+          "height": 898,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "137"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/51_8_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/51_8_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "137"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/66_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/66_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/66_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1036,
+          "height": 948,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "126"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/66_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/66_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "126"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-LJjxuHLI4U/72_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-LJjxuHLI4U/72_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-LJjxuHLI4U/72_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1004,
+          "height": 920,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "105"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-LJjxuHLI4U/72_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-LJjxuHLI4U/72_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "105"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-OFtGUX-9Z0/3_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-OFtGUX-9Z0/3_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-OFtGUX-9Z0/3_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1228,
+          "height": 1124,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "282"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-OFtGUX-9Z0/3_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-OFtGUX-9Z0/3_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "282"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-OFtGUX-9Z0/3_0_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-OFtGUX-9Z0/3_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-OFtGUX-9Z0/3_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1228,
+          "height": 1124,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "91"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-OFtGUX-9Z0/3_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-OFtGUX-9Z0/3_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "91"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-OFtGUX-9Z0/3_0_3",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-OFtGUX-9Z0/3_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-OFtGUX-9Z0/3_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1228,
+          "height": 1124,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "246"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-OFtGUX-9Z0/3_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-OFtGUX-9Z0/3_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "246"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-OFtGUX-9Z0/5_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-OFtGUX-9Z0/5_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-OFtGUX-9Z0/5_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1020,
+          "height": 1006,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "94"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-OFtGUX-9Z0/5_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-OFtGUX-9Z0/5_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "94"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-OFtGUX-9Z0/5_0_4",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-OFtGUX-9Z0/5_0_4.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-OFtGUX-9Z0/5_0_4.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1020,
+          "height": 1006,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "246"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-OFtGUX-9Z0/5_0_4.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-OFtGUX-9Z0/5_0_4.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "246"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-OFtGUX-9Z0/5_0_5",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-OFtGUX-9Z0/5_0_5.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-OFtGUX-9Z0/5_0_5.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1020,
+          "height": 1006,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "87"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-OFtGUX-9Z0/5_0_5.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-OFtGUX-9Z0/5_0_5.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "87"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-PFdr0SiAEw/1_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-PFdr0SiAEw/1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-PFdr0SiAEw/1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "179"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-PFdr0SiAEw/1_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-PFdr0SiAEw/1_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "179"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-PFdr0SiAEw/3_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-PFdr0SiAEw/3_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-PFdr0SiAEw/3_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "77"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-PFdr0SiAEw/3_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-PFdr0SiAEw/3_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "77"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-PFdr0SiAEw/3_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-PFdr0SiAEw/3_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-PFdr0SiAEw/3_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "89"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-PFdr0SiAEw/3_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-PFdr0SiAEw/3_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "89"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-PFdr0SiAEw/4_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-PFdr0SiAEw/4_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-PFdr0SiAEw/4_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "76"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-PFdr0SiAEw/4_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-PFdr0SiAEw/4_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "76"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-QNxYSDdpig/3_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-QNxYSDdpig/3_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-QNxYSDdpig/3_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "29"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-QNxYSDdpig/3_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-QNxYSDdpig/3_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "29"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-SquB8m_MVo/1_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-SquB8m_MVo/1_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-SquB8m_MVo/1_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1310,
+          "height": 1204,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "317"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-SquB8m_MVo/1_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-SquB8m_MVo/1_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "317"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/0_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/0_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/0_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 722,
+          "height": 662,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "125"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/0_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/0_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "125"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/1_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/1_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/1_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 738,
+          "height": 676,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "235"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/1_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/1_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "235"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/2_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/2_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/2_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 744,
+          "height": 682,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "129"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/2_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/2_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "129"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/3_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/3_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/3_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 750,
+          "height": 686,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "106"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/3_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/3_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "106"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/4_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/4_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/4_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 748,
+          "height": 684,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "112"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/4_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/4_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "112"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/4_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/4_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/4_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 748,
+          "height": 684,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "63"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/4_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/4_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "63"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/5_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/5_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/5_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 734,
+          "height": 672,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "90"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/5_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/5_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "90"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/6_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/6_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/6_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 708,
+          "height": 648,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "98"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/6_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/6_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "98"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/6_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/6_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/6_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 708,
+          "height": 648,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "51"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/6_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/6_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "51"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/7_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/7_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/7_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 720,
+          "height": 660,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "171"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/7_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/7_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "171"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/8_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/8_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/8_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 712,
+          "height": 652,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "59"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/8_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/8_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "59"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/8_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/8_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/8_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 712,
+          "height": 652,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "65"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/8_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/8_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "65"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/9_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/9_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/9_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 704,
+          "height": 646,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "81"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/9_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/9_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "81"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-YNsl3kWSfc/9_0_3",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-YNsl3kWSfc/9_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-YNsl3kWSfc/9_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 704,
+          "height": 646,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "38"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-YNsl3kWSfc/9_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-YNsl3kWSfc/9_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "38"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-_zyvfId578/1_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-_zyvfId578/1_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-_zyvfId578/1_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1068,
+          "height": 984,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "86"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-_zyvfId578/1_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-_zyvfId578/1_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "86"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-_zyvfId578/1_0_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-_zyvfId578/1_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-_zyvfId578/1_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1068,
+          "height": 984,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "155"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-_zyvfId578/1_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-_zyvfId578/1_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "155"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-_zyvfId578/1_0_3",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-_zyvfId578/1_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-_zyvfId578/1_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1068,
+          "height": 984,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "93"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-_zyvfId578/1_0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-_zyvfId578/1_0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "93"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-_zyvfId578/8_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-_zyvfId578/8_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-_zyvfId578/8_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 852,
+          "height": 828,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "148"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-_zyvfId578/8_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-_zyvfId578/8_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "148"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-_zyvfId578/8_0_10",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-_zyvfId578/8_0_10.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-_zyvfId578/8_0_10.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 852,
+          "height": 828,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "133"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-_zyvfId578/8_0_10.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-_zyvfId578/8_0_10.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "133"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-_zyvfId578/8_0_11",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-_zyvfId578/8_0_11.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-_zyvfId578/8_0_11.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 852,
+          "height": 828,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "103"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-_zyvfId578/8_0_11.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-_zyvfId578/8_0_11.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "103"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/-_zyvfId578/8_0_13",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-_zyvfId578/8_0_13.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/-_zyvfId578/8_0_13.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 852,
+          "height": 828,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "152"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/-_zyvfId578/8_0_13.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/-_zyvfId578/8_0_13.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "152"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0IEYKinDZyc/2_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0IEYKinDZyc/2_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0IEYKinDZyc/2_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1734,
+          "height": 1440,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "72"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0IEYKinDZyc/2_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0IEYKinDZyc/2_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "72"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0IEYKinDZyc/2_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0IEYKinDZyc/2_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0IEYKinDZyc/2_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1734,
+          "height": 1440,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "79"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0IEYKinDZyc/2_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0IEYKinDZyc/2_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "79"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0IEYKinDZyc/2_0_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0IEYKinDZyc/2_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0IEYKinDZyc/2_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 1734,
+          "height": 1440,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "205"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0IEYKinDZyc/2_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0IEYKinDZyc/2_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "205"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0JRa7ocnNEE/18_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0JRa7ocnNEE/18_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0JRa7ocnNEE/18_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 880,
+          "height": 844,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "86"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0JRa7ocnNEE/18_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0JRa7ocnNEE/18_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "86"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0JRa7ocnNEE/18_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0JRa7ocnNEE/18_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0JRa7ocnNEE/18_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 880,
+          "height": 844,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "100"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0JRa7ocnNEE/18_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0JRa7ocnNEE/18_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "100"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0JRa7ocnNEE/18_0_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0JRa7ocnNEE/18_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0JRa7ocnNEE/18_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 880,
+          "height": 844,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "149"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0JRa7ocnNEE/18_0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0JRa7ocnNEE/18_0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "149"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0Lg-76xJhws/2_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0Lg-76xJhws/2_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0Lg-76xJhws/2_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 830,
+          "height": 760,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "87"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0Lg-76xJhws/2_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0Lg-76xJhws/2_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "87"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0Lg-76xJhws/5_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0Lg-76xJhws/5_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0Lg-76xJhws/5_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 860,
+          "height": 788,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "109"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0Lg-76xJhws/5_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0Lg-76xJhws/5_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "109"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0Lg-76xJhws/6_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0Lg-76xJhws/6_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0Lg-76xJhws/6_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 898,
+          "height": 822,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "119"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0Lg-76xJhws/6_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0Lg-76xJhws/6_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "119"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0Lg-76xJhws/7_0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0Lg-76xJhws/7_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0Lg-76xJhws/7_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 876,
+          "height": 802,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "92"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0Lg-76xJhws/7_0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0Lg-76xJhws/7_0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "92"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0Lg-76xJhws/8_0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0Lg-76xJhws/8_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0Lg-76xJhws/8_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 866,
+          "height": 792,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "136"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0Lg-76xJhws/8_0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0Lg-76xJhws/8_0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "136"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0Z0N4N1cb5k/0_0",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0Z0N4N1cb5k/0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0Z0N4N1cb5k/0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "61"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0Z0N4N1cb5k/0_0.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0Z0N4N1cb5k/0_0.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "61"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0Z0N4N1cb5k/0_1",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0Z0N4N1cb5k/0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0Z0N4N1cb5k/0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "77"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0Z0N4N1cb5k/0_1.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0Z0N4N1cb5k/0_1.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "77"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0Z0N4N1cb5k/0_2",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0Z0N4N1cb5k/0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0Z0N4N1cb5k/0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "136"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0Z0N4N1cb5k/0_2.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0Z0N4N1cb5k/0_2.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "136"
+        }
+      ]
+    }
+  },
+  {
+    "id": "test/0Z0N4N1cb5k/0_3",
+    "video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/0Z0N4N1cb5k/0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video/test/0Z0N4N1cb5k/0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 512,
+          "height": 512,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "60"
+        }
+      ]
+    },
+    "mouth_video": {
+      "path": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/mouth_video/test/0Z0N4N1cb5k/0_3.mp4",
+      "source": "/zjw524/projects/data/CelebVDub/video_mouth/test/test/0Z0N4N1cb5k/0_3.mp4",
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 96,
+          "height": 96,
+          "avg_frame_rate": "25/1",
+          "nb_frames": "60"
+        }
+      ]
+    }
+  }
+]

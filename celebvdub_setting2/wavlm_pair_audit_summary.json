@@ -1,0 +1,24 @@
+{
+  "input_targets": 213,
+  "audited_pairs": 115,
+  "excluded_targets": 98,
+  "all_integrity_assertions_passed": true,
+  "flag_count_below_0_4": 0,
+  "media_audit_records_verified": 115,
+  "video_only_files_verified": 230,
+  "wavlm_cosine_mean": 0.7171856009441874,
+  "wavlm_cosine_quantiles": {
+    "min": 0.5439308881759644,
+    "p05": 0.5833905220031739,
+    "p25": 0.6736151576042175,
+    "median": 0.7101151347160339,
+    "p75": 0.7668278217315674,
+    "p95": 0.8360821187496186,
+    "max": 0.9130727648735046
+  },
+  "selection_changed": false,
+  "wavlm_used_for_selection": false,
+  "same_official_pairing_prefix_count": 49,
+  "manifest_sha256": "5d31f42d9766b4c500904dcca8e9a50230f5678744c57b49dc808e45accd7cf8",
+  "interpretation": "0.4 is an uncalibrated review flag, not an identity decision. High scores are not identity ground truth."
+}

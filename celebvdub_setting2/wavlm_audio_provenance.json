@@ -1,0 +1,1706 @@
+[
+  {
+    "id": "0_ArO8UCfyk/0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0_ArO8UCfyk/0_0.wav",
+    "duration_s": 1.091375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "ce67dca9250f8aaa13e05e21d3037bd8dda1dd2788f6f70d1b4e5aac85bc6ef3"
+  },
+  {
+    "id": "0_ArO8UCfyk/0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0_ArO8UCfyk/0_1.wav",
+    "duration_s": 1.64,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "df411a942f542455cdaa497defe96d36682fc0b63a105d177d9d0bbd812cbdd5"
+  },
+  {
+    "id": "0IEYKinDZyc/1_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0IEYKinDZyc/1_0_0.wav",
+    "duration_s": 2.9489375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "330b7d491bf2dc23996fc121799d3e0d0c73f3c1e35fa1571302fd0ab7242bed"
+  },
+  {
+    "id": "0IEYKinDZyc/2_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0IEYKinDZyc/2_0_0.wav",
+    "duration_s": 2.8560625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "edf2bc56fd6eb918bb69ecfe8724286dcaa7b04ab5655692e29b3b7e6c5f03d0"
+  },
+  {
+    "id": "0IEYKinDZyc/2_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0IEYKinDZyc/2_0_1.wav",
+    "duration_s": 3.1579375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "f6d42e026dfd35ae34969fbd15815335b289d3808d61af221218dac79ef67445"
+  },
+  {
+    "id": "0IEYKinDZyc/2_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0IEYKinDZyc/2_0_2.wav",
+    "duration_s": 8.1734375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c14037b0ec11029c26c0586e795594765172291e447c31e99a4fd016d9a39980"
+  },
+  {
+    "id": "0IEYKinDZyc/2_0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0IEYKinDZyc/2_0_3.wav",
+    "duration_s": 1.486125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a8eb43196a93083cfc2abe51053bf9f15ef088881bf740f88df8493ab69d8fe0"
+  },
+  {
+    "id": "0IEYKinDZyc/2_0_4",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0IEYKinDZyc/2_0_4.wav",
+    "duration_s": 0.96,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "d21983c71b222bd640f558b0c060a046cc0ec2b55deacdc8e5d400cd0d0f89ab"
+  },
+  {
+    "id": "0JRa7ocnNEE/18_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0JRa7ocnNEE/18_0_0.wav",
+    "duration_s": 3.413375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "d171175959c61ab5789c9bdf96bbb92aa0f3cafc4281fd83c161cc220addaf14"
+  },
+  {
+    "id": "0JRa7ocnNEE/18_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0JRa7ocnNEE/18_0_1.wav",
+    "duration_s": 3.970625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c4170f0cf9ab2b3b902f8f57ed0545216a00782b7971b34a1a1fa0be704fc514"
+  },
+  {
+    "id": "0JRa7ocnNEE/18_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0JRa7ocnNEE/18_0_2.wav",
+    "duration_s": 5.96,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "5230cdaf3f93cb8993ac72611d1a17cfb87fcbfe0d8181234dd2184bf49879a1"
+  },
+  {
+    "id": "0JRa7ocnNEE/19_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0JRa7ocnNEE/19_0_1.wav",
+    "duration_s": 1.39325,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "4a79e7c1ead3a118e3b1785c9696877d1a0e21bca5eec9f9de5fe70d2c0ac0cd"
+  },
+  {
+    "id": "0Lg-76xJhws/10_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Lg-76xJhws/10_0_0.wav",
+    "duration_s": 1.9273125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "067f1bc528e9f9c5331ec25a1c26b87d0cc84f51fe47049627ae2a896b71a1d2"
+  },
+  {
+    "id": "0Lg-76xJhws/10_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Lg-76xJhws/10_0_1.wav",
+    "duration_s": 2.5078125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c4392af37f38c0be25893dc23b12c7362b4b6b066fbad95ffd7bdba01eae0280"
+  },
+  {
+    "id": "0Lg-76xJhws/2_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Lg-76xJhws/2_0_0.wav",
+    "duration_s": 1.2539375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "7d4b7c3b1601d7be0127e48c7d1abfe1ce34d22ff0f28f1958033c00f25e8f12"
+  },
+  {
+    "id": "0Lg-76xJhws/2_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Lg-76xJhws/2_0_1.wav",
+    "duration_s": 3.4598125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "afdba90533cecf0dc47ffc3a86366c8a9082093a85d19f899b2499cd0124b5c8"
+  },
+  {
+    "id": "0Lg-76xJhws/5_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Lg-76xJhws/5_0_0.wav",
+    "duration_s": 2.9025,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "1d59de92904b2c9f89816eb699f1c230a51c29f45cea5f866c431dbb8c593eb1"
+  },
+  {
+    "id": "0Lg-76xJhws/5_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Lg-76xJhws/5_0_1.wav",
+    "duration_s": 4.3421875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "dc8ecc72ca34640a60fc16350215efabe94c99c77c3dd699217a993ba34213f6"
+  },
+  {
+    "id": "0Lg-76xJhws/6_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Lg-76xJhws/6_0_0.wav",
+    "duration_s": 4.736875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "fcb2537722b52137aed7d983ac867ad6fdc641c2bbab04c6bd5fbdf36e62fbbb"
+  },
+  {
+    "id": "0Lg-76xJhws/7_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Lg-76xJhws/7_0_1.wav",
+    "duration_s": 3.6688125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "d974fcaccd85b9c1bdf99d9b321526ae27508736b4bb4a4aeb1a979e9a750b3e"
+  },
+  {
+    "id": "0Lg-76xJhws/8_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Lg-76xJhws/8_0_0.wav",
+    "duration_s": 5.41025,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "db71ebec3f2f6effb377a3e639917e2c7682f9b0ade8356e9ff4201b2af0b89b"
+  },
+  {
+    "id": "0mz59i898HU/1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0mz59i898HU/1_0.wav",
+    "duration_s": 2.9721875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "7c0914e1b4ed0ec0ff56058a4cecc9f3f442fda37cf172972f7c4b446d5b762a"
+  },
+  {
+    "id": "0mz59i898HU/2_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0mz59i898HU/2_0.wav",
+    "duration_s": 1.5093125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "271e380f50d8a6ebc4792d52a4546b634aeaeb3395be120e8dcb1ecee912cfd3"
+  },
+  {
+    "id": "0mz59i898HU/2_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0mz59i898HU/2_1.wav",
+    "duration_s": 0.88,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "0439bd635304a25e8fe326688801e1bb435106858ae9abff55eaadc34c84b7d8"
+  },
+  {
+    "id": "0mz59i898HU/2_4",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0mz59i898HU/2_4.wav",
+    "duration_s": 0.719875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "038ff5b85ba6f0a40fa754655e206383bba527fdbce5c98d2ef7bf4deccb1a1a"
+  },
+  {
+    "id": "0mz59i898HU/2_5",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0mz59i898HU/2_5.wav",
+    "duration_s": 1.4396875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "8779c55631320dbe098cb14e91a75f8b43a52af8e72937b88da5861e5b6b3078"
+  },
+  {
+    "id": "0mz59i898HU/2_6",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0mz59i898HU/2_6.wav",
+    "duration_s": 0.7663125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "cb7f29666bc1b84d2cc2205abfb4802ad1c212e8443cb6be26a1b8ce66bcf104"
+  },
+  {
+    "id": "0mz59i898HU/2_7",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0mz59i898HU/2_7.wav",
+    "duration_s": 6.4319375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "b4518d593a97e2db6c0dfe3b3a3be289c27925fe74ae89ebea4f231233e7a9c2"
+  },
+  {
+    "id": "0ow9GJXr248/1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0ow9GJXr248/1_0.wav",
+    "duration_s": 0.905625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "21e7403d7d409e75e1e8a7384f7fc32163abb0582509506a83c80094b1a7d4e2"
+  },
+  {
+    "id": "0ow9GJXr248/1_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0ow9GJXr248/1_1.wav",
+    "duration_s": 2.2,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "aa05643fb9c88910ab4ff3864452ae71b4a05cf19642aa98f64c1f53a3c0b388"
+  },
+  {
+    "id": "0QDJobWO4Vc/0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0QDJobWO4Vc/0_0.wav",
+    "duration_s": 3.08,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "d757a335e5947c5be87c69dc88f422e6a14ae8578c202222e59e94cb82ea4a33"
+  },
+  {
+    "id": "0QDJobWO4Vc/1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0QDJobWO4Vc/1_0.wav",
+    "duration_s": 2.84,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "4129fe58383d01bcb90f34259368324a075a6ac55f7182d8c8f1e4cf02de097c"
+  },
+  {
+    "id": "0qkVyahL10U/0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0qkVyahL10U/0_0.wav",
+    "duration_s": 1.068125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "996f77278bf63caf0f23104490306ec43b4391c7020509805fa6f86fde85e826"
+  },
+  {
+    "id": "0qkVyahL10U/0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0qkVyahL10U/0_3.wav",
+    "duration_s": 1.091375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "00736cd2884a9847c3717f470169be6b3f8b50c4a5b63614f190cde21ee62b2c"
+  },
+  {
+    "id": "0qkVyahL10U/1_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0qkVyahL10U/1_1.wav",
+    "duration_s": 1.55575,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "64bb9606068f93f53becd620df14d41e31b8bb18cda98439d4e9b818c83da0c5"
+  },
+  {
+    "id": "0qkVyahL10U/1_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0qkVyahL10U/1_2.wav",
+    "duration_s": 0.719875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "e75dda7996489197713445067e5e059bc1db1eea138037a0d8b4ec7633c18219"
+  },
+  {
+    "id": "0qkVyahL10U/3_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0qkVyahL10U/3_1.wav",
+    "duration_s": 1.32,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "fb3e1b200b57b50c0d188ff645d734da417872dfb9ebcf97b3dfae9f9e0d8c7d"
+  },
+  {
+    "id": "0qkVyahL10U/3_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0qkVyahL10U/3_2.wav",
+    "duration_s": 2.36,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "bdb24e2865f98b108cf3c4086a50305b7bdca264614db844909e2960146fceab"
+  },
+  {
+    "id": "0WRtWiz_Xvg/1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0WRtWiz_Xvg/1_0.wav",
+    "duration_s": 2.44,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c697615a14b61e163138e1797795e3817bd6fe6fd39c4813d348c3711e693322"
+  },
+  {
+    "id": "0WRtWiz_Xvg/3_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0WRtWiz_Xvg/3_0.wav",
+    "duration_s": 2.6935625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "1a05a0a828642b7162c97731c2c8ddc19082bc90dea2455862307b945b929922"
+  },
+  {
+    "id": "0WRtWiz_Xvg/3_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0WRtWiz_Xvg/3_1.wav",
+    "duration_s": 3.87775,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "72f52d2f90c8b44f8f59f2a4d0a4a9a3be8f1f4aa5bac59b07b19265bbed1126"
+  },
+  {
+    "id": "0YGtaYHJQaU/5_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0YGtaYHJQaU/5_0.wav",
+    "duration_s": 1.18425,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "3693fb06e3f2cecee2a232f3c6ddbad72ba4c3d9bc4aeb1206345ed7ce250d23"
+  },
+  {
+    "id": "0YGtaYHJQaU/5_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0YGtaYHJQaU/5_1.wav",
+    "duration_s": 0.81275,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "4596f2303221ff23d56aa0e878f707b6ea5f86a2d32975db9ec19f8ac3f9d79d"
+  },
+  {
+    "id": "0Z0N4N1cb5k/0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Z0N4N1cb5k/0_0.wav",
+    "duration_s": 2.438125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "182fb2e1353909f6a4349b1bbb2342ac99a316e68aeee46881c9784c2d60819d"
+  },
+  {
+    "id": "0Z0N4N1cb5k/0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Z0N4N1cb5k/0_1.wav",
+    "duration_s": 3.0650625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "2bb379d62bf1b096162e48f056b5ccdd0a57ce63d20e61e39af31a805abfbd43"
+  },
+  {
+    "id": "0Z0N4N1cb5k/0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Z0N4N1cb5k/0_2.wav",
+    "duration_s": 5.4335,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "81ee3e9d54b045ba78dac5204f87c64969dc6f14180602d389ce4b53950d16b9"
+  },
+  {
+    "id": "0Z0N4N1cb5k/0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/0Z0N4N1cb5k/0_3.wav",
+    "duration_s": 2.3684375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "5a5705fe70bcd54a2a306d55d31e660e8e0d9819b5305067294bfb09e6d09f5d"
+  },
+  {
+    "id": "-2KGPYEFnsU/11_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-2KGPYEFnsU/11_0.wav",
+    "duration_s": 1.6254375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a46894cab5560a4194a1b042b3910e0751268e09a5d1e6e26b6a346314a806b9"
+  },
+  {
+    "id": "-2KGPYEFnsU/11_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-2KGPYEFnsU/11_1.wav",
+    "duration_s": 5.4,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "f344ea1995562bc305b6a2111208429d6dfbb25ea87822d39b56e4cf82daf440"
+  },
+  {
+    "id": "-2KGPYEFnsU/3_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-2KGPYEFnsU/3_0.wav",
+    "duration_s": 4.6,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "650acc22841e99f6f76c1998d6d155eddae1fa2be988f673d53a2ec25b82a0c8"
+  },
+  {
+    "id": "-2KGPYEFnsU/3_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-2KGPYEFnsU/3_1.wav",
+    "duration_s": 1.88,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "2c58b1a722e58ba46a122516c480923449329e68840e5415244e21c383d302a1"
+  },
+  {
+    "id": "-2KGPYEFnsU/5_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-2KGPYEFnsU/5_0.wav",
+    "duration_s": 5.28,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "2e7532b530c2322e2856c0f07d4c7b0d29b82b1925dede217309520cf0614a21"
+  },
+  {
+    "id": "-2KGPYEFnsU/5_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-2KGPYEFnsU/5_1.wav",
+    "duration_s": 1.579,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "03d5d7fdbb15e956f87c8295822774afbed90ae66e061484797801013aa84acf"
+  },
+  {
+    "id": "-2KGPYEFnsU/7_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-2KGPYEFnsU/7_1.wav",
+    "duration_s": 1.671875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "bd6f7fcf056f8b64000257f5143ac149a15df59bcf4c18a86e5b24fd6738b34a"
+  },
+  {
+    "id": "-2KGPYEFnsU/7_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-2KGPYEFnsU/7_2.wav",
+    "duration_s": 1.3468125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "2d9dbb55c8d7f77861e635acfebd02c9819438678745469994492b37a2517af3"
+  },
+  {
+    "id": "-2KGPYEFnsU/7_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-2KGPYEFnsU/7_3.wav",
+    "duration_s": 1.1378125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "6407aee150da67589d43bf8bcfb062196f631136e549c8b9c80625b1f41f3000"
+  },
+  {
+    "id": "-3KCgSpt3hU/0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-3KCgSpt3hU/0_0.wav",
+    "duration_s": 3.6,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "906b0f782e51ac306657cdf43df42802bc68c3ee9e43845c285ee26d47d55950"
+  },
+  {
+    "id": "-3KCgSpt3hU/1_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-3KCgSpt3hU/1_1.wav",
+    "duration_s": 3.68,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "50e5a87d77364bcfb1ab8c4118d25b68cbcc92ccdebe1e821591c7542166d4c7"
+  },
+  {
+    "id": "-3KCgSpt3hU/1_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-3KCgSpt3hU/1_2.wav",
+    "duration_s": 1.76,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "3e2cec4db77b1a7c010c966251fed41ca7f3246225b6e3e485e7eb1c8fb424e7"
+  },
+  {
+    "id": "-3KCgSpt3hU/3_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-3KCgSpt3hU/3_0.wav",
+    "duration_s": 0.8359375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "08c75fa3b30d0788f66b9227ab0db0e1c728e987b626d5f83817e058bc9ce801"
+  },
+  {
+    "id": "-4GNkXEUOwY/0_1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-4GNkXEUOwY/0_1_0.wav",
+    "duration_s": 6.4319375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "3eaf1118916ac2b9e00691824b8db8fc915be97b75ecc66a20bb87e4d9e5a9b9"
+  },
+  {
+    "id": "-4GNkXEUOwY/4_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-4GNkXEUOwY/4_0_0.wav",
+    "duration_s": 4.2725,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "52f65904d8c09f362d56822dfdb0f5334789d81be684194ea0f67ecf67545429"
+  },
+  {
+    "id": "-4GNkXEUOwY/4_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-4GNkXEUOwY/4_0_1.wav",
+    "duration_s": 1.04,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c927cd1485ed9587842b5dc4a473c696474a19d43d2dcfdd200891196fbec6e4"
+  },
+  {
+    "id": "-4GNkXEUOwY/4_6_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-4GNkXEUOwY/4_6_0.wav",
+    "duration_s": 4.7136875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "87deb39d904171e8dca002963b53e3fda37161fd5fcbb46ad29968c77b2b335d"
+  },
+  {
+    "id": "-4GNkXEUOwY/5_1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-4GNkXEUOwY/5_1_0.wav",
+    "duration_s": 6.3855,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "218e286c5fb6ea13eb08a4a79d79d42dfca88e1b940be403b2178f2332c88cab"
+  },
+  {
+    "id": "-4GNkXEUOwY/6_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-4GNkXEUOwY/6_0_0.wav",
+    "duration_s": 1.18425,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "24175bad8bbae03ae70f26792160dabf5425d6b5f88a28ccedb449011468b19f"
+  },
+  {
+    "id": "-4GNkXEUOwY/6_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-4GNkXEUOwY/6_0_1.wav",
+    "duration_s": 2.043375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "89e0f3a4baa0935e9e258b2be1793960b2a460a8d0347ada76da652b81b181eb"
+  },
+  {
+    "id": "-4GNkXEUOwY/6_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-4GNkXEUOwY/6_0_2.wav",
+    "duration_s": 3.993875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "27a3a908e9665092b22b302812eeabb6348a534e4ee21ac5eb871cbdf5a3a8bd"
+  },
+  {
+    "id": "-4GNkXEUOwY/6_0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-4GNkXEUOwY/6_0_3.wav",
+    "duration_s": 3.2508125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "9e97a4262766fe2e82a6982b63eba2e99973c499c1688d463765dbbb4bdcb2c4"
+  },
+  {
+    "id": "-8cZ4rlEdIU/2_1_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8cZ4rlEdIU/2_1_1.wav",
+    "duration_s": 8.52,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "955ded111fcc77f38a8a9182a55393138a404b3a8cbc26b286b78c68a70f8461"
+  },
+  {
+    "id": "-8cZ4rlEdIU/2_1_10",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8cZ4rlEdIU/2_1_10.wav",
+    "duration_s": 5.340625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "00cceb5b90780ae511eee8c63046eeb5f05f4205188107009d6afb09dfcca378"
+  },
+  {
+    "id": "-8cZ4rlEdIU/2_1_11",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8cZ4rlEdIU/2_1_11.wav",
+    "duration_s": 2.9025,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "1a699156cf94a734a8d0b0ca7e60d5c7c42c6e3260c33b0875ecd655d8c85ac9"
+  },
+  {
+    "id": "-8cZ4rlEdIU/2_1_12",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8cZ4rlEdIU/2_1_12.wav",
+    "duration_s": 1.32,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "7e8985799aee20b4c526a3598aa21209b62a18bb9ac02e2260eaa7f4b89cf208"
+  },
+  {
+    "id": "-8cZ4rlEdIU/2_1_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8cZ4rlEdIU/2_1_2.wav",
+    "duration_s": 6.5248125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "40994d3b6b909ce95e15258e74f95bab4b5db2bcdc135677a2793563e4867352"
+  },
+  {
+    "id": "-8cZ4rlEdIU/2_1_4",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8cZ4rlEdIU/2_1_4.wav",
+    "duration_s": 3.901,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "fadaa19da6894de1193b2dbad36aff41ea483a98e924e5941bdba746d2a103b5"
+  },
+  {
+    "id": "-8cZ4rlEdIU/2_1_6",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8cZ4rlEdIU/2_1_6.wav",
+    "duration_s": 2.76,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "b4dcfa089ca08dab152fc0da639812accb0c9b54592b4c74e0073c44d87308bb"
+  },
+  {
+    "id": "-8cZ4rlEdIU/2_1_8",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8cZ4rlEdIU/2_1_8.wav",
+    "duration_s": 2.32,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "4bcc665d406d06b86512daf675dad5513193d28992339bbe9729368a468c3ec9"
+  },
+  {
+    "id": "-8ya_8Co8Ss/4_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8ya_8Co8Ss/4_0_0.wav",
+    "duration_s": 4.8994375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "07194bc36577c5d39e88fbd31030f3483a44fb90b3411d8235916ceb703ae29c"
+  },
+  {
+    "id": "-8ya_8Co8Ss/5_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8ya_8Co8Ss/5_0_0.wav",
+    "duration_s": 3.32,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "24ce3c79770be17222674514fc44f080001bda485da35458a90e99fe8eee7b23"
+  },
+  {
+    "id": "-8ya_8Co8Ss/5_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8ya_8Co8Ss/5_0_1.wav",
+    "duration_s": 2.0201875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "31d5ceb596aba88dd3cbb58776bd55318cc849e9555d4de5373c2716d84d4b58"
+  },
+  {
+    "id": "-8ya_8Co8Ss/6_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-8ya_8Co8Ss/6_0_0.wav",
+    "duration_s": 0.882375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "15a0ff74069b5a940ac254495481cfb69e6862ad18fbbdd7a680166a5c7d604e"
+  },
+  {
+    "id": "-9SgTWyhQL4/0_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-9SgTWyhQL4/0_0_0.wav",
+    "duration_s": 8.6610625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "ab125aff54aa0cbc05fe34e36cadbdba8a26750481792cc199b42cf9a8ad3b0b"
+  },
+  {
+    "id": "-9SgTWyhQL4/0_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-9SgTWyhQL4/0_0_1.wav",
+    "duration_s": 2.229125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "e831e8bb369b22853ce814c59273e252f80a96567e2354130080fcaa9701f3da"
+  },
+  {
+    "id": "-9SgTWyhQL4/2_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-9SgTWyhQL4/2_0_0.wav",
+    "duration_s": 5.84,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a4c87e86c381f7d95cfa1de9c706c880dd4f02a7ed6a1451162ecf8ac29473cb"
+  },
+  {
+    "id": "-9SgTWyhQL4/3_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-9SgTWyhQL4/3_0_0.wav",
+    "duration_s": 5.52,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "5717bdf81b85192d4e770f156560db2281a2fe25e2c9ee32ad9f2f35231e7f94"
+  },
+  {
+    "id": "-9SgTWyhQL4/3_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-9SgTWyhQL4/3_0_1.wav",
+    "duration_s": 2.48,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "0e8c5af2034c8fc7b4ef79b826585ff4e2255c96d1ba6b8ee31ec0061bbf35c5"
+  },
+  {
+    "id": "--aqjaJyZLk/0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/--aqjaJyZLk/0_2.wav",
+    "duration_s": 1.48,
+    "input_channels": 2,
+    "input_sample_rate": 44100,
+    "sha256": "1153ecd9cbcd020e23243861da4eb3359fff026561dca9352fb85cbdb64d1993"
+  },
+  {
+    "id": "--aqjaJyZLk/0_4",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/--aqjaJyZLk/0_4.wav",
+    "duration_s": 0.64,
+    "input_channels": 2,
+    "input_sample_rate": 44100,
+    "sha256": "b2f5a3db968977e665aa95b3be03db9bd512c57991cebe9ad35b2345c5bab6a7"
+  },
+  {
+    "id": "--aqjaJyZLk/0_5",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/--aqjaJyZLk/0_5.wav",
+    "duration_s": 2.24,
+    "input_channels": 2,
+    "input_sample_rate": 44100,
+    "sha256": "37c20e5e5c1aa25f6b25d31a8510461d4a8befb28eceddbc4aaa2af4eb9a8ce2"
+  },
+  {
+    "id": "-C77OR13vPU/13_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-C77OR13vPU/13_0_0.wav",
+    "duration_s": 3.8313125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "f76ff2f965ca66405197a155d03db17bc0dc7af85375efc4ccfdbd952d922091"
+  },
+  {
+    "id": "-C77OR13vPU/13_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-C77OR13vPU/13_0_1.wav",
+    "duration_s": 1.55575,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "b6e87fe37057ea49beeb58a452d3e5fe4ae7f3b13c8b77537ac4661034552880"
+  },
+  {
+    "id": "-C77OR13vPU/25_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-C77OR13vPU/25_0_1.wav",
+    "duration_s": 1.1378125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "5e87ccd3f0c1c630ae7f60eaf208fdf718ee516fe70b178680748c2856ea48ca"
+  },
+  {
+    "id": "-C77OR13vPU/25_0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-C77OR13vPU/25_0_3.wav",
+    "duration_s": 2.066625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "fd849039143f4571e730a7985646c260354ac2f0ccbf28f253820533e3c93a77"
+  },
+  {
+    "id": "-C77OR13vPU/25_0_4",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-C77OR13vPU/25_0_4.wav",
+    "duration_s": 2.066625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "1f28716cee153931ed9fa0a86eb33e6d1f230836c82bd3782962ebd08fdc93f8"
+  },
+  {
+    "id": "-DGNCg0jbWo/4_1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-DGNCg0jbWo/4_1_0.wav",
+    "duration_s": 2.71675,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "d5e9b7a63f1e4da872fc0048da859501345ad56df2f734d663b0349eb5c07d1b"
+  },
+  {
+    "id": "-DGNCg0jbWo/6_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-DGNCg0jbWo/6_0_1.wav",
+    "duration_s": 0.9520625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "e8672964f5fa55d9c0ee1f4dfc8803237371164c5af222d277fc1bfac74227e1"
+  },
+  {
+    "id": "-DGNCg0jbWo/6_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-DGNCg0jbWo/6_0_2.wav",
+    "duration_s": 4.0635,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "66144f7351b08f5cc2a86293c78b3a7ffed6df318759102c7178f8917b8c7618"
+  },
+  {
+    "id": "-DqmTaUK-Ow/0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-DqmTaUK-Ow/0_0.wav",
+    "duration_s": 1.16,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "f45cfe424d15447c23b0aceb270c885dfbab0c711df6f9d254651ca1a0b3e144"
+  },
+  {
+    "id": "-DqmTaUK-Ow/0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-DqmTaUK-Ow/0_1.wav",
+    "duration_s": 1.04,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c64088b02beec65b080d008ca301dac0c1a2bfb0d72ac678483698504f7b01e3"
+  },
+  {
+    "id": "-DqmTaUK-Ow/0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-DqmTaUK-Ow/0_2.wav",
+    "duration_s": 1.462875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "d9e12895a689fe76110350fd895f764f7237ffb77b86d92586cc7684fee564d0"
+  },
+  {
+    "id": "-G3XuOnmrsQ/0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-G3XuOnmrsQ/0_0.wav",
+    "duration_s": 1.1145625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "84355db1079dba18535e6c75ac797fd833ecac213fddccd480b93bd2dd1a9470"
+  },
+  {
+    "id": "-G3XuOnmrsQ/0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-G3XuOnmrsQ/0_1.wav",
+    "duration_s": 1.55575,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "44c46de58c112cb1d13ced93a12ca20ba5afd035ccab4a6f854e491209aa4280"
+  },
+  {
+    "id": "-G3XuOnmrsQ/0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-G3XuOnmrsQ/0_2.wav",
+    "duration_s": 1.3468125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a04ae2915a4fa8d762b5f901c1cb0bbfb749039549c8f3e5136447bc253ff233"
+  },
+  {
+    "id": "-HOqWqFI27E/3_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HOqWqFI27E/3_0_0.wav",
+    "duration_s": 1.88,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "9ff69bdf97e8c5473556ca20f0fe101211b01b6d9c19aa31b1af863c156ef20b"
+  },
+  {
+    "id": "-HOqWqFI27E/3_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HOqWqFI27E/3_0_1.wav",
+    "duration_s": 2.623875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "436793d222b4c5e8ced73f889662f0b4424bc8ad0a84584984e974b31d7d3603"
+  },
+  {
+    "id": "-HWkUQJjVrI/0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/0_0.wav",
+    "duration_s": 0.8359375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "d04c8e5b805b017851cb81ded06f09a1663cb250167bd3d450f25423b37ee2e3"
+  },
+  {
+    "id": "-HWkUQJjVrI/1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/1_0.wav",
+    "duration_s": 5.062,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "48f35e5c2e4f27e37bd80a86a580efeda130efdedc54ee72edc8b07d1e5c4bfa"
+  },
+  {
+    "id": "-HWkUQJjVrI/11_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/11_2.wav",
+    "duration_s": 2.9025,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "3e5f1513a59151d7258bab9aebdd6897fe7b6cb40aa4e38e4982779a69a81fe6"
+  },
+  {
+    "id": "-HWkUQJjVrI/12_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/12_0.wav",
+    "duration_s": 1.5093125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "6c7af5849a9deb50859d9f1b445ef8db9fa02839e763b8e8b1019a2d4f37e965"
+  },
+  {
+    "id": "-HWkUQJjVrI/12_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/12_1.wav",
+    "duration_s": 2.647125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "48fae053d3799dac72413827832c8f91aa207fdd1770a324d023716405ce58b9"
+  },
+  {
+    "id": "-HWkUQJjVrI/12_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/12_2.wav",
+    "duration_s": 1.55575,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "be2254c659cb8666b9adc2bd5a6a609881b91d4ff954025cc2c86244e683daac"
+  },
+  {
+    "id": "-HWkUQJjVrI/12_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/12_3.wav",
+    "duration_s": 1.2075,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "2c9f901814d17a85ebcf9a59d3f0da88ffc84ae41babec769df3de2d513eaa0a"
+  },
+  {
+    "id": "-HWkUQJjVrI/12_4",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/12_4.wav",
+    "duration_s": 2.04,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a4c5c7f91b5c4789c55bcf3498acd42cb97d26cf4dbae29a7021315db700210f"
+  },
+  {
+    "id": "-HWkUQJjVrI/12_5",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/12_5.wav",
+    "duration_s": 2.32,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "7055c76b5b33bb20e587f27e13c9b83c39d54eee651faf7f09f4c846eaf7bd82"
+  },
+  {
+    "id": "-HWkUQJjVrI/4_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/4_0.wav",
+    "duration_s": 2.229125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "0eb23a3d0d909c5fdc3e85a7954cbce282a8438b5d5c4e1a398b5805e1c6eac5"
+  },
+  {
+    "id": "-HWkUQJjVrI/8_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/8_0.wav",
+    "duration_s": 3.413375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "22924a4f466494c85f704b90258b5699b21153383a866295cfc562e7d7af7b50"
+  },
+  {
+    "id": "-HWkUQJjVrI/8_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-HWkUQJjVrI/8_1.wav",
+    "duration_s": 2.438125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "9cf4dd1ae5023c6dba3806df259d32ebf6f9af73d1fac4272eecfcf59c830e8c"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_1.wav",
+    "duration_s": 3.784875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "1264cc0121ec6026615e39c5894b3b78b627450b9418bc5c890ab22d8ae3a26d"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_10",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_10.wav",
+    "duration_s": 1.2075,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "e652208fa863486314d992950c2866389c4dfec8ec71228e12e4210badffbd9d"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_11",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_11.wav",
+    "duration_s": 5.5031875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "e81837eb692e1c7953653321bdf05517de5c5fe44afe0a58d5fd4a04bfae33ce"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_12",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_12.wav",
+    "duration_s": 4.1099375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "36b8577eb5cd25373257adba67aae27d770b54096da252754f4d5d57efd0f618"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_13",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_13.wav",
+    "duration_s": 8.1038125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "62c4602809b83147f126f72d033177cea5cd24595ef8181325a82c121e339b07"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_14",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_14.wav",
+    "duration_s": 3.1115,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "56072fb7344aef2fbc3b2f627cba440efbdeafc5de3bf4388c2c652b18ecce75"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_15",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_15.wav",
+    "duration_s": 2.229125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "335d9d53c942a6486b7c61b094ea21f67f8c4e027bd5c7046f3d15b956829b29"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_16",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_16.wav",
+    "duration_s": 2.6,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "10d45700a6aa5d5b33371cbdb389bd5fc81e248dcdcbe1fb70273cb625f7a03e"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_2.wav",
+    "duration_s": 6.478375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "45766739b4adcad3250c7e1fb3000747cf6a54e24fe8435239a72ae7d103e41c"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_3.wav",
+    "duration_s": 1.39325,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "dac4875c5436978501521fa62dc447e4d4eeb108240f0bb7528daf2cc31872f5"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_6",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_6.wav",
+    "duration_s": 3.2508125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "3bd9f08218e1ba03cedd76ae25e25fe35f058cd2afdfc06dfb0e7a76837b502f"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_7",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_7.wav",
+    "duration_s": 0.696625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "ca42c017c5625ea2eaf017161e8930d9b80aa998a2647c227fef711955829ca9"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_8",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_8.wav",
+    "duration_s": 5.2,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "543fb861fa6e30259a3e16be5457050c268800e704b9dfe8a4f189275eeb9463"
+  },
+  {
+    "id": "-J5F6VD1MN4/0_1_9",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/0_1_9.wav",
+    "duration_s": 1.18425,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "e1e03aede5e348dad6f1ce81bbf52d6a532dc6a553c5f7f814b5a1ccd6c1ecac"
+  },
+  {
+    "id": "-J5F6VD1MN4/1_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/1_0_0.wav",
+    "duration_s": 13.04,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c3b47f5d6fddef2d7da3f22815839bbaa79195ddb3403592a8aadd87f7fdcb47"
+  },
+  {
+    "id": "-J5F6VD1MN4/1_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/1_0_1.wav",
+    "duration_s": 3.2508125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "7406383a2eb0333d6a4218b5efd3aa1a5b801884fa4895db0b24fb280f5bd6cb"
+  },
+  {
+    "id": "-J5F6VD1MN4/2_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/2_0_0.wav",
+    "duration_s": 2.92575,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c47c05a3135072a0ea068da45ad84fee6b7f7322293b2c9476221984b189cab5"
+  },
+  {
+    "id": "-J5F6VD1MN4/2_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/2_0_1.wav",
+    "duration_s": 6.03725,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "b6d5278232c67d46d45bd9ea11c7802051421ba8e0bafb0975cdbbbba1a11d7c"
+  },
+  {
+    "id": "-J5F6VD1MN4/2_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/2_0_2.wav",
+    "duration_s": 8.545,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "621042c79dfea4460e829a2dbacd16b512f1df91d08530f58f5d8043f25efff2"
+  },
+  {
+    "id": "-J5F6VD1MN4/2_0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/2_0_3.wav",
+    "duration_s": 9.195125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "7d31c0b07760e6e503bf4a20777704383b39154d6cfc2941ccd4f1feafe4e7b7"
+  },
+  {
+    "id": "-J5F6VD1MN4/2_0_4",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/2_0_4.wav",
+    "duration_s": 5.5728125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "5dcd0c1a8f73c8def2be2a9bd98c4313849788f67f011958e21b59dc9126fe9f"
+  },
+  {
+    "id": "-J5F6VD1MN4/2_0_5",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/2_0_5.wav",
+    "duration_s": 0.8,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "e950987929c4265ceb3e8a41b10e82cc5334f553826a36aec739508904924c3b"
+  },
+  {
+    "id": "-J5F6VD1MN4/2_0_7",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/2_0_7.wav",
+    "duration_s": 5.2245,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "ac685146e5f15ecc2b740a96fb7288e10f592f41493df254be7f3ce8ec898d3b"
+  },
+  {
+    "id": "-J5F6VD1MN4/2_0_8",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/2_0_8.wav",
+    "duration_s": 4.48,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "fc3f432ae02c7c7b19f802d735b58057101d057b4566cb26bad8b71557ac1bcd"
+  },
+  {
+    "id": "-J5F6VD1MN4/2_0_9",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-J5F6VD1MN4/2_0_9.wav",
+    "duration_s": 3.6455625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "ccf48191eaaae425fc2d8834f923397511e7547d404d56fa1f0ad0436fcec3e4"
+  },
+  {
+    "id": "-JKZeB_NZm0/11_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-JKZeB_NZm0/11_0_0.wav",
+    "duration_s": 3.71525,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "ac1cfb7b5e356aa2e2f1e45593bd52d59de0d48fab9d0aafda55b2d247dd10b0"
+  },
+  {
+    "id": "-JKZeB_NZm0/11_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-JKZeB_NZm0/11_0_1.wav",
+    "duration_s": 3.48,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "eb241be84e8b1dc63dac9ee16a4661f7e5f89388e947c5f72792f33a333a3363"
+  },
+  {
+    "id": "-JKZeB_NZm0/11_1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-JKZeB_NZm0/11_1_0.wav",
+    "duration_s": 4.56,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "68ee9de6119d56c812211a443d6b9bcb073760356ab6e87bc6e849ef9c9a516e"
+  },
+  {
+    "id": "-JKZeB_NZm0/12_4_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-JKZeB_NZm0/12_4_0.wav",
+    "duration_s": 3.0650625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "349abbdf1f2a5e8b439192c1a472b27494e849d08ef9dc42f5ed4e6a25ed09af"
+  },
+  {
+    "id": "-JKZeB_NZm0/12_4_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-JKZeB_NZm0/12_4_1.wav",
+    "duration_s": 2.531,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a337ff867498f828c3afb909a6f98525d908e81ef0a9fbc1e3820198d13c8f0b"
+  },
+  {
+    "id": "-JKZeB_NZm0/16_1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-JKZeB_NZm0/16_1_0.wav",
+    "duration_s": 14.0,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "441c5734746f2e4d78657cb290123e7b1c1aad32712a8d197af085fd958c1759"
+  },
+  {
+    "id": "-JKZeB_NZm0/7_2_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-JKZeB_NZm0/7_2_0.wav",
+    "duration_s": 2.71675,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "87cd868a6ef262f682777c200770b9dd439fd03bbf77c32d0cb1e7203b3a85c4"
+  },
+  {
+    "id": "-JKZeB_NZm0/9_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-JKZeB_NZm0/9_0_0.wav",
+    "duration_s": 6.4,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "ba4183c003274193ef3413e8363428ce74c4dedb469f75f8b2bfa2467714b346"
+  },
+  {
+    "id": "-LJjxuHLI4U/0_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/0_0_0.wav",
+    "duration_s": 2.13625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "6bb55c9c6e75bd8dccab8fcd921c4dba22c5a2380acba184e4ecb214bebd238c"
+  },
+  {
+    "id": "-LJjxuHLI4U/0_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/0_0_1.wav",
+    "duration_s": 5.99075,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "2969d1071477b466bb682369dbc7eb3cc4c26d21a6aa45a4e08e209de2589276"
+  },
+  {
+    "id": "-LJjxuHLI4U/19_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/19_0_0.wav",
+    "duration_s": 7.7090625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "94169fec5b8a260f526a278ab0aa95547bc016822d79b85a41d951e7f8c8e8d6"
+  },
+  {
+    "id": "-LJjxuHLI4U/2_1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/2_1_0.wav",
+    "duration_s": 1.88,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "32df5d90acba7099d795ee2100981cdc1cc69da7bdb4b27a2761057b3aeabae1"
+  },
+  {
+    "id": "-LJjxuHLI4U/2_1_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/2_1_1.wav",
+    "duration_s": 1.92,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "54560c3a7e35920689909a83158fa40d4107acfff919b80b236274924bb0cfd9"
+  },
+  {
+    "id": "-LJjxuHLI4U/23_3_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/23_3_0.wav",
+    "duration_s": 1.4396875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "07d852802b2ed492841f33ea8e95bbc11adc1b294da1bde91e55ef40fd923f79"
+  },
+  {
+    "id": "-LJjxuHLI4U/23_3_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/23_3_2.wav",
+    "duration_s": 1.2075,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "7e70c45104b1aa6ac0d01554055ef6d10c3251b861b1bef54638309a119ebb0b"
+  },
+  {
+    "id": "-LJjxuHLI4U/23_3_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/23_3_3.wav",
+    "duration_s": 0.6501875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "e79f9e55a2f5a48a1dbdeed11cd581c0613ccbf1d99611fb434eaf99f4ccedbe"
+  },
+  {
+    "id": "-LJjxuHLI4U/23_6_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/23_6_0.wav",
+    "duration_s": 4.8,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "3991203fcfa123976aea3fc84d31a0ffe0dc6b7f390fb056d9eff6db084a5f1f"
+  },
+  {
+    "id": "-LJjxuHLI4U/38_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/38_0_0.wav",
+    "duration_s": 5.4799375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "68fdd6930396ea6bfcedceb5a9826ad7590fd9b94c3ea6512592cc7cd62e7a35"
+  },
+  {
+    "id": "-LJjxuHLI4U/51_8_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/51_8_0.wav",
+    "duration_s": 5.4799375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c3413704bd04d8e50f02f7373aef5ab3d5f06c55b4a0d2db47c6dde4c97b979e"
+  },
+  {
+    "id": "-LJjxuHLI4U/66_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/66_0_0.wav",
+    "duration_s": 5.0155625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "1c4a6bc171da85f80334b3967e5059628088442c015f7c1c65a8f9a2c58a511c"
+  },
+  {
+    "id": "-LJjxuHLI4U/72_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/72_0_0.wav",
+    "duration_s": 2.0898125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "48b6a7cc9bcd5d530cc1f305301a8175983546e187acacb89657687056ad2b27"
+  },
+  {
+    "id": "-LJjxuHLI4U/72_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-LJjxuHLI4U/72_0_1.wav",
+    "duration_s": 4.2,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "45a90ce5678ff8ae12db74de004a72ed13b319c11605624ca6ef4f3e3b6ea13b"
+  },
+  {
+    "id": "-OFtGUX-9Z0/3_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-OFtGUX-9Z0/3_0_0.wav",
+    "duration_s": 0.9985,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "21d67112598f4587fd4bff0b6142c361217c8abffd5aaf04178c5197b72d1c0c"
+  },
+  {
+    "id": "-OFtGUX-9Z0/3_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-OFtGUX-9Z0/3_0_1.wav",
+    "duration_s": 11.28,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "64bcc10d20260e2c06041f4a4211229db95fe3c18503e8899be6fbbdda10ddeb"
+  },
+  {
+    "id": "-OFtGUX-9Z0/3_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-OFtGUX-9Z0/3_0_2.wav",
+    "duration_s": 3.622375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "0c5884123ecc21724fe807e8e90b0c3176b881d98d33260de92928a9077fdeb8"
+  },
+  {
+    "id": "-OFtGUX-9Z0/3_0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-OFtGUX-9Z0/3_0_3.wav",
+    "duration_s": 9.84,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "ab6db5757c6c65f172ffd5761db953cdea05d1be20390568ca410aa3bcf2f04a"
+  },
+  {
+    "id": "-OFtGUX-9Z0/5_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-OFtGUX-9Z0/5_0_1.wav",
+    "duration_s": 3.7384375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "616af0e5000bacd54991f33c7db37306bb6a962128e8a0618559694ef8faf22b"
+  },
+  {
+    "id": "-OFtGUX-9Z0/5_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-OFtGUX-9Z0/5_0_2.wav",
+    "duration_s": 2.04,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "38918597f7f1a52bd3d015974cfaa3ac2d4bdca64ebd557142583edb04a68e1e"
+  },
+  {
+    "id": "-OFtGUX-9Z0/5_0_4",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-OFtGUX-9Z0/5_0_4.wav",
+    "duration_s": 9.8220625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "19f53d1af8e486bf00488ebb2755d725d5c3b9d64d5b9f215d73b86da4c18e3f"
+  },
+  {
+    "id": "-OFtGUX-9Z0/5_0_5",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-OFtGUX-9Z0/5_0_5.wav",
+    "duration_s": 3.48,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "2159bea18d293957651df9cdeda0127d2fb5f9e2bb8d7855bc9f930c7ab60c17"
+  },
+  {
+    "id": "-PFdr0SiAEw/1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-PFdr0SiAEw/1_0.wav",
+    "duration_s": 7.1285625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "35531c098c61d1787bbdadd53d0610205a661e0870bc9b329614b991caa61aae"
+  },
+  {
+    "id": "-PFdr0SiAEw/3_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-PFdr0SiAEw/3_1.wav",
+    "duration_s": 3.08,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a16d1d7d439b61f37f881c930e7c8a0fb4a0b8d2c91f76f8550c19a8889a4628"
+  },
+  {
+    "id": "-PFdr0SiAEw/3_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-PFdr0SiAEw/3_2.wav",
+    "duration_s": 3.56,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "d4b15197fffd19fa84543f1ed052233c6d5c749fa12745394f2bc5300eb6e566"
+  },
+  {
+    "id": "-PFdr0SiAEw/4_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-PFdr0SiAEw/4_0.wav",
+    "duration_s": 3.04,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "345ffe775f76bd85e13da1781e862292a0445f423e5406fa3dcd14e9ef282131"
+  },
+  {
+    "id": "-QNxYSDdpig/1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-QNxYSDdpig/1_0.wav",
+    "duration_s": 1.16,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "78a37bf650be59fe5dd9f7cebf082e6a0216b82fdbb9262ff7addec12871454f"
+  },
+  {
+    "id": "-QNxYSDdpig/2_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-QNxYSDdpig/2_0.wav",
+    "duration_s": 4.16,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "155651cb82c12b558b7427b39c04e6309dbfe62ff932e8a10822cb0b0a1d640c"
+  },
+  {
+    "id": "-QNxYSDdpig/3_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-QNxYSDdpig/3_2.wav",
+    "duration_s": 1.16,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "4c7e3891e602fd84ba87bb3343ccf28da933deb339c12da806d0ecfd5ecea9cb"
+  },
+  {
+    "id": "-SquB8m_MVo/1_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-SquB8m_MVo/1_0_0.wav",
+    "duration_s": 12.6549375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "9d8e95bbed16eb0a23ceb09f881989096e71babfa04bd50ffc3b28976153fa9b"
+  },
+  {
+    "id": "-SquB8m_MVo/3_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-SquB8m_MVo/3_0_0.wav",
+    "duration_s": 2.04,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "acdaba3ae193fdfde41d1224db9a5caa159a7fc126d7ad71138b79d32bbd2c20"
+  },
+  {
+    "id": "-SquB8m_MVo/3_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-SquB8m_MVo/3_0_1.wav",
+    "duration_s": 0.7430625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "cb3bc5ddaa0243b7d8793e1e6755197d43e44487cde8fe908c64c67703203a66"
+  },
+  {
+    "id": "-SquB8m_MVo/3_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-SquB8m_MVo/3_0_2.wav",
+    "duration_s": 1.5325625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "548d3d6c8bc92d95c8ee00a59d71769dbf597cd49805f1d6b5bd9fd92c85bab5"
+  },
+  {
+    "id": "-SquB8m_MVo/3_0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-SquB8m_MVo/3_0_3.wav",
+    "duration_s": 4.48,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "bedc9d56c0eb1e6ca1cfc6ea1536e71a1dca9ab06f8cc5117316316bf9a5e6ea"
+  },
+  {
+    "id": "-YNsl3kWSfc/0_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/0_0_0.wav",
+    "duration_s": 4.9923125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "f559d1c6f43437fbeb2fe5fe5989eecf7a46dab523059bfefd905cc3b9dbc2d1"
+  },
+  {
+    "id": "-YNsl3kWSfc/1_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/1_0_0.wav",
+    "duration_s": 9.380875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a1f92fa9b707351bea90d3880fed51c413ff901eefb2014d0a124c8fbb505819"
+  },
+  {
+    "id": "-YNsl3kWSfc/2_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/2_0_0.wav",
+    "duration_s": 5.154875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "fccafcdfd053923e25df40f98b03de0c1d92215838722f9b910951eec2eda5f3"
+  },
+  {
+    "id": "-YNsl3kWSfc/3_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/3_0_0.wav",
+    "duration_s": 4.2260625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a052a6e8d3a11704d68e3d7f5c0d9ef919f659c39edadfd3c2278ebb07ed0029"
+  },
+  {
+    "id": "-YNsl3kWSfc/4_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/4_0_0.wav",
+    "duration_s": 4.48,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "53683c946fd01b0504aa6317b37632b4a6e6c318e4daec93c8eda73f646ffe9f"
+  },
+  {
+    "id": "-YNsl3kWSfc/4_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/4_0_1.wav",
+    "duration_s": 2.5078125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "4f209b96ced1b4af5b3a2ef4129521806c389322e05be05388dad51dd4982373"
+  },
+  {
+    "id": "-YNsl3kWSfc/5_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/5_0_0.wav",
+    "duration_s": 3.575875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "dbfd332aabce8247c61ba5c71f92c174865a62acdbce0be05033c8f282bd6d69"
+  },
+  {
+    "id": "-YNsl3kWSfc/5_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/5_0_1.wav",
+    "duration_s": 1.462875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "bb54967809f7413a7facc605c2d9ac9dfe393600b275b452ffc23244aad369a4"
+  },
+  {
+    "id": "-YNsl3kWSfc/6_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/6_0_0.wav",
+    "duration_s": 3.901,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "a9b73f9f2909ce356b3dae2fcbcb2f30c43c70f0aecb593c557ebdf96b7214d6"
+  },
+  {
+    "id": "-YNsl3kWSfc/6_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/6_0_1.wav",
+    "duration_s": 2.04,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "2f53ecff531fab7f07d84d50e0382b8d7f068a27747970ccb5da49b2471a4397"
+  },
+  {
+    "id": "-YNsl3kWSfc/7_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/7_0_0.wav",
+    "duration_s": 6.8266875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "adea4d14c6dd15fcbc7472a811e2ce32e8b5284984e42bc7ac01d06229e23698"
+  },
+  {
+    "id": "-YNsl3kWSfc/8_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/8_0_0.wav",
+    "duration_s": 2.36,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "84a4131c42662fb715f90905c6fafe284c4bd6a5387b05b73753c1b664b3e3e3"
+  },
+  {
+    "id": "-YNsl3kWSfc/8_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/8_0_1.wav",
+    "duration_s": 2.5774375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "60a3ede660d4a9e61bf502a155bc53ef1241936bb53e74f279499a3f8874bad3"
+  },
+  {
+    "id": "-YNsl3kWSfc/9_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/9_0_0.wav",
+    "duration_s": 1.48,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "0b3d4c2607e0c6742f7a3b66984b1c3d395b366d040aa91d4221bcfa20057f78"
+  },
+  {
+    "id": "-YNsl3kWSfc/9_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/9_0_1.wav",
+    "duration_s": 3.227625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "adf545d2522241c8b18a343fbac10bfdaa07f2dd12caf85bdf3d92e6d1fb2368"
+  },
+  {
+    "id": "-YNsl3kWSfc/9_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/9_0_2.wav",
+    "duration_s": 3.29725,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "e450e85f7e067eb55dbaac5c96ddd70c1c714172d325291a5c955a8d87661848"
+  },
+  {
+    "id": "-YNsl3kWSfc/9_0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-YNsl3kWSfc/9_0_3.wav",
+    "duration_s": 1.5093125,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "1c65e2fce65e7cd46813524bf3eea496a28d386d9211df1ffa9dc6323c29684f"
+  },
+  {
+    "id": "-_zyvfId578/1_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/1_0_0.wav",
+    "duration_s": 3.4365625,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "f79b69a818559acc3d2976356b460ba306296d5766c51374b3e333878f635fa7"
+  },
+  {
+    "id": "-_zyvfId578/1_0_2",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/1_0_2.wav",
+    "duration_s": 6.19975,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "cace70979c237ac51939ea229a3dc55e8a670191bb39fd0cb096613314fb8873"
+  },
+  {
+    "id": "-_zyvfId578/1_0_3",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/1_0_3.wav",
+    "duration_s": 3.71525,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "f4672d155399ddd3878e0b3b66eb9398217fe4e26c3b03be00b34380463ffb9f"
+  },
+  {
+    "id": "-_zyvfId578/11_0_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/11_0_1.wav",
+    "duration_s": 1.76475,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c22c97ba49a70ef98d16f78b75cf19e38b98ef61ccd1dc7867b76b452d99c6a3"
+  },
+  {
+    "id": "-_zyvfId578/12_1_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/12_1_0.wav",
+    "duration_s": 0.9985,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "009bb4eb7f4bff593369a81ec366e98a596b64259f8f80261c4002403c5fc88d"
+  },
+  {
+    "id": "-_zyvfId578/12_1_1",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/12_1_1.wav",
+    "duration_s": 0.719875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "6c5739266a65abb80256aad2be067767cef20f04641f744edce71ddbcc5663f4"
+  },
+  {
+    "id": "-_zyvfId578/8_0_0",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/8_0_0.wav",
+    "duration_s": 5.897875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "c5c0a8e4676afcbdf99ae06ac05ed1b0b3c960002d21f47eb5943ff09a88794b"
+  },
+  {
+    "id": "-_zyvfId578/8_0_10",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/8_0_10.wav",
+    "duration_s": 5.2941875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "bc31a53267581c91d482d2bc932038348a01aac6c6f25f9d9a8a84ae1f24cc46"
+  },
+  {
+    "id": "-_zyvfId578/8_0_11",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/8_0_11.wav",
+    "duration_s": 4.1099375,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "4320a7129ccf87f1c23bd9960b93da0b06a3d6dfa54364535fe6a62c84712ecc"
+  },
+  {
+    "id": "-_zyvfId578/8_0_13",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/8_0_13.wav",
+    "duration_s": 6.08,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "91f928b476a10c00cebab32848cae9d657c361bdd3fb98c5a3d4ca633a3bed6f"
+  },
+  {
+    "id": "-_zyvfId578/8_0_16",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/8_0_16.wav",
+    "duration_s": 1.52,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "70707bf606f0c849073f93bf85332ccb719adf369cb0e8a023744c4f720278f2"
+  },
+  {
+    "id": "-_zyvfId578/8_0_7",
+    "audio_path": "/zjw524/projects/data/CelebVDub/audio/test/-_zyvfId578/8_0_7.wav",
+    "duration_s": 3.041875,
+    "input_channels": 1,
+    "input_sample_rate": 16000,
+    "sha256": "59c12eddb182a9480bf99fc4f20c5af475c49a0f54c73b3e893b14effd54318b"
+  }
+]

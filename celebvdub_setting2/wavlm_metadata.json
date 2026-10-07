@@ -1,0 +1,19 @@
+{
+  "encoder": "WavLM-large + ECAPA_TDNN_SMALL",
+  "embedding_shape": [
+    213,
+    256
+  ],
+  "backbone_checkpoint": "/zjw524/projects/data/wavlm_large_s3prl.pt",
+  "speaker_checkpoint": "/zjw524/projects/data/wavlm_large_finetune.pth",
+  "weights_load": "strict, after removing loss_calculator.projection.weight",
+  "sample_list": "/zjw524/projects/data/celebvdub_test_s1.lst",
+  "sample_list_sha256": "1ad609deefaf1293e00b168a3418611ef779c4e9b49f3b51539721a8360a1e49",
+  "preprocessing": "channel mean to mono, resample 16k, full clip, no VAD, L2 normalized output",
+  "device": "cuda:0",
+  "torch": "2.4.1+cu121",
+  "elapsed_seconds": 27.796417236328125,
+  "source": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/scripts/extract_setting2_wavlm.py",
+  "source_sha256": "a6d48e913c154ba953c6b6831ec57fcb8a50be622358f25dcb2abfb769bb2863",
+  "identity_warning": "Embedding similarity is auxiliary evidence, not ground-truth speaker identity; no threshold is calibrated here."
+}

@@ -1,0 +1,9 @@
+{
+  "manifest_sha256": "5d31f42d9766b4c500904dcca8e9a50230f5678744c57b49dc808e45accd7cf8",
+  "repeat_build_byte_identical": true,
+  "local_overlap_synthetic_shared_detected": true,
+  "unrelated_signal_control_passed": true,
+  "lipvoicer_manifest_dry_run_passed": true,
+  "evaluation_missing_generation_preflight_refused_as_expected": true,
+  "actual_model_inference_run": false
+}

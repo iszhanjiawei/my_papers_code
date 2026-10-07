@@ -1,0 +1,22 @@
+{
+  "created_at_utc": "2026-10-07T09:03:10.975253+00:00",
+  "protocol": "CelebVDub_Setting2_auto_v1",
+  "targets": 115,
+  "unique_reference_clips": 83,
+  "source_videos": 21,
+  "inferred_speakers": 30,
+  "target_video_frames": 13283,
+  "target_video_duration_seconds": 531.32,
+  "frame_rate": 25,
+  "path_policy": "root manifests use paths relative to this package directory",
+  "source_manifests": {
+    "manifest.jsonl": "5d31f42d9766b4c500904dcca8e9a50230f5678744c57b49dc808e45accd7cf8",
+    "inference.jsonl": "ffc016c12ffa27bd64bd3ca29be0f36f008b7c76496fd799f98c972f5f6eea3b",
+    "evaluation.jsonl": "751f791b5130f2d202d2b17aa4195ebecd97d496b8becc4b3e46c46cedb9dfa3"
+  },
+  "copied_asset_count": 1312,
+  "original_assets_preserved": true,
+  "all_source_symlinks_materialized": true,
+  "pseudo_text_source": "actual LipVoicer VSR cache used in completed Setting 2 evaluation",
+  "source_copy_note": "selection audits retain original machine paths as provenance, not runtime dependencies"
+}

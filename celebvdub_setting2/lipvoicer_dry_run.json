@@ -1,0 +1,20 @@
+{
+  "samples": 115,
+  "output_dir": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/results/LipVoicer",
+  "python": "/zjw524/ENTER/bin/python",
+  "checkpoint": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/repos/LipVoicer/exp/LRS3/wnet_h512_d12_T400_betaT0.02/checkpoint/1000000.pkl",
+  "config": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/repos/LipVoicer/configs/config.yaml",
+  "input": "full video -> independent 25 fps silent copy -> visual lip reading",
+  "guidance": {
+    "w_video": 2,
+    "w_asr": 1.5,
+    "asr_start": 270
+  },
+  "vocoder": "public HiFi-GAN, not the paper DiffWave",
+  "seed": 0,
+  "example": {
+    "id": "test/-2KGPYEFnsU/3_1",
+    "video": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/setting2/media/silent_video/test/-2KGPYEFnsU/3_1.mp4",
+    "wav": "/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark/results/LipVoicer/test/-2KGPYEFnsU/3_1.wav"
+  }
+}

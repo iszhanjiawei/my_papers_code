@@ -1,0 +1,60 @@
+{
+  "build_script_sha256": "f18b5e4adc71f34ef41176030e6fb0e5eb2144ddf8e41552e679fd2e59ddea8e",
+  "clustering": "complete_linkage_within_source_video",
+  "excluded_targets": 98,
+  "exclusion_reason_counts": {
+    "no_distinct_utterance_passing_all_reference_filters": 11,
+    "no_other_utterance_in_inferred_speaker_cluster": 87
+  },
+  "identity_status": "automatic_screening_not_human_verified",
+  "inference_manifest_has_target_audio_or_text": false,
+  "input_targets": 213,
+  "manifest_sha256": "5d31f42d9766b4c500904dcca8e9a50230f5678744c57b49dc808e45accd7cf8",
+  "protocol": "CelebVDub_Setting2_auto_v1",
+  "reference_duration_range_seconds": [
+    2.0,
+    10.0
+  ],
+  "reference_pool": "only the 213 original test clips; never training data",
+  "retained_inferred_speakers": 30,
+  "retained_source_videos": 21,
+  "retained_targets": 115,
+  "same_official_pairing_prefix_pairs": 49,
+  "seed": 20261003,
+  "selection": "seeded_sha256_order_among_eligible_candidates_not_maximum_similarity",
+  "source_video_count": 33,
+  "speaker_threshold": 0.65,
+  "speaker_verification_model": {
+    "checkpoint": "/zjw524/projects/data/pretrained_models/3D-Speaker/speech_campplus_sv_zh_en_16k-common_advanced/campplus_cn_en_common.pt",
+    "checkpoint_sha256": "92f29b94e6948786a26778c9e302525d185bb08c8b9f5252ed98776902840199",
+    "chunk_aggregation": "arithmetic_mean_then_l2_normalize",
+    "chunk_seconds": 10,
+    "coverage_report": "coverage_report.json",
+    "created_at_utc": "2026-08-14T09:40:20.217581+00:00",
+    "expected_count": 79826,
+    "fbank_dim": 80,
+    "fbank_mean_normalization": "per_chunk_per_mel_over_time",
+    "max_seconds": 90,
+    "model_id": "iic/speech_campplus_sv_zh_en_16k-common_advanced",
+    "model_revision": "v1.0.0",
+    "model_source_commit": "065629c313eaf1a01c65c640c46d77e61e9607b4",
+    "output_dtype": "float32",
+    "output_shape": [
+      192
+    ],
+    "padding": "repeat_complete_utterance_to_chunk_multiple",
+    "sample_rate": 16000,
+    "schema_version": 1,
+    "source_audio": "complete_unmasked_waveform",
+    "status": "complete",
+    "world_size": 4
+  },
+  "target_list_sha256": "1ad609deefaf1293e00b168a3418611ef779c4e9b49f3b51539721a8360a1e49",
+  "target_reference_same_file": 0,
+  "threshold_calibration": "conservative engineering cutoff; no calibrated FAR guarantee",
+  "timestamp_status": "source timestamps unavailable; waveform overlap test is not a timestamp proof",
+  "unique_reference_clips": 83,
+  "waveform_overlap_scan": "0.5-second windows at 0.25-second stride; NCC over all offsets in other clip",
+  "waveform_overlap_threshold": 0.9,
+  "wavlm_used_for_selection": false
+}
