@@ -1,0 +1,15 @@
+{
+  "video_only": {
+    "root": "features/video",
+    "dimensions": 1024,
+    "frame_rate": 25,
+    "backbone": "AV-HuBERT large",
+    "purpose": "optional cached visual conditioning; other models may process raw silent video"
+  },
+  "gt_joint_av": {
+    "root": "features/gt_av",
+    "dimensions": 1024,
+    "frame_rate": 25,
+    "purpose": "evaluation only, never a generation input"
+  }
+}
