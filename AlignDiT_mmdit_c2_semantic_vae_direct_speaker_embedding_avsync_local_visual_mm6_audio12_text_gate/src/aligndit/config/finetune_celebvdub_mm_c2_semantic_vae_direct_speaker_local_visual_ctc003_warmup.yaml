@@ -1,0 +1,26 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+# Keep the parent S2c EMA initialization, speaker conditioning and optimization
+# schedule. Change only the split to six multimodal and twelve audio blocks;
+# the existing local attention follows the audio tail, blocks 6 through 17.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_local_visual_mm6_audio12_ctc003_warmup10k30k
+  arch:
+    n_mm_layers: 6
+    n_text_layers: 6
+    # CAM++ remains in blocks 12..17; CTC taps remain [6, 12].
+    audio_local_visual_attention: true
+    audio_frame_rate: 40.0
+    # Flowley's radius=4 at 8 Hz corresponds to a 0.5-second radius. Use its
+    # cosine fade and additive log(weight + 1e-6) attention bias.
+    local_visual_window_radius_seconds: 0.5
+    local_visual_window_reference_fps: 8.0
+    local_visual_window_core_radius: 0.0
+    local_visual_window_fade_scale: 1.0
+    # OmniShow initializes the learnable per-channel residual gate near zero.
+    local_visual_gate_init: 1.0e-5
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_local_visual_mm6_audio12_ctc003_warmup10k30k_40hz_CelebVDub_char
