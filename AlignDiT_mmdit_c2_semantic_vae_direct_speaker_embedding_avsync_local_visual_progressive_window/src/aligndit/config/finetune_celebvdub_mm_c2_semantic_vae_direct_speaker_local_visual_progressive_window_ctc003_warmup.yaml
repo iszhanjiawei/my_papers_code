@@ -1,0 +1,15 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_local_visual_ctc003_warmup
+  - _self_
+
+# Preserve MM12/audio6, visual-only adapters, speaker conditioning and S2c EMA
+# initialization. Flowley beta_l = 1 - l/(N_audio_tail - 1), with beta=1 for N=1.
+# Blocks 12..17 use beta=[1, 0.8, 0.6, 0.4, 0.2, 0]. The outer radius stays
+# 0.5 s; only the cosine fade amplitude changes with depth, not training time.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_local_visual_flowley_progressive_ctc003_warmup10k30k
+  arch:
+    local_visual_window_schedule: flowley_progressive
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_local_visual_flowley_progressive_ctc003_warmup10k30k_40hz_CelebVDub_char
