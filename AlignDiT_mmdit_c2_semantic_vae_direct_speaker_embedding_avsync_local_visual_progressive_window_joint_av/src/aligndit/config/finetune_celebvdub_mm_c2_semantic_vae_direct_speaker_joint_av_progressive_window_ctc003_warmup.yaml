@@ -1,0 +1,17 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_local_visual_progressive_window_ctc003_warmup
+  - _self_
+
+# Add the SAME Flowley time bias inside joint attention, only Audio-query ->
+# real Video-key positions for generated audio queries. Keep MM12/audio6 and
+# the six gated visual adapters. Joint blocks 0..11 independently use beta
+# [1, 10/11, ..., 1/11, 0]; audio-tail blocks 12..17 retain [1,.8,.6,.4,.2,0].
+# Both schedules retain radius=0.5 s and the inherited cosine/epsilon rule.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_jointav_local_visual_flowley_progressive_ctc003_warmup10k30k
+  arch:
+    joint_av_local_attention: true
+    joint_av_window_schedule: flowley_progressive
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_jointav_local_visual_flowley_progressive_ctc003_warmup10k30k_40hz_CelebVDub_char
