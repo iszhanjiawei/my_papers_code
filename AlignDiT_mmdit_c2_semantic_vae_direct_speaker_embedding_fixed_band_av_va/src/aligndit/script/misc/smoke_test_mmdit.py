@@ -1,0 +1,1003 @@
+# Smoke test for the new DiT_VT_MMDiT backbone (dual-stream MM-DiT).
+# Run: ~/ENTER/envs/aligndit/bin/python -u src/aligndit/script/misc/smoke_test_mmdit.py
+# All tests run on CPU to avoid touching GPUs in use.
+
+import copy
+import os
+import sys
+
+import torch
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../"))
+
+from aligndit.model import CFM_VT, DiT_VT_MMDiT  # noqa: E402
+from aligndit.model.backbone.dit_vt_mm import AudioTextDiTBlock, MMDiTBlock_VT  # noqa: E402
+from aligndit.model.modules import MelSpec_tacotron  # noqa: E402
+from f5_tts.model.modules import DiTBlock  # noqa: E402
+
+
+torch.manual_seed(0)
+
+ARCH = dict(
+    dim=768,
+    depth=18,
+    heads=12,
+    ff_mult=2,
+    text_dim=512,
+    text_mask_padding=False,
+    qk_norm="rms_norm",
+    conv_layers=4,
+    pe_attn_head=1,
+    attn_mask_enabled=True,
+    checkpoint_activations=False,
+    use_conformer=True,
+    layer_indices_ctc=[6, 12],
+    n_mm_layers=12,
+    n_text_layers=12,
+    prompt_isolated_ca=True,
+    audio_video_ratio=4,
+    video_dim=1024,
+    video_rope_scaled=True,
+)
+MEL = dict(
+    target_sample_rate=16000,
+    n_mel_channels=80,
+    hop_length=160,
+    win_length=640,
+    n_fft=640,
+    mel_spec_type="hifigan_16k",
+)
+VOCAB_SIZE = 100
+CKPT_PATH = os.path.join(
+    f"{os.environ.get('ROOT_PREFIX', '')}/zjw524",
+    "datasets/AlignDiT_pretrain_LibriSpeech_500000.pt",
+)
+
+
+def build_model():
+    transformer = DiT_VT_MMDiT(**ARCH, text_num_embeds=VOCAB_SIZE, mel_dim=MEL["n_mel_channels"])
+    n_mm = sum(isinstance(b, MMDiTBlock_VT) for b in transformer.transformer_blocks)
+    n_audio_only = sum(type(b) is DiTBlock for b in transformer.transformer_blocks)
+    assert n_mm == ARCH["n_mm_layers"] and n_mm + n_audio_only == ARCH["depth"], (n_mm, n_audio_only)
+    print(f"[OK] model built: {n_mm} MM blocks + {n_audio_only} text-free audio-only blocks")
+    n_params = sum(p.numel() for p in transformer.parameters())
+    print(f"     transformer params: {n_params / 1e6:.1f}M")
+
+    mel_kwargs = {k: v for k, v in MEL.items() if k != "mel_spec_type"}
+    model = CFM_VT(
+        transformer=transformer,
+        mel_spec_module=MelSpec_tacotron(**MEL),
+        mel_spec_kwargs=mel_kwargs,
+        vocab_char_map=None,
+        ctc_lambda=0.1,
+    )
+    return model
+
+
+def test_text_free_audio_tail_structure(model):
+    """Only the MM front-end may own text cross-attention parameters."""
+    transformer = model.transformer
+    blocks = transformer.transformer_blocks
+    front = blocks[: transformer.n_mm_layers]
+    tail = blocks[transformer.n_text_layers :]
+
+    assert len(tail) == ARCH["depth"] - ARCH["n_text_layers"]
+    assert all(isinstance(block, MMDiTBlock_VT) for block in front)
+    assert all(type(block) is DiTBlock for block in tail)
+    assert all(not hasattr(block, "cross_attn") for block in tail)
+
+    cross_attn_layers = {
+        int(name.split(".", 1)[0])
+        for name, _module in blocks.named_modules()
+        if name.endswith(".cross_attn")
+    }
+    assert cross_attn_layers == set(range(transformer.n_text_layers)), cross_attn_layers
+
+    state_keys = transformer.state_dict().keys()
+    for layer_i in range(transformer.n_text_layers, ARCH["depth"]):
+        prefix = f"transformer_blocks.{layer_i}."
+        assert not any(key.startswith(prefix) and ".cross_attn" in key for key in state_keys)
+
+    print("[OK] layers 12-17 are native text-free DiTBlocks with no cross-attention parameters")
+
+
+def test_d0_6mm_12audio_single_ctc12():
+    """D0 has six MM blocks, twelve text-free audio blocks, and CTC after block 12."""
+    d0_arch = dict(
+        dim=64,
+        depth=18,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=False,
+        use_conformer=False,
+        layer_indices_ctc=[11],
+        n_mm_layers=6,
+        n_text_layers=6,
+        prompt_isolated_ca=False,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    transformer = DiT_VT_MMDiT(**d0_arch)
+    blocks = transformer.transformer_blocks
+
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:6])
+    assert all(type(block) is DiTBlock for block in blocks[6:])
+    assert not any(type(block) is AudioTextDiTBlock for block in blocks)
+    assert transformer.layer_indices_ctc == (11,)
+    assert transformer.layer_map_ctc == {11: 0}
+    assert len(transformer.projectors_ctc) == 1
+
+    cross_attn_layers = {
+        int(name.split(".", 1)[0])
+        for name, _module in blocks.named_modules()
+        if name.endswith(".cross_attn")
+    }
+    assert cross_attn_layers == set(range(6)), cross_attn_layers
+
+    events = []
+    hooks = [
+        blocks[11].register_forward_hook(lambda *_args: events.append("block11")),
+        transformer.projectors_ctc[0].register_forward_hook(lambda *_args: events.append("ctc0")),
+        blocks[12].register_forward_hook(lambda *_args: events.append("block12")),
+    ]
+    try:
+        pred, intermediates = transformer(
+            x=torch.randn(1, 16, 8),
+            cond=torch.randn(1, 16, 8),
+            text=torch.randint(1, 32, (1, 8)),
+            video=torch.randn(1, 4, 16),
+            time=torch.rand(1),
+            mask=torch.ones(1, 16, dtype=torch.bool),
+            text_mask=torch.ones(1, 8, dtype=torch.bool),
+            video_mask=torch.ones(1, 4, dtype=torch.bool),
+            complementary_mask=torch.ones(1, 4, dtype=torch.bool),
+            generation_mask=torch.ones(1, 16, dtype=torch.bool),
+            cache=False,
+        )
+    finally:
+        for hook in hooks:
+            hook.remove()
+
+    assert pred.shape == (1, 16, 8)
+    assert list(intermediates) == [11]
+    assert events == ["block11", "ctc0", "block12"], events
+
+    # A CTC-only probe must backpropagate through blocks 0-11, but blocks
+    # 12-17 occur after the tap and therefore receive no direct CTC gradient.
+    transformer.zero_grad(set_to_none=True)
+    intermediates[11]["z_tilde"].square().mean().backward()
+    for layer_i in [0, 5, 6, 11]:
+        _assert_nonzero_finite_grad(
+            f"D0 CTC path block {layer_i} AdaLN",
+            blocks[layer_i].attn_norm.linear.weight.grad,
+        )
+    for layer_i in [12, 17]:
+        assert blocks[layer_i].attn_norm.linear.weight.grad is None
+    _assert_nonzero_finite_grad(
+        "D0 single CTC projector",
+        transformer.projectors_ctc[0].model[0].weight.grad,
+    )
+
+    invalid_ctc_indices = ([-1], [18], [11, 11], [12, 11], [11.0])
+    for invalid in invalid_ctc_indices:
+        invalid_arch = {**d0_arch, "layer_indices_ctc": invalid}
+        try:
+            DiT_VT_MMDiT(**invalid_arch)
+        except (TypeError, ValueError):
+            pass
+        else:
+            raise AssertionError(f"invalid layer_indices_ctc accepted: {invalid}")
+
+    print("[OK] D0 builds 6 MM + 12 text-free audio blocks with one CTC tap after block 12")
+
+
+def test_d1_6mm_12audio_dual_ctc6_12():
+    """D1 adds CTC taps at the MM/audio boundary and after block 12."""
+    transformer = DiT_VT_MMDiT(
+        dim=64,
+        depth=18,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=False,
+        use_conformer=False,
+        layer_indices_ctc=[5, 11],
+        n_mm_layers=6,
+        n_text_layers=6,
+        prompt_isolated_ca=False,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    blocks = transformer.transformer_blocks
+
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:6])
+    assert all(type(block) is DiTBlock for block in blocks[6:])
+    assert transformer.layer_indices_ctc == (5, 11)
+    assert transformer.layer_map_ctc == {5: 0, 11: 1}
+    assert len(transformer.projectors_ctc) == 2
+
+    pred, intermediates = transformer(
+        x=torch.randn(1, 16, 8),
+        cond=torch.randn(1, 16, 8),
+        text=torch.randint(1, 32, (1, 8)),
+        video=torch.randn(1, 4, 16),
+        time=torch.rand(1),
+        mask=torch.ones(1, 16, dtype=torch.bool),
+        text_mask=torch.ones(1, 8, dtype=torch.bool),
+        video_mask=torch.ones(1, 4, dtype=torch.bool),
+        complementary_mask=torch.ones(1, 4, dtype=torch.bool),
+        generation_mask=torch.ones(1, 16, dtype=torch.bool),
+        cache=False,
+    )
+    assert pred.shape == (1, 16, 8)
+    assert list(intermediates) == [5, 11]
+
+    transformer.zero_grad(set_to_none=True)
+    ctc_probe = sum(intermediate["z_tilde"].square().mean() for intermediate in intermediates.values())
+    ctc_probe.backward()
+    for projector_i in range(2):
+        _assert_nonzero_finite_grad(
+            f"D1 CTC projector {projector_i}",
+            transformer.projectors_ctc[projector_i].model[0].weight.grad,
+        )
+    for layer_i in [0, 5, 6, 11]:
+        _assert_nonzero_finite_grad(
+            f"D1 CTC path block {layer_i} AdaLN",
+            blocks[layer_i].attn_norm.linear.weight.grad,
+        )
+    for layer_i in [12, 17]:
+        assert blocks[layer_i].attn_norm.linear.weight.grad is None
+
+    print("[OK] D1 builds 6 MM + 12 text-free audio blocks with CTC taps after blocks 6 and 12")
+
+
+def test_d2_6mm_6text_6audio_dual_ctc6_12():
+    """D2 keeps text CA through block 12 while video fusion stops after block 6."""
+    transformer = DiT_VT_MMDiT(
+        dim=64,
+        depth=18,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=False,
+        use_conformer=False,
+        layer_indices_ctc=[5, 11],
+        n_mm_layers=6,
+        n_text_layers=12,
+        prompt_isolated_ca=False,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    blocks = transformer.transformer_blocks
+
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:6])
+    assert all(type(block) is AudioTextDiTBlock for block in blocks[6:12])
+    assert all(type(block) is DiTBlock for block in blocks[12:])
+    assert transformer.layer_indices_ctc == (5, 11)
+    assert transformer.layer_map_ctc == {5: 0, 11: 1}
+    assert len(transformer.projectors_ctc) == 2
+
+    cross_attn_layers = {
+        int(name.split(".", 1)[0])
+        for name, _module in blocks.named_modules()
+        if name.endswith(".cross_attn")
+    }
+    assert cross_attn_layers == set(range(12)), cross_attn_layers
+
+    pred, intermediates = transformer(
+        x=torch.randn(1, 16, 8),
+        cond=torch.randn(1, 16, 8),
+        text=torch.randint(1, 32, (1, 8)),
+        video=torch.randn(1, 4, 16),
+        time=torch.rand(1),
+        mask=torch.ones(1, 16, dtype=torch.bool),
+        text_mask=torch.ones(1, 8, dtype=torch.bool),
+        video_mask=torch.ones(1, 4, dtype=torch.bool),
+        complementary_mask=torch.ones(1, 4, dtype=torch.bool),
+        generation_mask=torch.ones(1, 16, dtype=torch.bool),
+        cache=False,
+    )
+    assert pred.shape == (1, 16, 8)
+    assert list(intermediates) == [5, 11]
+
+    transformer.zero_grad(set_to_none=True)
+    ctc_probe = sum(intermediate["z_tilde"].square().mean() for intermediate in intermediates.values())
+    ctc_probe.backward()
+    for projector_i in range(2):
+        _assert_nonzero_finite_grad(
+            f"D2 CTC projector {projector_i}",
+            transformer.projectors_ctc[projector_i].model[0].weight.grad,
+        )
+    for layer_i in [0, 5, 6, 11]:
+        _assert_nonzero_finite_grad(
+            f"D2 CTC path block {layer_i} AdaLN",
+            blocks[layer_i].attn_norm.linear.weight.grad,
+        )
+    for layer_i in [12, 17]:
+        assert blocks[layer_i].attn_norm.linear.weight.grad is None
+
+    print("[OK] D2 builds 6 MM + 6 audio/text + 6 audio blocks with stage-boundary CTC taps")
+
+
+def _assert_nonzero_finite_grad(name, grad):
+    assert grad is not None, f"missing gradient for {name}"
+    assert torch.isfinite(grad).all(), f"non-finite gradient for {name}"
+    assert grad.abs().sum().item() > 0, f"zero gradient for {name}"
+
+
+def test_c1_prompt_isolated_tail_text_blocks():
+    """C1 keeps text in layers 12-17 without restoring prompt-frame text residuals."""
+    transformer = DiT_VT_MMDiT(
+        dim=64,
+        depth=4,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=True,
+        use_conformer=False,
+        layer_indices_ctc=[],
+        n_mm_layers=2,
+        n_text_layers=4,
+        prompt_isolated_ca=True,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    blocks = transformer.transformer_blocks
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:2])
+    assert all(type(block) is AudioTextDiTBlock for block in blocks[2:])
+    assert torch.count_nonzero(blocks[-1].cross_attn.out_proj.weight) == 0
+
+    # The audio path remains key/shape compatible with the native pretrained block.
+    native_block = DiTBlock(
+        dim=64,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        qk_norm="rms_norm",
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+    )
+    c1_audio_state = {k: v.shape for k, v in blocks[-1].state_dict().items() if not k.startswith("cross_attn.")}
+    native_state = {k: v.shape for k, v in native_block.state_dict().items()}
+    assert c1_audio_state == native_state
+
+    # Make text CA return exactly one and silence all gated audio branches.
+    isolated_block = copy.deepcopy(blocks[-1]).eval()
+    with torch.no_grad():
+        isolated_block.attn_norm.linear.weight.zero_()
+        isolated_block.attn_norm.linear.bias.zero_()
+        for parameter in isolated_block.cross_attn.parameters():
+            parameter.zero_()
+        isolated_block.cross_attn.out_proj.bias.fill_(1.0)
+
+    batch, audio_len, text_len = 2, 8, 5
+    x = torch.randn(batch, audio_len, 64)
+    t = torch.randn(batch, 64)
+    text = torch.randn(batch, text_len, 32)
+    audio_mask = torch.ones(batch, audio_len, dtype=torch.bool)
+    text_mask = torch.ones(batch, text_len, dtype=torch.bool)
+    generation_mask = torch.tensor(
+        [
+            [False, False, False, True, True, True, True, True],
+            [True, True, False, False, True, True, False, True],
+        ],
+        dtype=torch.bool,
+    )
+    x_out = isolated_block(
+        x,
+        t,
+        mask=audio_mask,
+        text=text,
+        text_mask=text_mask,
+        generation_mask=generation_mask,
+    )
+    expected_x = x + generation_mask.unsqueeze(-1).to(x.dtype)
+    torch.testing.assert_close(x_out, expected_x, rtol=0, atol=0)
+
+    # A zero output projection has no second zero factor, so it wakes immediately.
+    train_block = blocks[-1]
+    train_block.zero_grad(set_to_none=True)
+    train_out = train_block(
+        x,
+        t,
+        mask=audio_mask,
+        text=text,
+        text_mask=text_mask,
+        generation_mask=generation_mask,
+    )
+    (train_out * torch.randn_like(train_out)).mean().backward()
+    _assert_nonzero_finite_grad("C1 tail text cross-attention output", train_block.cross_attn.out_proj.weight.grad)
+
+    # Exercise the complete C1 activation-checkpoint routing, including tail text args.
+    transformer.train()
+    pred, intermediates = transformer(
+        x=torch.randn(1, 16, 8),
+        cond=torch.randn(1, 16, 8),
+        text=torch.randint(1, 32, (1, 8)),
+        video=torch.randn(1, 4, 16),
+        time=torch.rand(1),
+        mask=torch.ones(1, 16, dtype=torch.bool),
+        text_mask=torch.ones(1, 8, dtype=torch.bool),
+        video_mask=torch.ones(1, 4, dtype=torch.bool),
+        complementary_mask=torch.ones(1, 4, dtype=torch.bool),
+        generation_mask=torch.tensor([[False] * 8 + [True] * 8]),
+        cache=True,
+    )
+    assert pred.shape == (1, 16, 8)
+    assert intermediates == {}
+    pred.sum().backward()
+    print("[OK] C1 builds prompt-isolated tail text blocks with working checkpoint/gradient paths")
+
+
+def test_c2_global_text_with_text_free_tail():
+    """C2 changes only MM text routing; the final audio blocks stay text-free."""
+    transformer = DiT_VT_MMDiT(
+        dim=64,
+        depth=4,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=False,
+        use_conformer=False,
+        layer_indices_ctc=[],
+        n_mm_layers=2,
+        n_text_layers=2,
+        prompt_isolated_ca=False,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    blocks = transformer.transformer_blocks
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:2])
+    assert all(block.prompt_isolated_ca is False for block in blocks[:2])
+    assert all(type(block) is DiTBlock for block in blocks[2:])
+    assert all(not hasattr(block, "cross_attn") for block in blocks[2:])
+
+    block = copy.deepcopy(blocks[0]).eval()
+    with torch.no_grad():
+        # Silence every residual except text CA and make that output exactly one.
+        block.attn_norm.linear.weight.zero_()
+        block.attn_norm.linear.bias.zero_()
+        block.v_attn_norm.linear.weight.zero_()
+        block.v_attn_norm.linear.bias.zero_()
+        block.cross_attn_ada.weight.zero_()
+        block.cross_attn_ada.bias.zero_()
+        block.cross_attn_ada.bias[2 * 64 :].fill_(1.0)
+        for parameter in block.cross_attn.parameters():
+            parameter.zero_()
+        block.cross_attn.out_proj.bias.fill_(1.0)
+
+    batch, audio_len, video_len, text_len = 2, 8, 2, 5
+    x = torch.randn(batch, audio_len, 64)
+    v = torch.randn(batch, video_len, 64)
+    generation_mask = torch.tensor(
+        [
+            [False, False, False, True, True, True, True, True],
+            [True, True, False, False, True, True, False, True],
+        ],
+        dtype=torch.bool,
+    )
+    x_out, v_out = block(
+        x,
+        v,
+        torch.randn(batch, 64),
+        mask=torch.ones(batch, audio_len, dtype=torch.bool),
+        v_mask=torch.ones(batch, video_len, dtype=torch.bool),
+        text=torch.randn(batch, text_len, 32),
+        text_mask=torch.ones(batch, text_len, dtype=torch.bool),
+        generation_mask=generation_mask,
+    )
+    torch.testing.assert_close(x_out, x + torch.ones_like(x), rtol=0, atol=0)
+    torch.testing.assert_close(v_out, v, rtol=0, atol=0)
+    print("[OK] C2 text CA updates prompt and generated frames while layers 2-3 remain text-free")
+
+
+def test_c0_global_text_with_tail_text_blocks():
+    """C0 keeps global text CA in both the MM front-end and audio-only tail."""
+    transformer = DiT_VT_MMDiT(
+        dim=64,
+        depth=4,
+        heads=4,
+        dim_head=16,
+        ff_mult=2,
+        mel_dim=8,
+        text_num_embeds=32,
+        text_dim=32,
+        text_mask_padding=False,
+        qk_norm="rms_norm",
+        conv_layers=0,
+        pe_attn_head=1,
+        attn_mask_enabled=True,
+        checkpoint_activations=False,
+        use_conformer=False,
+        layer_indices_ctc=[],
+        n_mm_layers=2,
+        n_text_layers=4,
+        prompt_isolated_ca=False,
+        audio_video_ratio=4,
+        video_dim=16,
+        video_rope_scaled=True,
+    )
+    blocks = transformer.transformer_blocks
+    assert all(isinstance(block, MMDiTBlock_VT) for block in blocks[:2])
+    assert all(type(block) is AudioTextDiTBlock for block in blocks[2:])
+    assert all(block.prompt_isolated_ca is False for block in blocks)
+
+    block = copy.deepcopy(blocks[-1]).eval()
+    with torch.no_grad():
+        block.attn_norm.linear.weight.zero_()
+        block.attn_norm.linear.bias.zero_()
+        for parameter in block.cross_attn.parameters():
+            parameter.zero_()
+        block.cross_attn.out_proj.bias.fill_(1.0)
+
+    batch, audio_len, text_len = 2, 8, 5
+    x = torch.randn(batch, audio_len, 64)
+    generation_mask = torch.tensor(
+        [
+            [False, False, False, True, True, True, True, True],
+            [True, True, False, False, True, True, False, True],
+        ],
+        dtype=torch.bool,
+    )
+    x_out = block(
+        x,
+        torch.randn(batch, 64),
+        mask=torch.ones(batch, audio_len, dtype=torch.bool),
+        text=torch.randn(batch, text_len, 32),
+        text_mask=torch.ones(batch, text_len, dtype=torch.bool),
+        generation_mask=generation_mask,
+    )
+    torch.testing.assert_close(x_out, x + torch.ones_like(x), rtol=0, atol=0)
+    print("[OK] C0 global text CA updates all frames in both MM and audio-only text stages")
+
+
+def test_mm_gated_branches_wake_up(model):
+    """A zero gate must open first, then allow gradients into its attention branch."""
+    block = copy.deepcopy(model.transformer.transformer_blocks[0]).eval()
+    dim = ARCH["dim"]
+    text_dim = ARCH["text_dim"]
+
+    assert torch.count_nonzero(block.cross_attn_ada.weight) == 0
+    assert torch.count_nonzero(block.v_attn_norm.linear.weight) == 0
+    assert torch.count_nonzero(block.cross_attn.out_proj.weight) > 0
+    assert torch.count_nonzero(block.v_attn.to_out[0].weight) > 0
+
+    batch, audio_len, video_len, text_len = 2, 24, 6, 10
+    x = torch.randn(batch, audio_len, dim)
+    v = torch.randn(batch, video_len, dim)
+    t = torch.randn(batch, dim)
+    text = torch.randn(batch, text_len, text_dim)
+    audio_mask = torch.ones(batch, audio_len, dtype=torch.bool)
+    video_mask = torch.ones(batch, video_len, dtype=torch.bool)
+    text_mask = torch.ones(batch, text_len, dtype=torch.bool)
+    generation_mask = torch.ones(batch, audio_len, dtype=torch.bool)
+    x_probe = torch.randn_like(x)
+    v_probe = torch.randn_like(v)
+
+    def branch_loss():
+        x_out, v_out = torch.utils.checkpoint.checkpoint(
+            model.transformer.ckpt_wrapper(block),
+            x,
+            v,
+            t,
+            audio_mask,
+            video_mask,
+            None,
+            None,
+            text,
+            text_mask,
+            generation_mask,
+            use_reentrant=False,
+        )
+        return (x_out * x_probe).mean() + (v_out * v_probe).mean()
+
+    optimizer = torch.optim.SGD(block.parameters(), lr=0.1)
+
+    # Update 1: normally initialized branch outputs provide gradients to the zero gates.
+    optimizer.zero_grad(set_to_none=True)
+    branch_loss().backward()
+    _assert_nonzero_finite_grad(
+        "MM text cross-attention gate",
+        block.cross_attn_ada.weight.grad[2 * dim : 3 * dim],
+    )
+    _assert_nonzero_finite_grad(
+        "MM video-attention gate",
+        block.v_attn_norm.linear.weight.grad[2 * dim : 3 * dim],
+    )
+    optimizer.step()
+
+    # Update 2: opened gates propagate gradients into the complete attention branches.
+    optimizer.zero_grad(set_to_none=True)
+    branch_loss().backward()
+    _assert_nonzero_finite_grad("MM text cross-attention output", block.cross_attn.out_proj.weight.grad)
+    _assert_nonzero_finite_grad("MM text cross-attention query", block.cross_attn.q_proj_weight.grad)
+    _assert_nonzero_finite_grad("MM video-attention output", block.v_attn.to_out[0].weight.grad)
+    _assert_nonzero_finite_grad("MM video-attention query", block.v_attn.to_q.weight.grad)
+    print("[OK] gated MM text/video attention branches wake up and receive non-zero gradients")
+
+
+def test_text_cross_attention_is_prompt_isolated(model):
+    """Text cross-attention may update generated frames, never reference prompt frames."""
+    block = copy.deepcopy(model.transformer.transformer_blocks[0]).eval()
+    dim = ARCH["dim"]
+    text_dim = ARCH["text_dim"]
+
+    with torch.no_grad():
+        # Silence every residual branch except text cross-attention.
+        block.attn_norm.linear.weight.zero_()
+        block.attn_norm.linear.bias.zero_()
+        block.v_attn_norm.linear.weight.zero_()
+        block.v_attn_norm.linear.bias.zero_()
+        block.cross_attn_ada.weight.zero_()
+        block.cross_attn_ada.bias.zero_()
+        block.cross_attn_ada.bias[2 * dim :].fill_(1.0)
+        for parameter in block.cross_attn.parameters():
+            parameter.zero_()
+        block.cross_attn.out_proj.bias.fill_(1.0)
+
+    batch, audio_len, video_len, text_len = 2, 8, 2, 5
+    x = torch.randn(batch, audio_len, dim)
+    v = torch.randn(batch, video_len, dim)
+    t = torch.randn(batch, dim)
+    text = torch.randn(batch, text_len, text_dim)
+    audio_mask = torch.ones(batch, audio_len, dtype=torch.bool)
+    video_mask = torch.ones(batch, video_len, dtype=torch.bool)
+    text_mask = torch.ones(batch, text_len, dtype=torch.bool)
+    generation_mask = torch.tensor(
+        [
+            [False, False, False, True, True, True, True, True],
+            [True, True, False, False, True, True, False, True],
+        ],
+        dtype=torch.bool,
+    )
+
+    x_out, v_out = block(
+        x,
+        v,
+        t,
+        mask=audio_mask,
+        v_mask=video_mask,
+        text=text,
+        text_mask=text_mask,
+        generation_mask=generation_mask,
+    )
+    expected_x = x + generation_mask.unsqueeze(-1).to(x.dtype)
+    torch.testing.assert_close(x_out, expected_x, rtol=0, atol=0)
+    torch.testing.assert_close(v_out, v, rtol=0, atol=0)
+    print("[OK] text cross-attention residual updates generated frames only; prompt frames are unchanged")
+
+
+def test_train_forward_backward(model):
+    model.train()
+    b, n, nv, nt = 2, 200, 50, 20
+    mel = torch.randn(b, n, MEL["n_mel_channels"])
+    video = torch.randn(b, nv, ARCH["video_dim"])
+    text = torch.randint(1, VOCAB_SIZE, (b, nt))
+    lens = torch.tensor([n, n - 40])
+    text_lens = torch.tensor([nt, nt - 5])
+    video_lens = torch.tensor([nv, (n - 40) // 4])
+
+    captured_generation_masks = []
+
+    def capture_generation_mask(_module, _args, kwargs):
+        captured_generation_masks.append(kwargs["generation_mask"].detach().clone())
+
+    hook = model.transformer.transformer_blocks[0].register_forward_pre_hook(
+        capture_generation_mask, with_kwargs=True
+    )
+    try:
+        loss, component_losses, cond, pred = model(
+            mel, text, video, lens=lens, text_lens=text_lens, video_lens=video_lens
+        )
+    finally:
+        hook.remove()
+
+    expected_generation_mask = torch.all(cond == 0, dim=-1)
+    assert len(captured_generation_masks) == 1
+    assert torch.equal(captured_generation_masks[0], expected_generation_mask)
+    assert torch.all(captured_generation_masks[0].sum(dim=-1) > 0)
+    assert torch.isfinite(loss), f"loss is not finite: {loss}"
+    assert pred.shape == mel.shape, (pred.shape, mel.shape)
+    loss.backward()
+
+    # gradients must reach pretrained-path (audio stream) and new video-stream params
+    tf = model.transformer
+    checks = {
+        "audio attn (pretrained path)": tf.transformer_blocks[0].attn.to_q.weight,
+        "video stream attn": tf.transformer_blocks[0].v_attn.to_q.weight,
+        "video stream adaLN": tf.transformer_blocks[0].v_attn_norm.linear.weight,
+        "text cross attn": tf.transformer_blocks[0].cross_attn.q_proj_weight,
+        "text-free audio tail attn": tf.transformer_blocks[-1].attn.to_q.weight,
+        "video input proj": tf.video_embed.proj.weight,
+        "audio input proj": tf.input_embed.proj.weight,
+        "ctc projector": tf.projectors_ctc[0].model[0].weight,
+    }
+    for name, p in checks.items():
+        assert p.grad is not None and torch.isfinite(p.grad).all(), f"no/invalid grad for {name}"
+    print(f"[OK] train forward/backward: loss={loss.item():.4f}, components={component_losses}")
+    print("[OK] training rand_span_mask reaches MM-DiT as the explicit generation_mask")
+    model.zero_grad(set_to_none=True)
+
+
+def test_modality_drop(model):
+    model.train()
+    b, n, nv, nt = 2, 120, 30, 12
+    mel = torch.randn(b, n, MEL["n_mel_channels"])
+    video = torch.randn(b, nv, ARCH["video_dim"])
+    text = torch.randint(1, VOCAB_SIZE, (b, nt))
+
+    # exercise drop branches directly on the backbone
+    time = torch.rand(b)
+    x = torch.randn(b, n, MEL["n_mel_channels"])
+    cond = torch.randn(b, n, MEL["n_mel_channels"])
+    mask = torch.ones(b, n, dtype=torch.bool)
+    text_mask = torch.ones(b, nt, dtype=torch.bool)
+    video_mask = torch.ones(b, nv, dtype=torch.bool)
+    complementary_mask = torch.ones(b, nv, dtype=torch.bool)
+    generation_mask = torch.ones(b, n, dtype=torch.bool)
+    for drop_text, drop_video, drop_audio_cond in [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (True, True, True),
+    ]:
+        pred, inter = model.transformer(
+            x=x,
+            cond=cond,
+            text=text,
+            video=video,
+            time=time,
+            mask=mask,
+            text_mask=text_mask,
+            video_mask=video_mask,
+            complementary_mask=complementary_mask,
+            generation_mask=generation_mask,
+            drop_audio_cond=drop_audio_cond,
+            drop_text=drop_text,
+            drop_video=drop_video,
+        )
+        assert pred.shape == (b, n, MEL["n_mel_channels"])
+        assert torch.isfinite(pred).all()
+        assert set(inter.keys()) == set(ARCH["layer_indices_ctc"])
+    print("[OK] modality drop branches (cond / drop_text / drop_video / uncond)")
+
+    _ = mel  # unused
+
+
+def test_activation_checkpoint_path(model):
+    """Both MM and text-free tail blocks must work through recomputation."""
+    transformer = model.transformer
+    previous_checkpoint_activations = transformer.checkpoint_activations
+    previous_training = transformer.training
+    transformer.checkpoint_activations = True
+    transformer.train()
+    transformer.clear_cache()
+
+    b, n, nv, nt = 1, 16, 4, 8
+    mask = torch.ones(b, n, dtype=torch.bool)
+    text_mask = torch.ones(b, nt, dtype=torch.bool)
+    video_mask = torch.ones(b, nv, dtype=torch.bool)
+    generation_mask = torch.zeros(b, n, dtype=torch.bool)
+    generation_mask[:, n // 2 :] = True
+
+    try:
+        pred, intermediates = transformer(
+            x=torch.randn(b, n, MEL["n_mel_channels"]),
+            cond=torch.randn(b, n, MEL["n_mel_channels"]),
+            text=torch.randint(1, VOCAB_SIZE, (b, nt)),
+            video=torch.randn(b, nv, ARCH["video_dim"]),
+            time=torch.rand(b),
+            mask=mask,
+            text_mask=text_mask,
+            video_mask=video_mask,
+            complementary_mask=video_mask,
+            generation_mask=generation_mask,
+            cache=True,
+        )
+        assert pred.shape == (b, n, MEL["n_mel_channels"])
+        assert intermediates == {}
+        assert torch.isfinite(pred).all()
+        pred.sum().backward()
+    finally:
+        transformer.zero_grad(set_to_none=True)
+        transformer.clear_cache()
+        transformer.checkpoint_activations = previous_checkpoint_activations
+        transformer.train(previous_training)
+
+    print("[OK] activation checkpoint forward/backward covers MM and text-free audio blocks")
+
+
+def test_sample(model):
+    model.eval()
+    n_prompt, dur, nv = 100, 200, 50
+    cond = torch.randn(1, n_prompt, MEL["n_mel_channels"])
+    cond[:, :8] = 0  # real prompt silence must remain outside the generated region
+    video = torch.randn(1, nv, ARCH["video_dim"])
+    text = torch.randint(1, VOCAB_SIZE, (1, 24))
+    captured_generation_masks = []
+
+    def capture_generation_mask(_module, _args, kwargs):
+        captured_generation_masks.append(kwargs["generation_mask"].detach().clone())
+
+    hook = model.transformer.transformer_blocks[0].register_forward_pre_hook(
+        capture_generation_mask, with_kwargs=True
+    )
+    try:
+        with torch.no_grad():
+            out, trajectory = model.sample(
+                cond=cond,
+                text=text,
+                duration=dur,
+                video=video,
+                steps=2,
+                cfg_strength=2.0,
+                cfg_strength_v=2.0,
+                use_epss=False,
+            )
+    finally:
+        hook.remove()
+
+    expected_generation_mask = torch.zeros(dur, dtype=torch.bool)
+    expected_generation_mask[n_prompt:] = True
+    assert len(captured_generation_masks) > 0
+    for generation_mask in captured_generation_masks:
+        assert generation_mask.shape == (3, dur)
+        assert torch.equal(generation_mask, expected_generation_mask.expand_as(generation_mask))
+    assert out.shape[0] == 1 and out.shape[2] == MEL["n_mel_channels"], out.shape
+    assert torch.isfinite(out).all()
+    print(f"[OK] sample (multimodal CFG, 3-branch): out shape={tuple(out.shape)}")
+
+    # TTS / VTS single-modality guidance paths
+    for ignore in ["text", "video"]:
+        model.transformer.clear_cache()
+        with torch.no_grad():
+            out, _ = model.sample(
+                cond=cond,
+                text=text,
+                duration=dur,
+                video=video,
+                steps=2,
+                cfg_strength=2.0,
+                cfg_strength_v=2.0,
+                use_epss=False,
+                ignore_modality=ignore,
+            )
+        assert torch.isfinite(out).all()
+    print("[OK] sample with ignore_modality=text/video (2-branch CFG)")
+
+
+def test_pretrained_ckpt_compat(model):
+    if not os.path.exists(CKPT_PATH):
+        print(f"[SKIP] pretrained ckpt not found: {CKPT_PATH}")
+        return
+    checkpoint = torch.load(CKPT_PATH, weights_only=True, map_location="cpu", mmap=True)
+    ckpt_sd = {
+        k.replace("ema_model.", ""): v
+        for k, v in checkpoint["ema_model_state_dict"].items()
+        if k not in ["initted", "update", "step"]
+    }
+    model_sd = model.state_dict()
+
+    matched, mismatched, extra = [], [], []
+    for k, v in ckpt_sd.items():
+        if k not in model_sd:
+            extra.append(k)
+        elif v.shape != model_sd[k].shape:
+            mismatched.append((k, tuple(v.shape), tuple(model_sd[k].shape)))
+        else:
+            matched.append(k)
+    missing = [k for k in model_sd if k not in ckpt_sd]
+
+    print(f"[INFO] ckpt keys matched: {len(matched)}, shape-mismatch: {len(mismatched)}, "
+          f"ckpt-only (ignored): {len(extra)}, model-only (new params): {len(missing)}")
+
+    assert len(mismatched) == 0, f"shape mismatches: {mismatched[:5]}"
+
+    # every audio-path parameter of the pretrained DiT must be matched
+    must_match_prefixes = [
+        "transformer.time_embed.",
+        "transformer.input_embed.proj.",
+        "transformer.input_embed.conv_pos_embed.",
+        "transformer.norm_out.",
+        "transformer.proj_out.",
+    ]
+    for i in range(ARCH["depth"]):
+        must_match_prefixes += [
+            f"transformer.transformer_blocks.{i}.attn_norm.",
+            f"transformer.transformer_blocks.{i}.attn.",
+            f"transformer.transformer_blocks.{i}.ff.",
+        ]
+    matched_set = set(matched)
+    for prefix in must_match_prefixes:
+        ckpt_keys = [k for k in ckpt_sd if k.startswith(prefix)]
+        assert len(ckpt_keys) > 0, f"no ckpt keys under {prefix}"
+        for k in ckpt_keys:
+            assert k in matched_set, f"pretrained key not loadable: {k}"
+
+    # sanity: new params are exactly the video stream / text cross-attn / video embed / ctc projectors
+    allowed_new_prefixes = ("transformer.transformer_blocks.", "transformer.video_embed.", "transformer.projectors_ctc.", "transformer.text_embed.")
+    for k in missing:
+        assert k.startswith(allowed_new_prefixes), f"unexpected new param: {k}"
+        if k.startswith("transformer.transformer_blocks."):
+            assert (
+                ".v_attn" in k
+                or ".v_ff" in k
+                or ".cross_attn" in k
+                or ".attn.q_norm" in k
+                or ".attn.k_norm" in k
+            ), f"unexpected new block param: {k}"
+
+    # simulate the _safe_merge load and verify it works end to end
+    merged = {k: (ckpt_sd[k] if k in matched_set else model_sd[k]) for k in model_sd}
+    model.load_state_dict(merged)
+    print("[OK] pretrained checkpoint merge-load (audio path fully covered, new params kept)")
+
+
+def main():
+    torch.set_num_threads(8)
+    model = build_model()
+    test_text_free_audio_tail_structure(model)
+    test_d0_6mm_12audio_single_ctc12()
+    test_d1_6mm_12audio_dual_ctc6_12()
+    test_d2_6mm_6text_6audio_dual_ctc6_12()
+    test_c1_prompt_isolated_tail_text_blocks()
+    test_c2_global_text_with_text_free_tail()
+    test_c0_global_text_with_tail_text_blocks()
+    test_mm_gated_branches_wake_up(model)
+    test_text_cross_attention_is_prompt_isolated(model)
+    test_train_forward_backward(model)
+    test_modality_drop(model)
+    test_activation_checkpoint_path(model)
+    test_pretrained_ckpt_compat(model)
+    test_sample(model)
+    print("\nALL SMOKE TESTS PASSED")
+
+
+if __name__ == "__main__":
+    main()
