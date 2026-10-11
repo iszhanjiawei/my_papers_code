@@ -43,10 +43,23 @@ class NativePipeline(Pipeline):
             self.update()
         visual = []
         for m, gpu in zip(('baseline','repa'), self.gpus):
+            child = self.run/m
+            records = [child/'assets/records'/(r['target_id']+'.json') for r in rows(child)]
+            if all(p.exists() for p in records):
+                for path in records:
+                    record = json.loads(path.read_text())
+                    if record['frontend_method'] != m:
+                        raise ValueError('Cannot reuse a different model frontend')
+                    for key, value in record['artifact_sha256'].items():
+                        if sha(record['artifact_paths'][key]) != value:
+                            raise ValueError('Changed completed native visual cache')
+                print(f'Verified and retained all 660 own native visual records: {m}',flush=True)
+                continue
             for shard in range(self.visual_workers):
                 visual.append(self.job(f'{m}_native_visual{shard}', 'native_frontend.py', m,
                     ['--stage','visual','--method',m,'--shard',str(shard),'--nshard',str(self.visual_workers)], gpu))
-        self.required_batch(visual)
+        if visual:
+            self.required_batch(visual)
         for limit in (33, 0):
             self.required_batch([self.job(f'{m}_infer{limit or 660}', 'native_frontend.py', m,
                 ['--stage','infer','--method',m,'--limit',str(limit)], gpu)
