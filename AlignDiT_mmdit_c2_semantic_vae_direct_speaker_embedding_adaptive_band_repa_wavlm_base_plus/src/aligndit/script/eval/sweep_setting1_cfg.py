@@ -162,37 +162,83 @@ def verify_metrics(output, clips):
             "cfg_text": 5, "cfg_video": json.loads((output / "inference_summary.json").read_text())["generation"]["cfg_video"]}
 
 
-def run(root):
-    root.mkdir(parents=True, exist_ok=False)
+def compare_waveforms(reference, candidate):
+    """Native CUDA kernels need not be bitwise deterministic across processes.
+
+    Do not change historical precision/kernel settings to force hash equality.
+    Reject materially different signals; record both exact hashes and drift.
+    """
+    import numpy as np
+    import soundfile as sf
+    a, sr_a = sf.read(reference)
+    b, sr_b = sf.read(candidate)
+    assert sr_a == sr_b == 16000 and a.shape == b.shape
+    assert np.isfinite(a).all() and np.isfinite(b).all()
+    rms = float(np.sqrt(np.mean((a - b)**2)))
+    signal = float(np.sqrt(np.mean(a*a)))
+    relative = rms / max(signal, 1e-6)
+    corr = float(np.corrcoef(a, b)[0, 1]) if signal > 1e-6 else None
+    result = {"reference_sha256": digest(reference), "candidate_sha256": digest(candidate),
+              "max_abs_difference": float(np.max(np.abs(a-b))), "rms_difference": rms,
+              "relative_rms_difference": relative, "correlation": corr,
+              "criterion": "relative RMS <= 0.001 and correlation >= 0.99999 (non-silent)",
+              "bitwise_equal": bool(np.array_equal(a, b))}
+    assert relative <= 0.001 and (corr is None or corr >= 0.99999), result
+    return result
+
+
+def run(root, resume=False):
+    root.mkdir(parents=True, exist_ok=resume)
     clips = [x.strip() for x in LIST.read_text().splitlines() if x.strip()]
     assert len(clips) == len(set(clips)) == 213
     manifests = [json.loads(x) for x in (DATA / "CelebVDub_svae1000k_sample_seed666_fp32/manifests/test.jsonl").read_text().splitlines() if x.strip()]
     lengths = {r["utterance_key"].removeprefix("celebvdub/test/"): r["latent_frames"] for r in manifests}
     longest = max(range(213), key=lambda i: lengths[clips[i]])
     print(f"Longest-clip memory pilot: {clips[longest]}, frames={lengths[clips[longest]]}", flush=True)
-    dispatch([("pilot", 0, inference_args(root / "pilot", 3, longest, 213), {})], root / "logs", slots=1)
+    if not (root / "pilot/inference_summary.json").exists():
+        dispatch([("pilot", 0, inference_args(root / "pilot", 3, longest, 213), {})], root / "logs", slots=1)
     pilot = json.loads((root / "pilot/inference_summary.json").read_text())
     memory = pilot["peak_cuda_reserved_bytes"]
     slots = min(8, max(1, math.floor((23 * 1024**3) / (memory + 512 * 1024**2))))
     print(f"Pilot reserved={memory / 1024**3:.2f} GiB; native inference slots per GPU={slots}", flush=True)
-    save(root / "protocol.json", {"count_per_cfg": 213, "cfg_text": 5, "cfg_video": [3, 4, 5],
+    protocol = {"count_per_cfg": 213, "cfg_text": 5, "cfg_video": [3, 4, 5],
                                  "inference_slots_per_gpu": slots, "pilot_reserved_bytes": memory,
                                  "test_list_sha256": digest(LIST), "checkpoint_sha256": digest(CKPTS / "model_150000.pt"),
                                  "reference": "same clip full GT audio; historical Setting 1",
-                                 "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True).strip()})
+                                 "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True).strip()}
+    if (root / "protocol.json").exists():
+        previous = json.loads((root / "protocol.json").read_text())
+        for key in ("count_per_cfg", "cfg_text", "cfg_video", "test_list_sha256", "checkpoint_sha256", "reference"):
+            assert previous[key] == protocol[key], key
+        previous.setdefault("resume_source_commits", []).append(protocol["source_commit"])
+        protocol = previous
+    save(root / "protocol.json", protocol)
     groups = [(3, 6), (4, 5), (5, 5)]
     outputs = {cfg: root / f"cfg_text5_video{cfg}" for cfg, _ in groups}
     jobs = []
     for cfg, nshard in groups:
         for shard in range(nshard):
+            if (root / f"shards/v{cfg}/shard{shard}/inference_summary.json").exists():
+                continue
             jobs.append((f"infer_v{cfg}_s{shard}", len(jobs) % 2,
                          inference_args(root / f"shards/v{cfg}/shard{shard}", cfg, shard, nshard), {}))
     dispatch(jobs, root / "logs", slots)
     for cfg, nshard in groups:
-        merge_shards(root / "shards", outputs[cfg], cfg, nshard, clips)
+        if (outputs[cfg] / "inference_summary.json").exists():
+            summary = json.loads((outputs[cfg] / "inference_summary.json").read_text())
+            assert summary["generation"]["cfg_text"] == 5 and summary["generation"]["cfg_video"] == cfg
+            assert summary["checkpoint"]["sha256"] == protocol["checkpoint_sha256"]
+            assert summary["dataset"]["test_list_sha256"] == protocol["test_list_sha256"]
+            assert len(summary["outputs"]) == 213
+            validate_audio(outputs[cfg], clips)
+            for row in summary["outputs"]:
+                assert digest(outputs[cfg] / row["relative_path"]) == row["sha256"]
+        else:
+            merge_shards(root / "shards", outputs[cfg], cfg, nshard, clips)
     pilot_row = pilot["outputs"][0]
-    assert digest(outputs[3] / pilot_row["relative_path"]) == pilot_row["sha256"], "Sharding changed per-clip seed/output"
-    print("All 639 WAVs verified; pilot/full-run waveform hashes identical.", flush=True)
+    drift = compare_waveforms(root / "pilot" / pilot_row["relative_path"], outputs[3] / pilot_row["relative_path"])
+    save(root / "parallel_numeric_check.json", drift)
+    print(f"All 639 WAVs verified; pilot numeric drift: {drift}", flush=True)
     jobs = []
     for cfg, nshard in groups:
         for rank in range(nshard):
@@ -219,5 +265,6 @@ def run(root):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--resume", action="store_true", help="Reuse verified completed inference, without replacing WAVs")
     args = parser.parse_args()
-    run(args.output_root.resolve())
+    run(args.output_root.resolve(), args.resume)

@@ -7,6 +7,19 @@ from aligndit.script.eval import sweep_setting1_cfg as sweep
 
 
 class Setting1SweepTests(unittest.TestCase):
+    def test_numeric_check_accepts_only_tiny_native_drift(self):
+        import numpy as np
+        import soundfile as sf
+        with tempfile.TemporaryDirectory() as directory:
+            a, b = Path(directory) / "a.wav", Path(directory) / "b.wav"
+            wave = np.sin(np.arange(1600) / 10) * 0.1
+            sf.write(a, wave, 16000, subtype="PCM_16")
+            sf.write(b, wave + 1e-5, 16000, subtype="PCM_16")
+            self.assertFalse(sweep.compare_waveforms(a, b)["bitwise_equal"])
+            sf.write(b, wave * 0.9, 16000, subtype="PCM_16")
+            with self.assertRaises(AssertionError):
+                sweep.compare_waveforms(a, b)
+
     def test_uses_this_project_and_fixed_native_parameters(self):
         self.assertEqual(sweep.PROJECT, Path(__file__).resolve().parents[1])
         for cfg in (3, 4, 5):
