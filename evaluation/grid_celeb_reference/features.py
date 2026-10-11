@@ -3,9 +3,12 @@ import argparse
 import hashlib
 import inspect
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
+import time
 
 import cv2
 import numpy as np
@@ -118,9 +121,22 @@ def visual(run, shard, nshard, limit):
         # Lossless mouth video shared by visual conditioning and AV scoring.
         dest = Path(row['mouth_video'])
         dest.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [str(ffmpeg), '-v', 'error', '-nostdin', '-f', 'rawvideo', '-pix_fmt', 'gray', '-s', '96x96',
-               '-r', '25', '-i', 'pipe:0', '-an', '-c:v', 'libx264', '-qp', '0', '-pix_fmt', 'yuv420p', '-threads', '1', str(dest)]
+        descriptor, temporary = tempfile.mkstemp(prefix=dest.stem+'.', suffix='.mp4', dir=dest.parent)
+        os.close(descriptor)
+        cmd = [str(ffmpeg), '-v', 'error', '-nostdin', '-y', '-f', 'rawvideo', '-pix_fmt', 'gray', '-s', '96x96',
+               '-r', '25', '-i', 'pipe:0', '-an', '-c:v', 'libx264', '-qp', '0', '-pix_fmt', 'yuv420p', '-threads', '1', temporary]
         subprocess.run(cmd, input=mouth.tobytes(), check=True, timeout=60)
+        decoded = avhubert_utils.load_video(temporary)
+        if decoded.shape != mouth.shape:
+            raise ValueError(f'Mouth encoding frame mismatch: {decoded.shape} != {mouth.shape}')
+        if dest.exists():
+            # No completion record: quarantine a task-owned interrupted output
+            # instead of silently using it or deleting anything irrecoverably.
+            recover = run/'assets/incomplete'/(row['target_id']+f'.{time.time_ns()}.mp4')
+            recover.parent.mkdir(parents=True,exist_ok=True)
+            dest.replace(recover)
+            print(f'Preserved incomplete mouth artifact: {recover}',flush=True)
+        Path(temporary).replace(dest)
         with torch.inference_mode():
             lip = lip_model(torch.from_numpy((mouth.astype(np.float32) / 255 - native.LIP_MEAN) / native.LIP_STD)[None,None].cuda(), lengths=[len(frames)])
             face = []
@@ -129,7 +145,7 @@ def visual(run, shard, nshard, limit):
                 face.append(native.emonet_256(face_model, torch.from_numpy(crops.astype(np.float32)/255).permute(0,3,1,2).cuda()))
             video = avreader.get_feats((str(dest), None)).cpu().float()
         if tuple(video.shape) != (len(frames), 1024):
-            raise ValueError('Invalid AV-HuBERT visual output')
+            raise ValueError(f'Invalid AV-HuBERT visual output: {row["target_id"]}, {tuple(video.shape)}')
         npy(row['lip_feature'], lip.squeeze(0).cpu().numpy())
         npy(row['face_feature'], np.concatenate(face, axis=0))
         npy(row['video_25hz_path'], video.numpy())

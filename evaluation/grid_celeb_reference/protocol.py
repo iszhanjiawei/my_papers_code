@@ -16,7 +16,7 @@ STYLE = PROJECT / '对比实验/StyleDubber_Project_Compare/StyleDubber'
 PRO = PROJECT / '对比实验/ProDubber_Project_Compare/ProDubber'
 TOOLS = STYLE.parent / 'preprocess_celebvdub'
 WEIGHTS = STYLE.parent / 'preprocess_models'
-DEFAULT_RUN = DATA / 'evaluations/grid660_celeb66_seed0_v1'
+DEFAULT_RUN = DATA / 'evaluations/grid660_celeb66_seed0_v2'
 PROTOCOL = 'grid660_celeb66_one_reference_per_target_v1'
 COUNT = 660
 

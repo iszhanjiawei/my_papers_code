@@ -7,7 +7,7 @@ import numpy as np
 from protocol import DEFAULT_RUN, DATA, PROJECT, add_repa, rows, sha, save_json
 
 
-def main(run, method):
+def main(run, method, limit=0):
     add_repa()
     sys.path.insert(0,str(DATA/'av_hubert/fairseq/fairseq'))
     sys.path.insert(0,str(DATA/'av_hubert/avhubert/avhubert'))
@@ -16,11 +16,15 @@ def main(run, method):
     from aligndit.script.misc.extract_avhubert import AVHubertFeatureReader
     from aligndit.script.misc import avhubert_utils
     reader=AVHubertFeatureReader(str(PROJECT.parent.parent/'alignDiT_pretrain_models/large_vox_iter5.pt'),custom_utils=avhubert_utils)
-    root=run/'assets/gt_avhubert' if method=='gt' else run/'outputs'/method/'avhubert_feat'
+    label=method+(f'_smoke{limit}' if limit else '')
+    root=run/'assets/gt_avhubert' if method=='gt' else run/'outputs'/label/'avhubert_feat'
     records=[]
-    for i,row in enumerate(rows(run,evaluation=True),1):
+    items=rows(run,evaluation=True)
+    if limit:
+        items=items[:limit]
+    for i,row in enumerate(items,1):
         dest=root/(row['target_id']+'.npy')
-        audio=Path(row['target_gt_audio']) if method=='gt' else run/'outputs'/method/(row['target_id']+'.wav')
+        audio=Path(row['target_gt_audio']) if method=='gt' else run/'outputs'/label/(row['target_id']+'.wav')
         record_path=dest.with_suffix('.json')
         if dest.exists() and record_path.exists():
             import json
@@ -38,13 +42,14 @@ def main(run, method):
             previous={'target_id':row['target_id'],'audio_sha256':sha(audio),'mouth_sha256':sha(row['mouth_video']),'feature_sha256':sha(dest)}
             save_json(record_path,previous)
         records.append(previous)
-        print(f'AV features {method} {i}/660: {row["target_id"]}',flush=True)
-    save_json(root/'summary.json',{'count':len(records),'records':records})
+        print(f'AV features {method} {i}/{len(items)}: {row["target_id"]}',flush=True)
+    save_json(root/'summary.json',{'count':len(records),'partial_smoke_test':bool(limit),'records':records})
 
 
 if __name__=='__main__':
     p=argparse.ArgumentParser()
     p.add_argument('--run',type=Path,default=DEFAULT_RUN)
     p.add_argument('--method',choices=['gt','repa','baseline','styledubber','produbber'],required=True)
+    p.add_argument('--limit',type=int,choices=[0,1,33],default=0)
     a=p.parse_args()
-    main(a.run,a.method)
+    main(a.run,a.method,a.limit)

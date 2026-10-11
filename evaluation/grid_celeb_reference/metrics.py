@@ -13,7 +13,7 @@ from protocol import DEFAULT_RUN, DATA, PROJECT, PROTOCOL, add_repa, rows, sha, 
 def validate(run, method, items):
     out=run/'outputs'/method
     summary=json.loads((out/'inference_summary.json').read_text())
-    if summary['protocol']!=PROTOCOL or summary['count']!=660 or summary['partial_smoke_test'] or summary['pair_manifest_sha256']!=sha(run/'pairs.jsonl'):
+    if summary['protocol']!=PROTOCOL or summary['count']!=len(items) or summary['partial_smoke_test']!=(len(items)!=660) or summary['pair_manifest_sha256']!=sha(run/'pairs.jsonl'):
         raise ValueError('Incomplete or different inference protocol')
     records={r['target_id']:r for r in summary['outputs']}
     actual={str(p.relative_to(out)) for p in (out/'test').rglob('*.wav')}
@@ -30,21 +30,25 @@ def validate(run, method, items):
     return out,summary
 
 
-def main(run, method, task, gt=False):
+def main(run, method, task, gt=False, limit=0):
     add_repa()
     from aligndit.script.eval import eval_celebvdub_grid_reference as native
     items=rows(run,evaluation=True)
+    if limit:
+        if gt:
+            raise ValueError('Partial GT diagnostics are not supported')
+        items=items[:limit]
     if gt:
         if task!='wer':
             raise ValueError('GT diagnostic supports WER only')
         out=run/'assets/gt'
         inference={'checkpoint':None}
     else:
-        out,inference=validate(run,method,items)
+        out,inference=validate(run,method+(f'_smoke{limit}' if limit else ''),items)
     summary_path=out/f'_{task}_summary.json'
     if summary_path.exists():
         summary=json.loads(summary_path.read_text())
-        if summary['manifest_sha256']!=sha(run/'pairs.jsonl') or summary['count']!=660:
+        if summary['manifest_sha256']!=sha(run/'pairs.jsonl') or summary['count']!=len(items):
             raise ValueError('Existing metric belongs to different protocol')
         print('Already verified metric',task,summary[task],flush=True)
         return
@@ -60,7 +64,7 @@ def main(run, method, task, gt=False):
         native.validate_av_features(items,out,args.gt_av_feat)
     results=native.attach_identities(items,native.run_worker(args,test_set),task)
     summary=native.summarize(results,task)
-    summary.update(protocol=PROTOCOL,task=task,method='GRID_GT' if gt else method,
+    summary.update(protocol=PROTOCOL,task=task,method='GRID_GT' if gt else method,partial_smoke_test=bool(limit),
        manifest_sha256=sha(run/'pairs.jsonl'),checkpoint=inference['checkpoint'],
        metric_reference={'sim':'generated versus paired CelebV-Dub reference',
                          'wer':'generated ASR versus GRID dialogue; native English normalization',
@@ -69,7 +73,7 @@ def main(run, method, task, gt=False):
                          'avsync':'joint AV-HuBERT cosine, generated versus GRID GT on the identical mouth video'}[task])
     (out/f'_{task}_results.jsonl').write_text(''.join(json.dumps(r,ensure_ascii=False,allow_nan=False)+'\n' for r in results))
     save_json(summary_path,summary)
-    print(f'{method} {task}: {summary[task]:.5f}, count=660',flush=True)
+    print(f'{method} {task}: {summary[task]:.5f}, count={len(items)}, smoke={bool(limit)}',flush=True)
 
 
 if __name__=='__main__':
@@ -78,5 +82,6 @@ if __name__=='__main__':
     p.add_argument('--method',choices=['repa','baseline','styledubber','produbber'],default='repa')
     p.add_argument('--task',choices=['sim','wer','emosim','emoembed','avsync'],required=True)
     p.add_argument('--gt',action='store_true')
+    p.add_argument('--limit',type=int,choices=[0,1,33],default=0)
     a=p.parse_args()
-    main(a.run,a.method,a.task,a.gt)
+    main(a.run,a.method,a.task,a.gt,a.limit)

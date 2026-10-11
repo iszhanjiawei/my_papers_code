@@ -16,16 +16,28 @@ TASKS = ('sim', 'wer', 'emosim', 'emoembed', 'avsync')
 
 
 class Pipeline:
-    def __init__(self, run, gpus):
-        self.run, self.gpus = run, gpus
+    def __init__(self, run, gpus, visual_workers=2):
+        self.run, self.gpus, self.visual_workers = run, gpus, visual_workers
         self.state = {'protocol': PROTOCOL, 'controller_pid': os.getpid(),
                       'gpus': gpus, 'jobs': {}, 'status': 'running'}
         (run / 'logs').mkdir(parents=True, exist_ok=True)
         self.lock = (run / 'pipeline.lock').open('a')
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.last_gpu_sample = 0
 
     def update(self):
-        self.state['updated_unix'] = time.time()
+        now = time.time()
+        self.state['updated_unix'] = now
+        if now - self.last_gpu_sample >= 30:
+            sampled = subprocess.run(['nvidia-smi', '--query-gpu=index,memory.used,memory.total,utilization.gpu',
+                                     '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=10)
+            self.state['gpu_snapshot_csv'] = sampled.stdout.strip()
+            self.last_gpu_sample = now
+        for job in self.state['jobs'].values():
+            if job['status'] == 'running':
+                with Path(job['log']).open('rb') as log:
+                    log.seek(max(0, log.seek(0, 2) - 1024))
+                    job['recent_log'] = log.read().decode('utf-8', errors='replace')
         save_json(self.run / 'pipeline_state.json', self.state)
 
     def batch(self, jobs):
@@ -69,9 +81,10 @@ class Pipeline:
             result = self.batch([('references', 'features.py', ['--stage', 'references'], self.gpus[0])])
             if any(result.values()):
                 raise RuntimeError('Reference feature extraction failed')
-        visual = [('visual_gpu' + str(gpu), 'features.py',
-                   ['--stage', 'visual', '--shard', str(i), '--nshard', '2'], gpu)
-                  for i, gpu in enumerate(self.gpus)]
+        nshard = len(self.gpus) * self.visual_workers
+        visual = [('visual_shard' + str(i), 'features.py',
+                   ['--stage', 'visual', '--shard', str(i), '--nshard', str(nshard)],
+                   self.gpus[i // self.visual_workers]) for i in range(nshard)]
         if any(self.batch(visual).values()):
             raise RuntimeError('Visual preprocessing failed; valid records remain resumable')
         # One clip from each GRID speaker before formal generation. Separate
@@ -120,8 +133,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run', type=Path, default=DEFAULT_RUN)
     parser.add_argument('--gpus', type=int, nargs=2, default=[0, 1])
+    parser.add_argument('--visual-workers-per-gpu', type=int, choices=[1,2], default=2)
     args = parser.parse_args()
-    pipeline = Pipeline(args.run, args.gpus)
+    pipeline = Pipeline(args.run, args.gpus, args.visual_workers_per_gpu)
     try:
         sys.exit(pipeline.execute())
     except Exception as exc:

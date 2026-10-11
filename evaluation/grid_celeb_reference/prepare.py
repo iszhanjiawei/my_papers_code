@@ -27,9 +27,25 @@ def select_targets(rng):
     if set(grouped) != {f's{i}' for i in range(1, 35) if i != 21}:
         raise ValueError('Wrong GRID speaker coverage')
     selected = {}
+    rejected = []
     for speaker in sorted(grouped, key=lambda s: int(s[1:])):
         pool = sorted(grouped[speaker])
         rng.shuffle(pool)
+        # GRID full utterance videos have 75 frames at 25 Hz. This local copy
+        # contains damaged files (2/4/9/63 video frames with ~3 s audio).
+        # Filter solely on input completeness, before any model evaluation.
+        complete = []
+        for clip, text in pool:
+            feature = GRID / f'Grid_lip_Feature/extrated_embedding_Grid_152_gray/{speaker}-face-{clip}.npy'
+            frames = len(np.load(feature, mmap_mode='r', allow_pickle=False))
+            if frames == 75:
+                complete.append((clip, text))
+            else:
+                rejected.append({'target_id':f'test/{speaker}/{clip}', 'video_frames':frames,
+                                 'reason':'incomplete GRID full-utterance video; expected 75 frames'})
+        pool = complete
+        if len(pool) < 20:
+            raise ValueError('Insufficient complete GRID videos for '+speaker)
         counts = Counter()
         chosen = []
         # Random tie-breaking and greedy lexical coverage, without model scores.
@@ -39,7 +55,7 @@ def select_targets(rng):
             chosen.append(item)
             counts.update(enumerate(item[1].split()))
         selected[speaker] = chosen
-    return selected, source
+    return selected, source, rejected
 
 
 def select_references(rng, run):
@@ -97,7 +113,7 @@ def main(run):
         raise FileExistsError('Unrecorded selection; use another output directory')
     run.mkdir(parents=True, exist_ok=True)
     rng = random.Random(0)
-    targets, source = select_targets(rng)
+    targets, source, rejected_targets = select_targets(rng)
     refs, rejected = select_references(rng, run)
     speakers = sorted(targets, key=lambda s: int(s[1:]))
     rng.shuffle(speakers)
@@ -143,6 +159,8 @@ def main(run):
              'reference_group_is_verified_person_identity': False,
              'reference_quality_screen': 'duration 2-5s, finite, RMS > -60dBFS, clipping fraction <1%; no human music/overlap audit',
              'reference_exclusions': rejected, 'grid_selection_source': str(source), 'grid_selection_source_sha256': sha(source),
+             'input_completeness_exclusions': rejected_targets,
+             'input_completeness_policy':'75 video frames, checked before generation; all 33 speakers retain 20 targets',
              'pairs_sha256': sha(run / 'pairs.jsonl'), 'inference_sha256': sha(run / 'inference.jsonl'),
              'duration_protocol': 'complete 25Hz video timeline; never use endpoint-trimmed GRID WAV as full-video GT',
              'target_audio_in_inference_manifest': False})
