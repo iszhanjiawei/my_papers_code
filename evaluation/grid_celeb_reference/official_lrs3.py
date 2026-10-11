@@ -217,8 +217,11 @@ def infer(args):
     model=CFM_VT(transformer=cls(**cfg.model.arch,text_num_embeds=size,mel_dim=80),
         mel_spec_module=MelSpec_tacotron(**cfg.model.mel_spec),
         mel_spec_kwargs={k:v for k,v in cfg.model.mel_spec.items() if k!='mel_spec_type'},
-        odeint_kwargs={'method':'euler'},vocab_char_map=vocab).cuda()
-    model=load_checkpoint(model,str(CKPT),'cuda:0',dtype=torch.float32,use_ema=True)
+        odeint_kwargs={'method':'euler'},vocab_char_map=vocab)
+    # The native loader remains strict, but loads the training checkpoint on
+    # CPU before moving only the inference model to CUDA. This prevents six
+    # workers/card from also allocating six unused optimizer states on CUDA.
+    model=load_checkpoint(model,str(CKPT),'cpu',dtype=torch.float32,use_ema=True).cuda()
     decoder=load_vocoder('hifigan_16k',True,str(TREE/'ckpts/hifigan_16k_LRS3/g_01000000'),device='cuda:0')
     allitems=rows(args.run)
     # Pilot the longest input to establish a conservative per-process peak.
@@ -379,25 +382,25 @@ class OfficialPipeline(Pipeline):
 
     def execute(self):
         self.required([('initialize','official_lrs3.py',['--stage','initialize'],0)])
-        self.required(self.jobs('visual',4))
+        self.required(self.jobs('visual',12))
         self.required([('pilot_longest','official_lrs3.py',['--stage','pilot'],0)])
         peak=json.loads((self.run/'pilot_summary.json').read_text())['max_reserved_bytes']
         # Reserve 3 GiB for context/fragmentation per card, and 1 GiB overhead
         # per worker beyond the measured longest-utterance allocator peak.
         total=subprocess.check_output(['nvidia-smi','--query-gpu=memory.total','--format=csv,noheader,nounits'],text=True)
         budget=(min(int(v) for v in total.split())*2**20)-3*2**30
-        workers=max(1,min(4,int(budget/(peak+2**30))))
+        workers=max(1,min(6,int(budget/(peak+2**30))))
         self.state['inference_workers_per_gpu']=workers
         self.state['pilot_peak_reserved_bytes']=peak;self.update()
         print(f'Inference workers/card: {workers}; longest pilot peak {peak/2**30:.2f}GiB',flush=True)
         self.required(self.jobs('infer',workers*2))
         gather(self.run)
-        self.required(self.jobs('av',4,kind='gt')+self.jobs('av',4,kind='generated'))
-        # Two workers/card for heavy ASR/WavLM/emotion models. Corpus summaries
+        self.required(self.jobs('av',6,kind='gt')+self.jobs('av',6,kind='generated'))
+        # Six workers/card for sharded metrics. Corpus summaries
         # are reconstructed from full per-utterance records across all shards.
         for task in TASKS:
-            self.required(self.jobs('metric',4,task=task))
-        summarize(self.run,4)
+            self.required(self.jobs('metric',12,task=task))
+        summarize(self.run,12)
         self.state['status']='complete';self.update()
 
 
