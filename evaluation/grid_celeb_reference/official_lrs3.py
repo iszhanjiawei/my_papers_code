@@ -50,10 +50,6 @@ def copy_verified(source, dest):
 
 
 def initialize(run):
-    import numpy as np
-    import cv2
-    official_imports()
-    from aligndit.script.misc.extract_mel import get_tacotron_mel_spectrogram_processor, single_job
     if (run/'selection.json').exists():
         rows(run)
         protocol=json.loads((run/'protocol.json').read_text())
@@ -61,6 +57,10 @@ def initialize(run):
             adapter_sha256=sha(__file__))
         save_json(run/'protocol.json',protocol)
         return
+    import numpy as np
+    import cv2
+    official_imports()
+    from aligndit.script.misc.extract_mel import get_tacotron_mel_spectrogram_processor, single_job
     old = rows(DEFAULT_RUN, evaluation=True)
     run.mkdir(parents=True, exist_ok=True)
     processor = get_tacotron_mel_spectrogram_processor()
@@ -349,7 +349,7 @@ def summarize(run,nshard):
     out=run/'outputs/official_lrs3'; values={}
     for task in TASKS:
         records=[]
-        for i in range(nshard):
+        for i in range(16 if task=='avsync' else nshard):
             shard=json.loads((out/'metric_shards'/f'{task}_{i}.json').read_text())
             if shard['manifest_sha256']!=sha(run/'pairs.jsonl'):
                 raise ValueError('Metric shard manifest changed')
@@ -382,25 +382,28 @@ class OfficialPipeline(Pipeline):
 
     def execute(self):
         self.required([('initialize','official_lrs3.py',['--stage','initialize'],0)])
-        self.required(self.jobs('visual',12))
+        self.required(self.jobs('visual',16))
         self.required([('pilot_longest','official_lrs3.py',['--stage','pilot'],0)])
         peak=json.loads((self.run/'pilot_summary.json').read_text())['max_reserved_bytes']
         # Reserve 3 GiB for context/fragmentation per card, and 1 GiB overhead
         # per worker beyond the measured longest-utterance allocator peak.
         total=subprocess.check_output(['nvidia-smi','--query-gpu=memory.total','--format=csv,noheader,nounits'],text=True)
         budget=(min(int(v) for v in total.split())*2**20)-3*2**30
-        workers=max(1,min(6,int(budget/(peak+2**30))))
+        workers=max(1,min(8,int(budget/(peak+2**29))))
         self.state['inference_workers_per_gpu']=workers
         self.state['pilot_peak_reserved_bytes']=peak;self.update()
         print(f'Inference workers/card: {workers}; longest pilot peak {peak/2**30:.2f}GiB',flush=True)
         self.required(self.jobs('infer',workers*2))
         gather(self.run)
-        self.required(self.jobs('av',6,kind='gt')+self.jobs('av',6,kind='generated'))
-        # Six workers/card for sharded metrics. Corpus summaries
-        # are reconstructed from full per-utterance records across all shards.
-        for task in TASKS:
-            self.required(self.jobs('metric',12,task=task))
-        summarize(self.run,12)
+        self.required(self.jobs('av',8,kind='gt')+self.jobs('av',8,kind='generated'))
+        # Eight metric processes/card: two ASR, two WavLM, two classifier
+        # emotion and two embedding emotion. Eight independent Whisper-large
+        # models/card would exceed 24 GiB; mixed tasks keep concurrency at eight
+        # while preserving the historical float16-ASR/float32-metric settings.
+        self.required([job for task in TASKS if task!='avsync'
+            for job in self.jobs('metric',4,task=task)])
+        self.required(self.jobs('metric',16,task='avsync'))
+        summarize(self.run,4)
         self.state['status']='complete';self.update()
 
 
