@@ -1,8 +1,5 @@
 """Small offline tests of sampling balance, leakage guards and duration checks."""
-from collections import Counter, defaultdict
-import json
-import tempfile
-from pathlib import Path
+from collections import Counter
 import unittest
 
 import numpy as np
@@ -48,6 +45,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(len({r['ref_id'] for r in items}), 66)
         self.assertEqual(set(Counter(r['ref_id'] for r in items).values()), {10})
         self.assertEqual(len({r['target_speaker_id'] for r in items[:33]}), 33)
+        self.assertTrue(all(r['native_frames'] == 75 and r['target_num_samples'] == 48000 for r in items))
         self.assertTrue(all('target_gt_audio' not in r and len(r['target_text'].split()) == 6 for r in items))
         self.assertTrue(all('target_gt_audio' in r for r in rows(DEFAULT_RUN, evaluation=True)))
 
