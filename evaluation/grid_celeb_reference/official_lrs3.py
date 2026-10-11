@@ -134,6 +134,19 @@ def audit(run):
 
 
 def visual(args):
+    audit(args.run)
+    pending=[]
+    for row in rows(args.run)[args.shard::args.nshard]:
+        rp=args.run/'assets/records'/(row['target_id']+'.json')
+        if rp.exists():
+            record=json.loads(rp.read_text())
+            if sha(row['mouth_video'])!=record['mouth_sha256'] or sha(row['video_25hz_path'])!=record['feature_sha256']:
+                raise ValueError('Changed resumed native visual artifact')
+        else:
+            pending.append(row)
+    if not pending:
+        print('All visual records in this shard verified; no model reload needed',flush=True)
+        return
     import numpy as np
     import torch
     import av
@@ -150,7 +163,7 @@ def visual(args):
     audit(args.run)
     loader=AVSRDataLoader(modality='video',detector='retinaface',convert_gray=False,gpu_type='cuda')
     reader=AVHubertFeatureReader(str(AV_CKPT),custom_utils=avhubert_utils)
-    items=rows(args.run)[args.shard::args.nshard]
+    items=pending
     for i,row in enumerate(items,1):
         recordpath=args.run/'assets/records'/(row['target_id']+'.json')
         if recordpath.exists():
@@ -167,7 +180,7 @@ def visual(args):
         container.parent.mkdir(parents=True,exist_ok=True)
         if not container.exists():
             subprocess.run([str(Path(sys.executable).with_name('ffmpeg')),
-                '-hide_banner','-loglevel','error','-n','-i',row['source_video'],
+                '-hide_banner','-loglevel','error','-n','-fflags','+genpts','-i',row['source_video'],
                 '-map','0:v:0','-an','-c:v','copy','-avoid_negative_ts','make_zero',str(container)],check=True)
         with av.open(row['source_video']) as original:
             original_rgb=np.stack([f.to_ndarray(format='rgb24') for f in original.decode(video=0)])
