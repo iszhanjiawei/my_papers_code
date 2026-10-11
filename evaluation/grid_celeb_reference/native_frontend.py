@@ -261,7 +261,12 @@ def infer(run, method, limit):
     np.random.seed(0)
     torch.set_float32_matmul_precision('high')
     args = argparse.Namespace(run=run, method=method, limit=limit)
-    loop(args, items, aligndit(args, items))
+    if method == 'baseline':
+        from native_baseline import cached_baseline
+        generate = cached_baseline(args, items)
+    else:
+        generate = aligndit(args, items)
+    loop(args, items, generate)
 
 
 if __name__ == '__main__':

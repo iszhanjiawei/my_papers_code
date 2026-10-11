@@ -29,6 +29,13 @@ class NativeFrontendTests(unittest.TestCase):
         self.assertEqual(normalize('a 12 two to too 1'),'a 12 two to too one')
         self.assertEqual(normalize('now no'), 'now no')
 
+    def test_baseline_uses_real_native_cached_prompt_builder(self):
+        source = (Path(__file__).parent/'native_baseline.py').read_text()
+        self.assertIn('get_inference_prompt_vt(metainfo',source)
+        self.assertIn("DATA/'CelebVDub/mel_tacotron/test'",source)
+        self.assertIn('use_truth_duration=False',source)
+        self.assertNotIn('extractor(audio * scale)',source)
+
 
 if __name__ == '__main__':
     unittest.main()
