@@ -4,8 +4,9 @@
 的独立源码副本，先逐文件复制并验证一致，再接入 GRID。原目录保持不变。模型仍使用
 Semantic-VAE Direct-C2、CAM++ speaker embedding、adaptive temporal band 和 WavLM-Base+ REPA。
 
-本次已完成全量源数据审计、正式清单冻结及真实小样本特征/模型验证。
-全量特征提取与训练状态见末尾本机运行记录；下方命令用于复现和断点续跑。
+本次已完成全量源数据审计、清单冻结、全部特征提取与完整校验；四卡训练已实际产生
+optimizer updates 和 TensorBoard loss。外部端口转发地址仍待桌面端确认。
+实际训练状态见末尾本机运行记录；下方命令用于复现和断点续跑。
 
 ## 数据协议
 
@@ -187,3 +188,39 @@ ${ROOT_PREFIX}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp32/source_au
 检查日志在本副本的 `logs/grid_final_tests.log`、`logs/grid_prepare_smoke_final.log`、
 `logs/grid_model_smoke.log` 中，日志与缓存均不提交 Git。
 容量检查日志为 `logs/grid_batch30_capacity.log`。
+
+## 本机运行记录（2026-10-12）
+
+全量缓存验收通过：`complete.json` 与 `coverage_report.json` 内容完全一致，
+`complete=true`、`selection.mode=full`、`missing=[]`、`invalid=[]`。
+audio、latent、video、speaker、repa 五类产物及对应 receipt 均各 32,805 个，
+保留 train 29,531 / val 3,274，写入标记已清理。最终验收使用原串行完整校验函数。
+提取日志为 `logs/grid_prepare_parallel.log` 和续跑的 `logs/grid_prepare_parallel_gpu2.log`。
+
+训练使用源码 commit `2124cb7c4003c2af197efe86949c106361806e38`，通过 `setsid` 在本机
+GPU 0–3（4×RTX 4090）运行，BF16、每卡 3,600 帧，未覆盖默认训练配置。
+启动器 PID/SID 为 **741790**；四个 worker PID 为 **742979 / 742980 / 742981 / 742982**，
+均无控制终端。实际显存约为 rank0 15,480 MiB，其余 14,152–14,196 MiB。
+
+北京时间 2026-10-12 03:09 的记录已达到 **update 149**：总损失 **1.46954**、
+diffusion **1.37413**、REPA **0.95405**，全部已记录的 loss 和梯度标量均有限。
+CTC 权重为 0，符合前 10k 步关闭 CTC 的配置；REPA 权重为 0.1。
+该记录用于确认训练持续推进，不代表收敛或验证集效果。目标仍为 200k updates；
+首个 `model_last.pt` 在 5k 保存，里程碑 checkpoint 每 50k 保存。
+
+确切 run 名称：
+
+```text
+AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k_semantic_vae_40hz_GRID_char
+```
+
+TensorBoard PID **84930**、端口 **6020**，服务 logdir 为本项目的 `runs/`，
+本次 event logdir 为 `runs/` 下的上述完整 run 名目录。只有 rank0 写一个 event 文件；
+已确认文件持续增长、首页和 Scalars API 均 HTTP 200，包含 `loss`、`diff_loss`、
+`repa_loss`、`ctc_lambda`、`ctc_weighted_loss`、梯度及学习率曲线。
+远端进程无法读取桌面端 Ports 映射，尚未确认真实外部转发 URL；本机 HTTP 验证不等同于
+外部可访问性验证。打开底部“端口”页签，找到 **6020**，点击该行实际显示的“转发地址”。
+
+运行产物：`logs/train_grid.log`、`logs/train_grid.pid`、`logs/tensorboard_grid.json`、
+`logs/grid_training_status.json`；后者记录确切绝对 logdir、进程和标量快照。
+这些文件以及数据缓存、TensorBoard event、checkpoint 均不提交 Git。
