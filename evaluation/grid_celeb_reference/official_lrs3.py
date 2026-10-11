@@ -172,7 +172,7 @@ def visual(args):
         with av.open(row['source_video']) as original:
             original_rgb=np.stack([f.to_ndarray(format='rgb24') for f in original.decode(video=0)])
         remux_rgb=torchvision.io.read_video(str(container),pts_unit='sec')[0].numpy()
-        if original_rgb.shape!=(75,288,360,3) or not np.array_equal(original_rgb,remux_rgb):
+        if original_rgb.ndim!=4 or original_rgb.shape[0]!=75 or original_rgb.shape[-1]!=3 or not np.array_equal(original_rgb,remux_rgb):
             raise ValueError('Lossless container adapter changed frames')
         with torch.inference_mode():
             mouth=loader.load_data(str(container))
