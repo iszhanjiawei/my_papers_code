@@ -463,6 +463,34 @@ def run_emosim(args):
     return emo_results
 
 
+def run_emoembed(args):
+    """Emotion2vec utterance-embedding cosine similarity.
+
+    ``run_emosim`` is kept for backward-compatible comparisons: it measures the
+    cosine similarity between classifier score vectors.  This variant uses the
+    actual utterance representation returned in ``feats``.
+    """
+    rank, test_set, ckpt_dir = args
+    device = f"cuda:{rank}"
+
+    from funasr import AutoModel
+
+    model = AutoModel(model=ckpt_dir, disable_update=True, device=device)
+
+    emo_results = []
+    for gen_wav, prompt_wav, truth in tqdm(test_set):
+        res_gen = model.generate(gen_wav, output_dir=None, granularity="utterance", extract_embedding=True)
+        res_gt = model.generate(prompt_wav, output_dir=None, granularity="utterance", extract_embedding=True)
+
+        emb_gen = torch.as_tensor(res_gen[0]["feats"]).reshape(1, -1)
+        emb_gt = torch.as_tensor(res_gt[0]["feats"]).reshape(1, -1)
+        sim = F.cosine_similarity(emb_gen, emb_gt).item()
+
+        emo_results.append({"wav": Path(gen_wav).stem, "emoembed": sim})
+
+    return emo_results
+
+
 def run_avsync(args):
     rank, test_set, gt_av_feat_dir, gen_av_feat_dir = args
     avsync_results = []

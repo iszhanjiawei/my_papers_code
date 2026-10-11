@@ -11,18 +11,66 @@
 5. 按测试列表逐项核验 WAV、特征和四份 JSONL 的覆盖与有效值。JSONL 末尾汇总行不算样本；跨视频同名 clip 应用完整相对路径区分。SPKSIM/EMOSIM/AVSync 取样本均值，WER 用各句词级编辑距离之和除以参考词总数，不能平均逐句 WER；复算结果与日志核对，展示五位小数。
 6. 交付四指标表、权重对比和产物路径；按用户要求写入 `实验结果/实验结果总汇.md`，记录实际配置、样本数、参考音频协议及 checkpoint。不同测试协议/独立训练的差值只作描述性对照；文档按本仓库 Git 规则提交，运行产物不提交。
 
-## 仓库结构
+### 长时间后台任务
 
-- `AlignDiT_mmdit_base/`：MM-DiT 基线实验。
-- `AlignDiT_mmdit_base_qknorm_ca/`：在基线上启用 RMS QK-Norm，并为文本 cross-attention 增加由时间步调制的 AdaLN/gate。
-- `AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/`：当前论文改进与 C0-C3 消融实验的主快照；分离视频交互层数、文本注入层数，并支持仅向待生成音频帧写入文本 cross-attention 残差。
-- `AlignDiT_mmdit_c2_semantic_vae/`：从上述主快照的 C2 路线独立复制出的 Semantic-VAE 实验目录；目标是把 80 维、100 Hz mel 改为 64 维、40 Hz Semantic-VAE latent。该目录必须独立演进，不得把中间改动同步回已完成的 C0-C3/D0-D2 实验。
-- `AlignDiT_mmdit_c2_semantic_vae_direct/`：从原 mel C2 重新复制的严格单变量对照；只保留 64D/40 Hz latent、25→40 Hz 视频、1:1 时间轴和 40 Hz CTC 等 Semantic-VAE 必需改动，其他网络与训练语义保持原 C2。
-- `AlignDiT_mmdit_c2_mingtok_vae/`：从原 mel C2 独立复制的 MingTok 实验；使用 raw sampled 64D/50 Hz acoustic latent、原生 25 Hz 视频和 2:1 时间轴，并从 CelebVDub 随机初始化训练，禁止加载 LibriSpeech 纯音频 AlignDiT 权重。
-- `AlignDiT_mmdit_wav_vae_base_qknorm_ca/`：为 wav/Semantic-VAE 方向保留的实验快照；当前受 Git 跟踪的源码与 `AlignDiT_mmdit_base_qknorm_ca/` 基本一致，不要仅凭目录名假定 wav VAE 已完成集成。
-- `hifigan_16k_LRS3/`：共享的 HiFi-GAN 配置与权重。权重属于二进制资产，不要修改、格式化或重新生成。
+用户明确要求在当前机器启动非 Slurm 长任务时，必须用 `setsid` 创建独立 session，不使用 `nohup`。`nohup` 可能只保护外层 Shell，而 `accelerate`/`torchrun` worker 仍留在原进程组，SSH 断开后可能收到 SIGHUP。
 
-每个 `AlignDiT_*` 目录都是一个独立的 Python 项目，包名都为 `aligndit`。仓库根目录本身不是 Python 包。
+同时避免日志缓冲：
+
+- 单个 Python 程序直接使用环境解释器和 `-u`。
+- 包含 `accelerate`/`torchrun` 的 Shell 入口设置 `PYTHONUNBUFFERED=1`。
+- 不使用 `conda run`，不套多层 `bash -c`。
+
+```bash
+# 单个 Python 长任务
+setsid env PYTHONPATH=src \
+  /zjw524/ENTER/envs/aligndit/bin/python -u path/to/script.py \
+  > path/to/task.log 2>&1 &
+
+# 已封装 accelerate/torchrun 的训练入口
+setsid env PYTHONUNBUFFERED=1 \
+  bash path/to/train_script.sh \
+  > path/to/train.log 2>&1 &
+```
+
+启动后记录返回的 PID，并确认任务已脱离控制终端（`SID` 独立且 `TTY` 为 `?`）：
+
+```bash
+ps -o pid,ppid,sid,tty,stat,cmd -p <PID>
+```
+
+不要仅凭外层 Shell 存活就判断训练正常；还要检查 worker 进程、日志持续更新及 GPU/Slurm 状态。复杂且需要复用的启动命令应写入目标实验目录的脚本或文档，不依赖临时 Shell 历史。
+
+
+### 每次训练必须提供 TensorBoard 损失曲线
+
+每次启动任何训练（包括本机、后台和 Slurm 训练）时，必须同时完成以下事项；不得只启动训练进程而不提供可访问的损失曲线：
+
+1. 确认训练器使用 TensorBoard event 文件持续记录损失，至少包含总损失和该实验实际使用的各分项损失（例如 flow/CFM、CTC 或 projection loss）。只有文本日志不算完成此要求。仅主进程写 event，避免 DDP 多 rank 重复记录；续训必须沿用或明确区分对应 run 目录。
+2. 记录本次训练的确切 TensorBoard `logdir`，并在 Devin 可访问的机器上实际启动 TensorBoard，不能只给出一条尚未运行的命令。长时服务同样使用 `setsid`，例如：
+
+   ```bash
+   setsid /zjw524/ENTER/envs/aligndit/bin/python -m tensorboard \
+     --logdir <event-logdir> --host 0.0.0.0 --port <free-port> \
+     > <tensorboard-log> 2>&1 &
+   ```
+
+   若训练在其他节点而 event 文件位于共享文件系统，则在 Devin 所在机器上对该共享 `logdir` 启动 TensorBoard。
+3. 启动后检查 TensorBoard 进程、监听端口和 HTTP 响应，并确认 event 文件会随训练更新、TensorBoard Scalars 页面能看到对应的 loss tag。端口被占用时改用一个经检查的空闲端口，不要盲目复用旧端口。
+4. 每次启动训练后都必须在交接中同时给出：训练 run 名称、TensorBoard `logdir`、TensorBoard PID、端口和可直接点击的转发地址。并明确告诉用户：打开 Devin 底部面板的“端口”页签，找到该端口的那一行，点击“转发地址”列中的具体链接。必须报告当次运行实际显示的链接，不得把示例端口或过期链接当作当前地址。
+5. TensorBoard 未成功记录 loss、未运行或无法通过转发地址访问时，不得宣称训练启动已完成；应继续排查，或如实报告阻塞原因。
+
+
+
+
+## Git 跟踪要求
+
+- 用户要求当前论文实验的每个源码、配置、启动脚本或 `AGENTS.md` 修改步骤都必须使用 Git 跟踪：检查改动范围、执行对应验证、创建独立 commit，并 push 到远端当前分支。
+- commit message 应明确说明原问题、实验语义或 bug，以及采用的解决方式；不要用无法区分实验步骤的笼统说明。
+- push 后核对本地 `HEAD` 与远端分支一致，并报告 commit hash。
+- 训练日志、Hydra outputs、TensorBoard/W&B 文件、数据集、生成样本和 checkpoint 不得加入 commit；它们属于运行产物，即使位于工作区或共享目录也只做状态检查。
+- 工作树存在与当前任务无关的用户修改时，不要覆盖、回滚或混入提交；只暂存本次目标文件。
+
 
 ## 修改前先确定实验目标
 
@@ -32,19 +80,6 @@
 4. 如果任务描述只说“AlignDiT”而无法从上下文判断目标，优先根据涉及的配置名、模型名和路径推断；仍会影响实验语义时再询问用户。
 5. 修改前后使用 `git diff -- <目标目录>` 检查范围，避免把生成文件或其他实验的变化混入。
 
-## 主要代码位置
-
-在每个实验目录中：
-
-- `src/aligndit/model/backbone/`：DiT/MM-DiT 主干网络。
-- `src/aligndit/model/cfm_*.py`：条件流匹配与采样逻辑。
-- `src/aligndit/model/trainer_*.py`：训练循环、检查点及日志。
-- `src/aligndit/model/dataset.py`：数据集与批处理。
-- `src/aligndit/config/`：Hydra 训练配置。
-- `src/aligndit/script/`：Python 训练、推理、评测和数据准备入口。
-- `src/aligndit/run/`：封装上述入口的 Shell 脚本。
-- `src/f5_tts/`、`src/cosyvoice/`、`src/gslm/`：上游/第三方代码。除非任务直接涉及它们，否则不要顺手重构或全量格式化。
-- `paper/`：论文笔记和参考资料，不是运行时源码。
 
 ## LSE-D / LSE-C 独立音画同步评测
 
@@ -158,356 +193,6 @@ source env.sh
 
 - 当前 `my_papers_code` 中的论文实验以 **CelebVDub** 为目标数据集。上游 `README.md` 仍以 LRS3 为主，不能据此把当前 CelebVDub 训练、推理或评测路径改回 LRS3。`finetune.yaml`/`finetune_celebvdub*.yaml` 等配置同时存在时，以任务指定的实验配置为准；不要混用数据列表、词表、视频特征或 checkpoint。
 - LibriSpeech 仍可用于纯音频预训练，LRS3 相关入口仍作为上游兼容代码保留；“目标数据集是 CelebVDub”不意味着可以删除这些入口。
-- 默认音频为 16 kHz，mel 为 80 维、100 Hz；视频特征通常为 1024 维、25 Hz，`audio_video_ratio=4`。修改时保持时间轴、mask、RoPE 位置和长度换算一致。
-- `n_mm_layers` 表示前若干层双流 MM-DiT，后续层为 audio-only。改变深度或分层方式时，同时检查 block 构造、CTC 中间层索引及 smoke test。
-- `qk_norm` 必须从 Hydra 配置完整传递到对应 attention；`base` 配置默认不启用，而 `qknorm_ca` 配置使用 `rms_norm`。
-- 新增模块若要从纯音频预训练检查点微调，应保持已有 audio path 的键名和张量形状兼容。新视频流、cross-attention 或 gate 参数应有明确且稳定的初始化策略。
-- 新增或重命名 Hydra 字段时，同步检查配置、模型构造、训练器和推理入口，避免只改 YAML。
-- checkpoint 的兼容加载有意允许部分新参数缺失；不要随意改成宽泛的 `strict=False` 来掩盖非预期的键名或形状错误。
 
-## 当前主实验快照与 C0-C3 消融
 
-除非用户明确指定其他快照，当前论文改进任务默认只修改：
 
-```text
-AlignDiT_mmdit_base_qknorm_ca_solve_prompt_audio/
-```
-
-当任务明确涉及 Semantic-VAE、40 Hz latent 或对应的 LibriSpeech 音频预训练时，只修改：
-
-```text
-AlignDiT_mmdit_c2_semantic_vae/
-```
-
-若任务明确要求“完全按照原 C2、只替换 Semantic-VAE 表示”，则只修改：
-
-```text
-AlignDiT_mmdit_c2_semantic_vae_direct/
-```
-
-当任务明确涉及 MingTok 64D/50 Hz acoustic latent、50 Hz CTC 或 CelebVDub scratch C2 时，只修改：
-
-```text
-AlignDiT_mmdit_c2_mingtok_vae/
-```
-
-该快照的 MingTok 权重只用于离线 latent 提取、训练样本日志解码和推理解码，不属于“纯音频 AlignDiT
-预训练权重”。训练入口不得调用 `Trainer_VT.finetune()`；首次训练保持模型构造时的随机/AdaLN-Zero
-初始化，实验自身 checkpoint 的恢复行为与原 C2 相同。除 MingTok 表示必需改动外，不得加入原 C2
-不存在的文本归一化、梯度监控、mask、CTC 类别映射或 checkpoint 策略变更。固定实验契约见该目录的
-`MINGTOK_C2.md`。
-
-不要使用未完成且可能含本地运行产物的 `AlignDiT_mmdit_wav_vae_base_qknorm_ca/`，也不要覆盖原 C2 mel 快照。
-
-### Semantic-VAE 40 Hz 音频 warm-start 主线
-
-LibriSpeech 960h 的 64D/40 Hz fixed posterior latent、同长度 40 Hz HuBERT 和 train-only mean/std
-缓存已经完成。原 6×A40、500k scratch 任务因耗时过长由用户明确停止；该目录仅保留至 update 3500
-的完整可恢复 checkpoint，不得把它误报成仍在运行的正式主线，也不要删除其 contract/checkpoint。
-
-当前主线从 mel 500k 的 **EMA** 严格迁移可兼容音频主干，再用四个独立任务逐步适配表示变化。
-当前实现基线为 commit `8dc2a447f81f0615f63a0247c9e852c494ce32c9`。各阶段的实时运行状态不得
-写死在本文件中，应从日志、进程和 checkpoint 元数据读取。
-
-| 阶段 | 更新数 | 可训练范围 | projection loss |
-|---|---:|---|---:|
-| S1 | 10k | 新 64D input/output interface | 0 |
-| S2a | 10k | interface、conv-pos、norm-out、blocks 12–17 | 0 |
-| S2b | 10k | interface、conv-pos、norm-out、blocks 6–17 | 0 |
-| S2c | 70k | 全音频主干与新 40 Hz projector | 0→0.1/5k ramp |
-
-固定入口如下：
-
-| 用途 | 入口 |
-|---|---|
-| 严格迁移/冻结策略 | `src/aligndit/model/semantic_vae_warmstart.py` |
-| 阶段训练器 | `src/aligndit/model/trainer_semantic_vae_warmstart.py` |
-| Hydra 入口 | `src/aligndit/script/train/pretrain_semantic_vae_warmstart.py` |
-| S1/S2a/S2b/S2c 配置 | `src/aligndit/config/pretrain_semantic_vae_warmstart_*.yaml` |
-| 6×A40 launcher | `src/aligndit/run/train/pretrain_semantic_vae_warmstart_6xa40.sh <stage>` |
-| 6×A40 自动串联 | `src/aligndit/run/train/pretrain_semantic_vae_warmstart_chain_6xa40.sh <start_stage>` |
-| 完成权重校验 | `src/aligndit/script/misc/validate_semantic_vae_warmstart_checkpoint.py` |
-
-S1 只允许读取 `/zjw524/datasets/AlignDiT_pretrain_LibriSpeech_500000.pt` 的 EMA，必须核验其 SHA256
-`4a9fc0e526ce47745aee839348406ca99597d32f5ed028bda42a3de3ec900fcd` 和 update 500000。64D
-RMS-QKNorm 目标有 313 个 state keys：加载 263 个；显式重置 input/output interface、40 Hz projector
-和旧权重中不存在的 36 个 Q/K RMSNorm，共 50 个；只接受 3 个已知维度冲突。禁止用宽泛
-`strict=False` 掩盖 schema drift。
-
-跨阶段只能加载相邻阶段完成 checkpoint 的 EMA weights；online weights、optimizer、scheduler、EMA
-计数和阶段 update 全部重建。同阶段恢复则必须严格恢复全部状态并匹配 immutable
-`training_contract.json`。阶段目录禁止混入 `pretrained_*.pt` 或 safetensors。S2c 的 scheduler/contract
-固定为 70k；首次运行默认停在 S2c 20k（累计 50k）做门禁，通过后设置
-`RUN_UNTIL_UPDATE=70000` 恢复同一阶段。
-
-用户明确选择无人值守完成整条纯音频适配时，可使用自动串联入口。它对 S2c 直接设置
-`RUN_UNTIL_UPDATE=70000`，仍按 10k 周期保留包括 S2c 20k 在内的中间权重，但不等待人工门禁。
-串联器必须持有单实例文件锁、在每阶段开始前拒绝已占用的目标 GPU，并且只有 launcher 零退出且
-`model_last.pt`、最终编号权重、EMA step、stage/update 和 training contract 全部校验通过后，才能进入
-下一阶段。该入口只覆盖纯音频 S1-S2c，禁止隐式启动 C2/S3 多模态训练。
-
-6×A40 默认使用 GPU 2–7、`7200 frames/GPU @ 40 Hz`、`max_samples=32`、BF16 和 seed 666；这与
-旧 mel 预训练 `8 × 13500 frames @ 100 Hz` 的每 update 全局音频秒数一致。缓存根目录为：
-
-```text
-${ROOT_PREFIX}/zjw524/projects/data/LibriSpeech_svae1000k_sample_seed666_fp32
-```
-
-当前 A40 服务器的真实 2-rank canary 证明 DDP 同步必须设置 `NCCL_P2P_DISABLE=1` 和
-`NCCL_IB_DISABLE=1`；launcher 已默认设置。开启这两个传输路径会在 DDP 参数同步时挂住。其他服务器
-只有完成独立 NCCL canary 后才可显式覆盖为 0。
-
-CelebVDub 的 79,826 个 64D/40 Hz latent、25→40 Hz 视频 cache、CTC-valid manifest 和固定
-LibriSpeech train normalization 已完成并通过全量校验。旧 S3a→S3b 训练策略已确认失稳：无输出归一化的
-文本 ConvNeXt 塔发生尺度爆炸，经 12 层文本 CA 放大后使 global grad norm 溢出，旧 trainer 又静默把梯度
-裁成 0。旧 S3b 的全部 checkpoint（包括 50k、100k、115k 和 `model_last.pt`）只保留故障审计，禁止
-续训、正式评测或作为父权重；旧 S3a 5k 同样不得作为父权重。
-
-早前的稳定化 CelebVDub 路线从 S2c 70k EMA 启动连续 200k 的单阶段 `s3`，不在 5k 边界重置
-optimizer/scheduler/EMA。该路线保留用于审计，但它包含相对原 C2 新增的优化变量：
-
-| 用途 | 路径 |
-|---|---|
-| 配置 | `src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_s3.yaml` |
-| 4×4090 launcher | `src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_single_stage_4x4090.sh` |
-| checkpoint | `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_s3_single_stage_v2_40hz_CelebVDub_char` |
-
-该策略固定 20k warmup、CTC 0→0.1/20k ramp、按风险拆分的 8 类学习率，并在所有文本 CA 前使用无参数
-LayerNorm。训练器必须记录 `grad_norm/global`、分组 grad norm、raw/post text RMS；raw text RMS > 3、
-global pre-clip norm > 100 或任一非有限值时必须在 `optimizer.step()` 前同步终止。首次只跑到 20k 做门禁；
-门禁通过后才从同一 `model_last.pt` 原样恢复到 200k。实时状态仍须从进程、日志、TensorBoard 和 checkpoint
-元数据读取。训练侧已可运行；反归一化、Semantic-VAE 解码及正式推理评测仍需在使用前单独验收。
-
-### Semantic-VAE Direct-C2 严格单变量实验
-
-当前用于回答“只替换 Semantic-VAE 表示是否有效”的正式实验位于
-`AlignDiT_mmdit_c2_semantic_vae_direct/`。它从 S2c 70k EMA 重新开始，不能从任何旧 Semantic
-CelebVDub checkpoint 续作父权重。它严格复刻原 C2：18 层、前 12 层 MM-DiT、后 6 层原生无文本
-音频 DiT、统一 AdamW `5e-5`、20k warmup、固定 CTC `0.1`、单阶段全参数训练和 200 epochs。EMA 配置
-只传 `beta=0.999`，保留原 C2 的 `update_after_step=100`、`update_every=10` 默认语义。
-
-只允许以下表示变化：80D/100 Hz mel 改成固定规范化的 64D/40 Hz latent；视频25 Hz离线插值到与
-latent逐帧等长的40 Hz；音视频比例4改1；视频RoPE不再乘4；CTC stride从`[2,1]`改`[1,1]`；每卡
-frame batch从9000改3600以保持90秒/GPU。训练使用完整`train.jsonl` 79,613条，与原mel C2逐条对应。
-其中105条40 Hz CTC不可行记录仍参加diffusion loss，仅依靠原 C2 的`zero_infinity=True`将其CTC项置零；
-不得换成79,508条过滤集，否则会额外改变训练数据。
-
-固定入口如下：
-
-| 用途 | 路径 |
-|---|---|
-| 实验契约 | `SEMANTIC_VAE_DIRECT_C2.md` |
-| 配置 | `src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_direct.yaml` |
-| Python入口 | `src/aligndit/script/train/finetune_semantic_vae_c2_direct.py` |
-| 4×4090 launcher | `src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_direct_4x4090.sh` |
-| 真实权重/数据/CUDA smoke | `src/aligndit/script/misc/smoke_test_semantic_vae_c2_direct.py` |
-
-该实验禁止加入S3a/S3b、冻结、分组学习率、CTC ramp、额外text LayerNorm、raw RMS硬停止、强制训练
-attention mask、CTC hidden 2048或显式200k scheduler horizon。工程侧可以保留不改变数值轨迹的哈希、
-schema、resume及非有限值检查。
-
-Direct-C2 已于 2026-08-12 跑到约 208.9k，并确认从约 29.9k 起失稳：50k/100k/150k/200k 的
-Adam 一阶矩已经衰减到 0/FP32 最小次正规数，150k->200k 只有 AdamW decay，没有有效梯度学习。
-因此该目录下原 Direct 输出全部只用于故障审计，禁止续训、评测或作为父权重。严格对照证明“只改 VAE
-接口、继续使用旧全局 LR=5e-5”在本设置下不可行；不能再次原样重跑并称为修复。
-
-当前修复保留在同一快照中的独立 minimal-fix 实验，不覆盖 Direct 配置。
-minimal-fix v1 已经退役，仅保留事故审计；当前配置和训练策略为 v2：
-
-| 用途 | 路径 |
-|---|---|
-| 配置 | `src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_minimal_fix.yaml` |
-| 4×4090 launcher | `src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_minimal_fix_4x4090.sh` |
-| CPU smoke | `src/aligndit/script/misc/smoke_test_semantic_vae_c2_minimal_fix.py` |
-| v1 事故目录 | `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v1_40hz_CelebVDub_char` |
-| v2 正式 checkpoint | `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_minimal_fix_v2_40hz_CelebVDub_char` |
-
-minimal-fix 仍为完整 79,613 条数据、连续单阶段、全参数、单一 AdamW、固定 CTC=0.1 和 12MM+12text；
-仅在 12 层文本 CA 的共享 context 前增加一次无参数 padding-safe LayerNorm，并把已证伪的全局 LR 从
-`5e-5` 降为 `1e-5`。它禁止冻结、阶段重启、分组 LR 和 CTC ramp。训练器在 native clipping 前计算
-scale-safe pre-clip norm。v2 对 NaN/Inf、`<=1e-12` 或 `>1e6` 仍在 optimizer step 前同步
-fail-fast；有限 norm `>100` 只是软告警，由主 rank 把当前 loss/text RMS 和最大的 12 个参数梯度
-写入 `gradient_spikes.jsonl`，然后仍执行 `max_grad_norm=1.0` 的 native clipping 和正常 optimizer step。raw
-text RMS 只记录，post RMS 必须约为 1。checkpoint 使用原子写并绑定
-policy/seed=666/world-size=4/data/parent/config contract；禁止跨实验恢复。v2 必须在独立新目录从
-干净 S2c 70k EMA 重新开始，不得从 v1 续训。代码 smoke 只证明故障保护生效，正式长期验收必须
-跨过旧 30k 和 85-90k 危险区，并审计 50k/100k optimizer moments。
-
-minimal-fix v1 在 2026-08-12 15:02:47 于已成功完成 `global_update=3205` 后停止。下一个 batch
-的 scale-safe pre-clip norm 为有限的 `112.313166`，因 v1 把人工阈值 100 误当成数值故障而被
-4/4 ranks 同步误杀。上一个已成功 TensorBoard step 3205 仍正常：`loss=1.8125`、
-`diff=1.4596`、`CTC=3.5292`、`grad_norm=0.2874`、raw/post text RMS=`1.3489/1.0000`。这不是
-网络中断、VAE/latent 数据错误、loss 爆炸、NaN/Inf 或旧式静默零梯度。v1 尚未到 5k，因而没有
-`model_last.pt` 或 5k 编号 checkpoint，v1 目录不能 exact resume，也不能作为 v2 父权重。
-
-四组实验均使用深度 18、前 12 层 MM-DiT、CelebVDub、字符 tokenizer、RMS QK-Norm、BF16 和相同的动态 frame batch。只允许按下表改变文本注入层数和参考音频隔离开关：
-
-| 实验 | `n_mm_layers` | `n_text_layers` | `prompt_isolated_ca` | 语义 |
-|---|---:|---:|---|---|
-| C0 | 12 | 18 | `False` | 18 层全局文本 CA；参考音频帧也接收文本残差 |
-| C1 | 12 | 18 | `True` | 18 层文本 CA；文本残差只写入待生成音频帧 |
-| C2 | 12 | 12 | `False` | 前 12 层全局文本 CA；后 6 层为无文本 audio-only DiT |
-| C3 | 12 | 12 | `True` | 前 12 层隔离文本 CA；后 6 层为无文本 audio-only DiT |
-
-配置和单机 4×RTX 4090 启动入口固定映射如下：
-
-| 实验 | Hydra 配置 | 启动脚本 |
-|---|---|---|
-| C0 | `finetune_celebvdub_mm_c0.yaml` | `finetune_celebvdub_mm_c0_4x4090.sh` |
-| C1 | `finetune_celebvdub_mm_c1.yaml` | `finetune_celebvdub_mm_c1_4x4090.sh` |
-| C2 | `finetune_celebvdub_mm_c2.yaml` | `finetune_celebvdub_mm_c2_4x4090.sh` |
-| C3 | `finetune_celebvdub_mm.yaml` | `finetune_celebvdub_mm_c3_4x4090.sh` |
-
-注意 C3 使用主配置 `finetune_celebvdub_mm.yaml`，不存在必须另建的 `finetune_celebvdub_mm_c3.yaml`。四个 `4x4090` 启动脚本均绑定 GPU 0-3，使用不同端口，并保持 `OMP_NUM_THREADS=1`。曾测试 C3 使用 `OMP_NUM_THREADS=4`，200 updates 仅从 2:18 缩短至 2:15，差异接近运行波动，已恢复为 1。
-
-### D0：6+12 层比例与单层 CTC
-
-在 C0-C3 完成后，新增 D0 用于验证参考论文常用的约 1:2 多模态/单模态层比例。D0 不覆盖或改写任何 C0-C3 配置：
-
-| 实验 | `n_mm_layers` | `n_text_layers` | `prompt_isolated_ca` | `layer_indices_ctc` | 语义 |
-|---|---:|---:|---|---|---|
-| D0 | 6 | 6 | `False` | `[11]` | 前 6 层为全局文本 CA 的 MM-DiT；后 12 层为无视频、无文本 CA 的原生音频 DiT；唯一 CTC 头接在第 12 个 block 后 |
-
-注意 `layer_indices_ctc` 使用零基索引，因此 `[11]` 表示第 12 个 block 执行完成后。D0 的入口固定为：
-
-| Hydra 配置 | 单机 4×RTX 4090 启动脚本 |
-|---|---|
-| `finetune_celebvdub_mm_d0_6mm12audio_ctc12.yaml` | `finetune_celebvdub_mm_d0_6mm12audio_ctc12_4x4090.sh` |
-
-D0 显式设置顶层 `seed: 666`。训练入口在模型构造前用该 seed 固定新增参数初始化，再在 Accelerate 初始化后使用 `seed + process_index` 生成各 DDP rank 的训练随机流；动态 batch sampler 继续使用原始实验 seed。没有顶层 `seed` 的历史 C0-C3 配置保持原有行为，避免改变已完成实验的语义。
-
-### D1-D2：双层 CTC 与分阶段文本注入
-
-D1-D2 用于拆分 D0 的高 WER 是来自 CTC 深监督不足，还是来自第 6 层后过早停止文本注入。两组都保持 D0 的深度、前 6 层 MM-DiT、全局文本残差、随机种子和 `ctc_lambda: 0.1`；多个 CTC loss 在应用 `ctc_lambda` 前取平均，因此不会扩大总辅助损失权重。
-
-| 实验 | Blocks 0-5 | Blocks 6-11 | Blocks 12-17 | `layer_indices_ctc` | 主要对照 |
-|---|---|---|---|---|---|
-| D1 | MM-DiT + 文本 CA | 原生音频 DiT | 原生音频 DiT | `[5, 11]` | 相对 D0 增加 MM 阶段出口的 CTC 深监督 |
-| D2 | MM-DiT + 文本 CA | `AudioTextDiTBlock` + 文本 CA | 原生音频 DiT | `[5, 11]` | 相对 D1 只增加中间 6 层文本 CA |
-
-`layer_indices_ctc` 是全局零基 block 索引，CTC 头在对应 block 执行完成后读取隐藏状态。因此 `[5, 11]` 严格表示第 6、12 个 block 后，分别监督 D2 的 MM 阶段出口和文本阶段出口。已有 C2 使用 `[6, 12]`，即第 7、13 个 block 后；比较 D2 与 C2 时不能把全部差异仅归因于 MM-DiT 层数。
-
-| 实验 | Hydra 配置 | 单机 4×RTX 4090 启动脚本 |
-|---|---|---|
-| D1 | `finetune_celebvdub_mm_d1_6mm12audio_dual_ctc6_12.yaml` | `finetune_celebvdub_mm_d1_6mm12audio_dual_ctc6_12_4x4090.sh` |
-| D2 | `finetune_celebvdub_mm_d2_6mm6text6audio_dual_ctc6_12.yaml` | `finetune_celebvdub_mm_d2_6mm6text6audio_dual_ctc6_12_4x4090.sh` |
-
-D1 与 D2 必须各自从相同的 LibriSpeech 预训练权重开始训练，不能从 D0 或彼此的中途 checkpoint 续训。D1/D2 启动脚本分别使用端口 `29565`/`29566`；若在同一服务器并行启动，仍需为每个实验分配互不重叠的 GPU。
-
-训练日志位于该快照的 `logs/`，checkpoint 位于 `/zjw524/projects/data/ckpts/` 下以各配置 `model.name` 命名的目录。日志和 checkpoint 由多台服务器通过共享文件系统写入；检查远端训练状态时，应同时确认：
-
-1. 日志大小和 mtime 持续变化；
-2. 最新 `Epoch ... update=...` 持续推进；
-3. 日志末尾无 traceback、OOM、NaN、NCCL/ChildFailed 错误；
-4. `model_last.pt` 和 `model_<update>.pt` 按配置周期正常生成。
-
-不要把某一时刻的 epoch、update、PID、ETA 写进本文件；这些信息会很快过期，应在交接时从实时日志重新计算。
-
-## 已知暂缓项
-
-- `AlignDiT_mmdit_wav_vae_base_qknorm_ca/` 尚未真正接入 wav/Semantic-VAE；除非用户重新指定，不要在当前 C0-C3 工作中补做。
-- batch 大于 1 的旧推理视频 mask 存在已知方向问题，但当前正式推理入口固定 `infer_batch_size=1`；用户已明确要求暂缓，不要顺手修改。
-
-## 代码风格
-
-- 遵循各项目的 `ruff.toml`：Python 3.10，行宽 120。
-- 保持现有导入方式和类型/张量命名风格；注释应解释形状、时间对齐或实验动机，避免复述代码。
-- 对第三方目录只格式化实际修改的文件，不运行会重写整个 `src/` 的批量格式化。
-- Shell 脚本应可从对应项目根目录执行；修改后至少运行 `bash -n`。
-- 不要手工编辑 `.pyc`、日志、重建音频、Hydra `outputs/`、`wandb/`、checkpoint 或其他生成物。
-
-## 验证
-
-根据改动范围选择最小但充分的验证。先在目标实验目录执行：
-
-```bash
-# Python 静态检查；将路径限制在改过的文件
-ruff check path/to/changed.py
-ruff format --check path/to/changed.py
-python -m py_compile path/to/changed.py
-
-# Shell 语法
-bash -n path/to/changed.sh
-```
-
-修改 MM-DiT、CFM、mask、采样或 checkpoint 兼容逻辑时，运行该快照的 CPU smoke test：
-
-```bash
-PYTHONPATH=src python -u src/aligndit/script/misc/smoke_test_mmdit.py
-```
-
-它应覆盖模型构造、前反向传播、模态丢弃、采样和预训练键兼容；本地没有预训练权重时，对应兼容检查会跳过，应在结果中如实说明。仓库没有统一的 pytest 测试套件，不要声称“全部测试通过”而只做了语法检查。
-
-`scripts/smoke_vae.py` 不是普通单元测试：它依赖仓库外的 Semantic-VAE、CelebVDub 和模型权重，会自动选择 CUDA，并写入 `scripts/smoke_vae_output/`。仅在任务明确涉及 VAE 且外部资源齐全时运行。
-
-## 训练、评测与资源安全
-
-- 不要为了验证小改动而启动训练、推理、评测、数据预处理、下载或 Slurm 作业。
-- `sbatch_train_*.sh` 和 `src/aligndit/run/train/*slurm.sh` 会申请多张 GPU，并使用特定节点、网卡、端口和外部数据路径；只有用户明确要求启动作业时才执行。
-- 若用户要求运行重任务，先确认目标快照、配置、checkpoint、输出目录和当前 GPU/Slurm 状态，防止覆盖或续训错误实验。
-- 不要提交数据集、模型 checkpoint、日志、生成音频或新的大文件。若任务必须更新二进制资产，先向用户确认。
-
-### 每次训练必须提供 TensorBoard 损失曲线
-
-每次启动任何训练（包括本机、后台和 Slurm 训练）时，必须同时完成以下事项；不得只启动训练进程而不提供可访问的损失曲线：
-
-1. 确认训练器使用 TensorBoard event 文件持续记录损失，至少包含总损失和该实验实际使用的各分项损失（例如 flow/CFM、CTC 或 projection loss）。只有文本日志不算完成此要求。仅主进程写 event，避免 DDP 多 rank 重复记录；续训必须沿用或明确区分对应 run 目录。
-2. 记录本次训练的确切 TensorBoard `logdir`，并在 Devin 可访问的机器上实际启动 TensorBoard，不能只给出一条尚未运行的命令。长时服务同样使用 `setsid`，例如：
-
-   ```bash
-   setsid /zjw524/ENTER/envs/aligndit/bin/python -m tensorboard \
-     --logdir <event-logdir> --host 0.0.0.0 --port <free-port> \
-     > <tensorboard-log> 2>&1 &
-   ```
-
-   若训练在其他节点而 event 文件位于共享文件系统，则在 Devin 所在机器上对该共享 `logdir` 启动 TensorBoard。
-3. 启动后检查 TensorBoard 进程、监听端口和 HTTP 响应，并确认 event 文件会随训练更新、TensorBoard Scalars 页面能看到对应的 loss tag。端口被占用时改用一个经检查的空闲端口，不要盲目复用旧端口。
-4. 每次启动训练后都必须在交接中同时给出：训练 run 名称、TensorBoard `logdir`、TensorBoard PID、端口和可直接点击的转发地址。并明确告诉用户：打开 Devin 底部面板的“端口”页签，找到该端口的那一行，点击“转发地址”列中的具体链接。必须报告当次运行实际显示的链接，不得把示例端口或过期链接当作当前地址。
-5. TensorBoard 未成功记录 loss、未运行或无法通过转发地址访问时，不得宣称训练启动已完成；应继续排查，或如实报告阻塞原因。
-
-### 长时间后台任务
-
-用户明确要求在当前机器启动非 Slurm 长任务时，必须用 `setsid` 创建独立 session，不使用 `nohup`。`nohup` 可能只保护外层 Shell，而 `accelerate`/`torchrun` worker 仍留在原进程组，SSH 断开后可能收到 SIGHUP。
-
-同时避免日志缓冲：
-
-- 单个 Python 程序直接使用环境解释器和 `-u`。
-- 包含 `accelerate`/`torchrun` 的 Shell 入口设置 `PYTHONUNBUFFERED=1`。
-- 不使用 `conda run`，不套多层 `bash -c`。
-
-```bash
-# 单个 Python 长任务
-setsid env PYTHONPATH=src \
-  /zjw524/ENTER/envs/aligndit/bin/python -u path/to/script.py \
-  > path/to/task.log 2>&1 &
-
-# 已封装 accelerate/torchrun 的训练入口
-setsid env PYTHONUNBUFFERED=1 \
-  bash path/to/train_script.sh \
-  > path/to/train.log 2>&1 &
-```
-
-启动后记录返回的 PID，并确认任务已脱离控制终端（`SID` 独立且 `TTY` 为 `?`）：
-
-```bash
-ps -o pid,ppid,sid,tty,stat,cmd -p <PID>
-```
-
-不要仅凭外层 Shell 存活就判断训练正常；还要检查 worker 进程、日志持续更新及 GPU/Slurm 状态。复杂且需要复用的启动命令应写入目标实验目录的脚本或文档，不依赖临时 Shell 历史。
-
-## 完成任务时
-
-说明：
-
-- 修改了哪个实验快照以及为什么没有（或为什么需要）同步其他快照；
-- 执行了哪些检查及其结果；
-- 哪些检查因 GPU、数据集、外部仓库或 checkpoint 不可用而未运行；
-- 若改变了模型结构或配置，指出 checkpoint 兼容性和预期实验语义。
-
-## Git 跟踪要求
-
-- 用户要求当前论文实验的每个源码、配置、启动脚本或 `AGENTS.md` 修改步骤都必须使用 Git 跟踪：检查改动范围、执行对应验证、创建独立 commit，并 push 到远端当前分支。
-- commit message 应明确说明原问题、实验语义或 bug，以及采用的解决方式；不要用无法区分实验步骤的笼统说明。
-- push 后核对本地 `HEAD` 与远端分支一致，并报告 commit hash。
-- 训练日志、Hydra outputs、TensorBoard/W&B 文件、数据集、生成样本和 checkpoint 不得加入 commit；它们属于运行产物，即使位于工作区或共享目录也只做状态检查。
-- 工作树存在与当前任务无关的用户修改时，不要覆盖、回滚或混入提交；只暂存本次目标文件。

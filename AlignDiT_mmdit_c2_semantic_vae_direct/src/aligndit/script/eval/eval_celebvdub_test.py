@@ -14,7 +14,7 @@ from importlib.resources import files
 import numpy as np
 from jiwer import compute_measures
 
-from aligndit.script.eval.utils import get_celebvdub_test, run_asr_wer, run_avsync, run_emosim
+from aligndit.script.eval.utils import get_celebvdub_test, run_asr_wer, run_avsync, run_emoembed, run_emosim
 from f5_tts.eval.utils_eval import run_sim
 
 
@@ -23,7 +23,13 @@ rel_path = str(files("aligndit").joinpath("../../"))
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--eval_task", type=str, default="sim", choices=["sim", "wer", "emosim", "avsync"])
+    parser.add_argument(
+        "-e",
+        "--eval_task",
+        type=str,
+        default="sim",
+        choices=["sim", "wer", "emosim", "emoembed", "avsync"],
+    )
     parser.add_argument("-l", "--lang", type=str, default="en")
     parser.add_argument("-g", "--gen_wav_dir", type=str, required=True)
     parser.add_argument("-n", "--gpu_nums", type=int, default=8, help="Number of GPUs to use")
@@ -112,6 +118,20 @@ def main():
         with open(result_path, "w") as f:
             for line in full_results:
                 metrics.append(line["emosim"])
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            metric = round(np.mean(metrics), 5)
+            f.write(f"\n{eval_task.upper()}: {metric}\n")
+
+    elif eval_task == "emoembed":
+        with mp.Pool(processes=len(gpus)) as pool:
+            pool_args = [(rank, sub_test_set, args.emo_ckpt) for (rank, sub_test_set) in test_set]
+            results = pool.map(run_emoembed, pool_args)
+            for r in results:
+                full_results.extend(r)
+
+        with open(result_path, "w") as f:
+            for line in full_results:
+                metrics.append(line["emoembed"])
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
             metric = round(np.mean(metrics), 5)
             f.write(f"\n{eval_task.upper()}: {metric}\n")

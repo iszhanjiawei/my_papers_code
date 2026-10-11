@@ -20,6 +20,7 @@ CODEC_DIRS=(
   acoustic_vae_dim64_sample
   semantic_vae_600k_sample
   semantic_vae_1000k_sample
+  mingtok_acoustic_64d_sample
 )
 
 env PYTHONPATH=src "${PYTHON}" -u \
@@ -37,7 +38,9 @@ for codec_dir in "${CODEC_DIRS[@]}"; do
       --gen_wav_dir "${gen_dir}" \
       --gpu_nums 1 \
       --wavlm_ckpt "${DATA_ROOT}/wavlm_large_finetune.pth" \
-      --wavlm_base_ckpt "${DATA_ROOT}/wavlm_large_s3prl.pt"
+      --wavlm_base_ckpt "${DATA_ROOT}/wavlm_large_s3prl.pt" \
+      --test-list "${DATA_ROOT}/celebvdub_test_s1.lst" \
+      --celebvdub-root "${DATA_ROOT}/CelebVDub"
   fi
 
   if [[ ! -f "${gen_dir}/_wer_results.jsonl" ]]; then
@@ -46,7 +49,9 @@ for codec_dir in "${CODEC_DIRS[@]}"; do
       --eval_task wer \
       --gen_wav_dir "${gen_dir}" \
       --gpu_nums 1 \
-      --asr_ckpt "${DATA_ROOT}/faster-whisper-large-v3"
+      --asr_ckpt "${DATA_ROOT}/faster-whisper-large-v3" \
+      --test-list "${DATA_ROOT}/celebvdub_test_s1.lst" \
+      --celebvdub-root "${DATA_ROOT}/CelebVDub"
   fi
 
   if [[ ! -f "${gen_dir}/_emosim_results.jsonl" ]]; then
@@ -55,7 +60,9 @@ for codec_dir in "${CODEC_DIRS[@]}"; do
       --eval_task emosim \
       --gen_wav_dir "${gen_dir}" \
       --gpu_nums 1 \
-      --emo_ckpt "${DATA_ROOT}/emotion2vec_plus_large"
+      --emo_ckpt "${DATA_ROOT}/emotion2vec_plus_large" \
+      --test-list "${DATA_ROOT}/celebvdub_test_s1.lst" \
+      --celebvdub-root "${DATA_ROOT}/CelebVDub"
   fi
 
   env PYTHONPATH="${FAIRSEQ_ROOT}:src" "${PYTHON}" -u \
@@ -74,7 +81,9 @@ for codec_dir in "${CODEC_DIRS[@]}"; do
       --eval_task avsync \
       --gen_wav_dir "${gen_dir}" \
       --gpu_nums 1 \
-      --gt_av_feat "${GT_AV_FEAT}"
+      --gt_av_feat "${GT_AV_FEAT}" \
+      --test-list "${DATA_ROOT}/celebvdub_test_s1.lst" \
+      --celebvdub-root "${DATA_ROOT}/CelebVDub"
   fi
 done
 

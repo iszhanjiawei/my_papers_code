@@ -12,8 +12,8 @@ from typing import Any
 import numpy as np
 import torch
 import torchaudio
+from hydra import compose, initialize_config_dir
 from hydra.utils import get_class
-from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from aligndit.model.cfm_vt import CFM_VT
@@ -29,7 +29,7 @@ from aligndit.script.eval.semantic_vae_decoder import (
 from f5_tts.model.utils import get_tokenizer
 
 
-EXPECTED_POLICY = "semantic-vae40-c2-one-stage-minimal-fix-v2"
+EXPECTED_MINIMAL_FIX_POLICY = "semantic-vae40-c2-one-stage-minimal-fix-v2"
 EXPECTED_TEST_COUNT = 213
 
 
@@ -98,8 +98,15 @@ def load_normalization(path: Path) -> tuple[np.ndarray, np.ndarray, dict[str, An
     return mean, std, metadata
 
 
+def load_composed_config(config_path: Path):
+    """Load both standalone and defaults-based Hydra experiment configs."""
+
+    with initialize_config_dir(version_base="1.3", config_dir=str(config_path.parent)):
+        return compose(config_name=config_path.stem)
+
+
 def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, device: torch.device) -> CFM_VT:
-    config = OmegaConf.load(config_path)
+    config = load_composed_config(config_path)
     arch = config.model.arch
     representation = config.model.audio_representation
     required_arch = {
@@ -110,9 +117,9 @@ def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, de
     }
     for key, expected in required_arch.items():
         if int(arch[key]) != expected:
-            raise RuntimeError(f"Expected minimal-fix v2 {key}={expected}, got {arch[key]}")
-    if not bool(arch.normalize_text_context) or bool(arch.prompt_isolated_ca) or bool(arch.video_rope_scaled):
-        raise RuntimeError("The selected config is not the global-text minimal-fix v2 C2 architecture")
+            raise RuntimeError(f"Expected Semantic-VAE C2 {key}={expected}, got {arch[key]}")
+    if bool(arch.prompt_isolated_ca) or bool(arch.video_rope_scaled):
+        raise RuntimeError("The selected config is not the global-text, shared-40-Hz-RoPE C2 architecture")
     if (
         int(representation.channels) != LATENT_DIM
         or int(representation.frame_rate) != 40
@@ -134,10 +141,26 @@ def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, de
     )
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=True)
-    if checkpoint.get("checkpoint_schema_version") != 1:
-        raise RuntimeError("Unsupported AlignDiT checkpoint schema")
-    if checkpoint.get("training_policy") != EXPECTED_POLICY:
-        raise RuntimeError(f"Checkpoint is not minimal-fix v2: {checkpoint.get('training_policy')!r}")
+    checkpoint_schema = checkpoint.get("checkpoint_schema_version")
+    training_policy = checkpoint.get("training_policy")
+    if checkpoint_schema is not None or training_policy is not None:
+        if checkpoint_schema != 1 or training_policy != EXPECTED_MINIMAL_FIX_POLICY:
+            raise RuntimeError(
+                "Unsupported guarded checkpoint contract: "
+                f"schema={checkpoint_schema!r}, policy={training_policy!r}"
+            )
+    else:
+        expected_keys = {
+            "ema_model_state_dict",
+            "model_state_dict",
+            "optimizer_state_dict",
+            "scheduler_state_dict",
+            "update",
+        }
+        if set(checkpoint) != expected_keys:
+            raise RuntimeError(
+                f"Unsupported historical Direct-C2 checkpoint keys: {sorted(set(checkpoint) - expected_keys)}"
+            )
     if checkpoint.get("update") != expected_step:
         raise RuntimeError(f"Checkpoint update mismatch: {checkpoint.get('update')} != {expected_step}")
     ema_state = checkpoint.get("ema_model_state_dict")
@@ -303,7 +326,7 @@ def parse_args() -> argparse.Namespace:
     data_root = workspace / "../data"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--step", type=int, required=True, choices=[150000, 200000])
+    parser.add_argument("--step", type=int, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
         "--config",

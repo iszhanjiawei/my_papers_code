@@ -27,33 +27,33 @@ from f5_tts.model.modules import (
 
 # Text embedding
 
-
+# text_dim = 512. 
 class TextEmbedding(nn.Module):
     def __init__(
         self, text_num_embeds, text_dim, mask_padding=True, average_upsampling=False, conv_layers=0, conv_mult=2
     ):
         super().__init__()
         self.text_embed = nn.Embedding(text_num_embeds + 1, text_dim)  # use 0 as filler token
-
+        # 如果为 True，每个 ConvNeXt block 前后会将 padding 位置置零。
         self.mask_padding = mask_padding  # mask filler and batch padding tokens or not
         self.average_upsampling = average_upsampling  # zipvoice-style text late average upsampling (after text encoder)
         if average_upsampling:
             assert mask_padding, "text_embedding_average_upsampling requires text_mask_padding to be True"
 
-        if conv_layers > 0:
+        if conv_layers > 0: # conv_layers：使用多少个 ConvNeXtV2 block 
             self.extra_modeling = True
             self.precompute_max_pos = 4096  # ~44s of 24khz audio
             self.register_buffer("freqs_cis", precompute_freqs_cis(text_dim, self.precompute_max_pos), persistent=False)
-            self.text_blocks = nn.Sequential(
+            self.text_blocks = nn.Sequential(  # conv_mult：ConvNeXt 中间层宽度倍数。
                 *[ConvNeXtV2Block(text_dim, text_dim * conv_mult) for _ in range(conv_layers)]
-            )
+            ) # 每一层都保持输入输出形状：[B, L, 512] → [B, L, 512] 但是内部先将通道扩展到 1024，再压回 512 
         else:
             self.extra_modeling = False
 
-    def average_upsample_text_by_mask(self, text, text_mask, audio_mask):
+    def average_upsample_text_by_mask(self, text, text_mask, audio_mask): # 有效文本 token 重复扩展到有效音频帧长度。
         batch, text_len, text_dim = text.shape
 
-        if audio_mask is None:
+        if audio_mask is None: # text_mask:  [B, L]，True 表示有效文本.  audio_mask: [B, L]，True 表示有效音频
             audio_mask = torch.ones_like(text_mask, dtype=torch.bool)
         valid_mask = audio_mask & text_mask
         audio_lens = audio_mask.sum(dim=1)  # [batch]
@@ -94,18 +94,18 @@ class TextEmbedding(nn.Module):
         if self.mask_padding:
             text_mask = text == 0
 
-        if drop_text:  # cfg for text
+        if drop_text:  # cfg for text 如果需要丢弃文本条件，将所有 token ID 都改成 0。
             text = torch.zeros_like(text)
 
         text = self.text_embed(text)  # b n -> b n d
 
         # possible extra modeling
-        if self.extra_modeling:
+        if self.extra_modeling: # 如果构造时 conv_layers>0，执行位置编码和 ConvNeXt。
             # sinus pos emb
             batch_start = torch.zeros((batch,), device=text.device, dtype=torch.long)
-            pos_idx = get_pos_embed_indices(batch_start, seq_len, max_pos=self.precompute_max_pos)
-            text_pos_embed = self.freqs_cis[pos_idx]
-            text = text + text_pos_embed
+            pos_idx = get_pos_embed_indices(batch_start, seq_len, max_pos=self.precompute_max_pos) # 生成每个样本的位置索引：
+            text_pos_embed = self.freqs_cis[pos_idx] # 例如 seq_len=5：[0, 1, 2, 3, 4] 从预计算表中取出位置编码：[B, seq_len, 512]
+            text = text + text_pos_embed # 把 token embedding 和位置 embedding 相加 因此文本特征同时包含：token 身份；token 所处位置
 
             # convnextv2 blocks
             if self.mask_padding:
@@ -114,7 +114,7 @@ class TextEmbedding(nn.Module):
                     text = block(text)
                     text = text.masked_fill(text_mask.unsqueeze(-1).expand(-1, -1, text.size(-1)), 0.0)
             else:
-                text = self.text_blocks(text)
+                text = self.text_blocks(text) # 如果不启用内部 padding mask，直接顺序执行全部 ConvNeXt block。
 
         if self.average_upsampling:
             text = self.average_upsample_text_by_mask(text, ~text_mask, audio_mask)

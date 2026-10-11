@@ -11,6 +11,7 @@ CODEC_DIRS = (
     "acoustic_vae_dim64_sample",
     "semantic_vae_600k_sample",
     "semantic_vae_1000k_sample",
+    "mingtok_acoustic_64d_sample",
 )
 METRICS = ("sim", "wer", "emosim", "avsync")
 

@@ -344,7 +344,7 @@ class CFM_VT(CFM):
             drop_video = True
 
         # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
-        pred, intermediates_ctc = self.transformer(
+        pred, intermediates_ctc = self.transformer( # dit_vt_mm 中 DiT_VT_MMDiT 类的forward函数
             x=φ,
             cond=cond,
             text=text,

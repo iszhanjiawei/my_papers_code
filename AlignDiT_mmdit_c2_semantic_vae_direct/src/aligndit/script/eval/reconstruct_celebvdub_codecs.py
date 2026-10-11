@@ -18,6 +18,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torchaudio
+from safetensors import safe_open
 from tqdm import tqdm
 
 from aligndit.script.eval.utils import load_vocoder
@@ -30,7 +31,8 @@ VAE_CHECKPOINT_DIRS = {
     "semantic_vae_600k": "semantic_vae",
     "semantic_vae_1000k": "semantic_vae_1000k",
 }
-CODEC_CHOICES = ("mel_hifigan", *VAE_CHECKPOINT_DIRS)
+MINGTOK_CODEC = "mingtok_acoustic_64d"
+CODEC_CHOICES = ("mel_hifigan", *VAE_CHECKPOINT_DIRS, MINGTOK_CODEC)
 
 
 def get_args():
@@ -56,6 +58,22 @@ def get_args():
     )
     parser.add_argument("--semantic-vae-repo", type=Path, default=workspace / "papers_codes/Semantic-VAE")
     parser.add_argument("--semantic-vae-weights-root", type=Path, default=workspace / "Semantic-VAE")
+    parser.add_argument(
+        "--mingtok-repo",
+        type=Path,
+        default=workspace / "MingTok-VAE/paper_code/MingTok-Audio",
+    )
+    parser.add_argument(
+        "--mingtok-checkpoint",
+        type=Path,
+        default=workspace / "MingTok-VAE/checkpoint/MingTok-Audio",
+    )
+    parser.add_argument(
+        "--mingtok-attn-implementation",
+        choices=("eager", "sdpa"),
+        default="eager",
+        help="Qwen2 attention backend. Eager preserves MingTok's 32-frame sliding window explicitly.",
+    )
     parser.add_argument(
         "--latent-mode",
         choices=("mean", "sample"),
@@ -168,6 +186,93 @@ def load_mel_hifigan(checkpoint: Path, device: torch.device):
     return model.eval().requires_grad_(False)
 
 
+def _load_safetensors_prefix(module, checkpoint: Path, prefix: str):
+    """Strictly load one released MingTok submodule without materializing 1.35B parameters."""
+
+    expected = module.state_dict()
+    loaded = {}
+    with safe_open(checkpoint, framework="pt", device="cpu") as handle:
+        available = set(handle.keys())
+        for key, target in expected.items():
+            checkpoint_key = f"{prefix}.{key}"
+            if checkpoint_key not in available:
+                raise KeyError(f"Missing MingTok checkpoint tensor: {checkpoint_key}")
+            value = handle.get_tensor(checkpoint_key)
+            if value.shape != target.shape:
+                raise ValueError(
+                    f"MingTok shape mismatch for {checkpoint_key}: "
+                    f"expected {tuple(target.shape)}, got {tuple(value.shape)}"
+                )
+            loaded[key] = value
+
+    missing, unexpected = module.load_state_dict(loaded, strict=True)
+    if missing or unexpected:
+        raise RuntimeError(f"Invalid MingTok {prefix} state: missing={missing}, unexpected={unexpected}")
+
+
+def load_mingtok_acoustic(
+    repo: Path,
+    checkpoint_dir: Path,
+    device: torch.device,
+    attn_implementation: str,
+):
+    """Load only the 64D acoustic encoder and low-level decoder.
+
+    The released AudioVAE constructor always creates the unused 629.6M semantic
+    branch and imports its mandatory FlashAttention dependency.  The codec
+    ceiling uses the public ``decode(latent)`` behavior, so constructing the
+    encoder and low-level decoder directly is both equivalent and substantially
+    lighter.  Eager attention replaces FlashAttention while preserving the
+    released model's explicit 32-frame sliding-window mask.
+    """
+
+    repo = repo.resolve()
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+
+    from audio_tokenizer.vae_modules import Decoder, Encoder
+
+    config = json.loads((checkpoint_dir / "config.json").read_text())
+    if (
+        config["enc_kwargs"].get("input_dim") != 320
+        or config["enc_kwargs"].get("hop_size") != 320
+        or config["enc_kwargs"].get("latent_dim") != 64
+        or config["dec_kwargs"].get("output_dim") != 320
+        or config["dec_kwargs"].get("latent_dim") != 64
+        or config.get("patch_size") != -1
+    ):
+        raise RuntimeError("The local MingTok checkpoint is not the expected 64D/50 Hz acoustic model")
+
+    encoder_backbone = dict(config["enc_kwargs"]["backbone"])
+    decoder_backbone = dict(config["dec_kwargs"]["backbone"])
+    for backbone in (encoder_backbone, decoder_backbone):
+        backbone["_attn_implementation"] = attn_implementation
+        backbone["attn_implementation"] = attn_implementation
+
+    encoder = Encoder(
+        encoder_args=encoder_backbone,
+        input_dim=320,
+        hop_size=320,
+        latent_dim=64,
+        patch_size=-1,
+    ).to(dtype=torch.bfloat16)
+    decoder = Decoder(
+        decoder_args=decoder_backbone,
+        output_dim=320,
+        latent_dim=64,
+        semantic_model=None,
+        patch_size=-1,
+    ).to(dtype=torch.bfloat16)
+
+    weights = checkpoint_dir / "model.safetensors"
+    _load_safetensors_prefix(encoder, weights, "encoder")
+    _load_safetensors_prefix(decoder, weights, "decoder")
+
+    encoder = encoder.eval().requires_grad_(False).to(device)
+    decoder = decoder.eval().requires_grad_(False).to(device)
+    return (encoder, decoder)
+
+
 @torch.inference_mode()
 def reconstruct_mel(vocoder, mel_path: Path, device: torch.device):
     mel = torch.from_numpy(np.load(mel_path)).float()
@@ -201,6 +306,48 @@ def reconstruct_vae(
         eps = torch.randn(mu.shape, dtype=mu.dtype, device=device, generator=generator)
         latent = mu + torch.exp(0.5 * log_var) * eps
     return model.decode(latent).squeeze(0)
+
+
+@torch.inference_mode()
+def reconstruct_mingtok(
+    model,
+    waveform: torch.Tensor,
+    utterance: str,
+    latent_mode: str,
+    base_seed: int,
+    device: torch.device,
+):
+    encoder, decoder = model
+    waveform_batch = waveform.to(device=device, dtype=torch.bfloat16)
+    encoded, _ = encoder(waveform_batch)
+    parameters = encoded.transpose(1, 2)
+    mean, raw_scale = parameters.chunk(2, dim=1)
+    std = F.softplus(raw_scale) + 1e-4
+
+    if latent_mode == "mean":
+        latent = mean
+    else:
+        generator = torch.Generator(device=device)
+        generator.manual_seed(stable_sample_seed(base_seed, utterance))
+        eps = torch.randn(mean.shape, dtype=mean.dtype, device=device, generator=generator)
+        latent = mean + std * eps
+
+    latent = latent.transpose(1, 2)
+    expected_frames = (waveform.shape[-1] + 319) // 320
+    if latent.shape != (1, expected_frames, 64):
+        raise RuntimeError(
+            f"Unexpected MingTok latent shape for {utterance}: "
+            f"expected={(1, expected_frames, 64)}, got={tuple(latent.shape)}"
+        )
+    reconstructed = decoder.low_level_reconstruct(latent)
+    if reconstructed.shape != (1, 1, expected_frames * 320):
+        raise RuntimeError(
+            f"Unexpected MingTok waveform shape for {utterance}: "
+            f"expected={(1, 1, expected_frames * 320)}, got={tuple(reconstructed.shape)}"
+        )
+    if not torch.isfinite(reconstructed).all():
+        raise FloatingPointError(f"MingTok produced non-finite waveform values for {utterance}")
+    return reconstructed.squeeze(0)
 
 
 def output_name(codec: str, latent_mode: str):
@@ -250,6 +397,14 @@ def reconstruct_codec(args, codec: str, utterances: list[str], device: torch.dev
     if codec == "mel_hifigan":
         model = load_mel_hifigan(args.hifigan_checkpoint, device)
         ignored_checkpoint_keys = 0
+    elif codec == MINGTOK_CODEC:
+        model = load_mingtok_acoustic(
+            args.mingtok_repo,
+            args.mingtok_checkpoint,
+            device,
+            args.mingtok_attn_implementation,
+        )
+        ignored_checkpoint_keys = 0
     else:
         checkpoint_dir = args.semantic_vae_weights_root / VAE_CHECKPOINT_DIRS[codec]
         model, ignored_checkpoint_keys = load_semantic_vae(args.semantic_vae_repo, checkpoint_dir, device)
@@ -273,6 +428,15 @@ def reconstruct_codec(args, codec: str, utterances: list[str], device: torch.dev
                 if not mel_path.exists():
                     raise FileNotFoundError(mel_path)
                 reconstructed = reconstruct_mel(model, mel_path, device)
+            elif codec == MINGTOK_CODEC:
+                reconstructed = reconstruct_mingtok(
+                    model,
+                    reference,
+                    utterance,
+                    args.latent_mode,
+                    args.sample_seed,
+                    device,
+                )
             else:
                 reconstructed = reconstruct_vae(
                     model,
@@ -312,6 +476,10 @@ def reconstruct_codec(args, codec: str, utterances: list[str], device: torch.dev
     summary = summarize_records(name, records, elapsed_seconds)
     summary["ignored_legacy_checkpoint_keys"] = ignored_checkpoint_keys
     summary["latent_mode"] = None if codec == "mel_hifigan" else args.latent_mode
+    summary["sample_seed"] = None if codec == "mel_hifigan" else args.sample_seed
+    summary["mingtok_attn_implementation"] = (
+        args.mingtok_attn_implementation if codec == MINGTOK_CODEC else None
+    )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
@@ -333,6 +501,8 @@ def main():
         args.hifigan_checkpoint,
         args.semantic_vae_repo,
         args.semantic_vae_weights_root,
+        args.mingtok_repo,
+        args.mingtok_checkpoint,
     ):
         if not path.exists():
             raise FileNotFoundError(path)
@@ -341,7 +511,13 @@ def main():
     args.output_root.mkdir(parents=True, exist_ok=True)
     summaries = [reconstruct_codec(args, codec, utterances, device) for codec in args.codecs]
     combined_path = args.output_root / "_reconstruction_summaries.json"
-    combined_path.write_text(json.dumps(summaries, ensure_ascii=False, indent=2) + "\n")
+    combined = {}
+    if combined_path.exists():
+        for record in json.loads(combined_path.read_text()):
+            combined[record["codec"]] = record
+    for record in summaries:
+        combined[record["codec"]] = record
+    combined_path.write_text(json.dumps(list(combined.values()), ensure_ascii=False, indent=2) + "\n")
     print(f"Combined reconstruction summary: {combined_path}")
 
 
