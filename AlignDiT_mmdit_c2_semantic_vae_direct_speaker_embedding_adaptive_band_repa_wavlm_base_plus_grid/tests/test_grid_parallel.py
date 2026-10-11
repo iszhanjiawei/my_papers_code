@@ -14,6 +14,10 @@ from aligndit.script.misc import prepare_grid_parallel as parallel
 
 
 class GridParallelShardTests(unittest.TestCase):
+    def test_gpu_workers_per_device_defaults_to_one_and_accepts_explicit_fanout(self):
+        self.assertEqual(parallel.parse_args([]).gpu_workers_per_device, 1)
+        self.assertEqual(parallel.parse_args(["--gpu-workers-per-device", "2"]).gpu_workers_per_device, 2)
+
     def test_shards_are_deterministic_disjoint_and_cover_inventory_exactly(self):
         for total in (0, 1, 2, 7, 23):
             for count in (1, 2, 4, 12):
@@ -130,6 +134,64 @@ class GridParallelCoordinatorTests(unittest.TestCase):
         self.assertFalse(self.complete.exists())
         with (self.root / ".prepare.lock").open("a") as competing_lock, self.assertRaises(BlockingIOError):
             fcntl.flock(competing_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_gpu_fanout_uses_global_disjoint_shards_and_caps_workers_to_rows(self):
+        self.args.gpus = ("2", "3")
+        self.args.gpu_workers_per_device = 2
+        for total, expected_masks in ((7, ["2", "2", "3", "3"]), (3, ["2", "2", "3"])):
+            with self.subTest(total=total):
+                rows = [dict(self.rows[index % 2], utterance_key=f"grid/s{index}/bbaf2n")
+                        for index in range(total)]
+                metadata = json.loads(json.dumps(self.metadata))
+                metadata["split_counts"] = {
+                    split: sum(row["split"] == split for row in rows) for split in ("train", "val")
+                }
+                for name in ("inventory", "train", "val"):
+                    selected = rows if name == "inventory" else [row for row in rows if row["split"] == name]
+                    path = self.root / f"manifests/{name}.jsonl"
+                    path.write_bytes(parallel.prep.jsonl_bytes(selected))
+                    metadata["manifests"][path.name] = {
+                        "count": len(selected), "size_bytes": path.stat().st_size,
+                        "sha256": parallel.prep.sha256_file(path),
+                    }
+                (self.root / "manifests/inventory_meta.json").write_text(json.dumps(metadata))
+                with (
+                    patch.object(parallel.prep, "reuse_plan", return_value=(rows, metadata, {})),
+                    patch.object(parallel, "run_pool", return_value=[]) as pool,
+                    patch.object(parallel.prep, "verify", return_value=True),
+                ):
+                    parallel.coordinate(self.args)
+
+                self.assertEqual(pool.call_count, 2)
+                commands = pool.call_args_list[1].args[0]
+                self.assertEqual([command.env["CUDA_VISIBLE_DEVICES"] for command in commands], expected_masks)
+                shards = []
+                for index, command in enumerate(commands):
+                    argv = command.command
+                    self.assertEqual(int(argv[argv.index("--shard-index") + 1]), index)
+                    count = int(argv[argv.index("--shard-count") + 1])
+                    self.assertEqual(count, len(expected_masks))
+                    shards.append(parallel.shard_indices(total, index, count))
+                combined = list(chain.from_iterable(shards))
+                self.assertEqual(sorted(combined), list(range(total)))
+                self.assertEqual(len(combined), len(set(combined)))
+
+    def test_nonpositive_gpu_workers_per_device_fails_before_plan_or_workers(self):
+        for count in (0, -1):
+            with self.subTest(count=count):
+                self.args.gpu_workers_per_device = count
+                with (
+                    patch.object(parallel.prep, "reuse_plan") as reuse,
+                    patch.object(parallel, "run_pool") as pool,
+                    patch.object(parallel.prep, "verify") as verify,
+                    self.assertRaisesRegex(ValueError, "gpu-workers-per-device"),
+                ):
+                    parallel.coordinate(self.args)
+                reuse.assert_not_called()
+                pool.assert_not_called()
+                verify.assert_not_called()
+                self.assertFalse(self.guard.exists())
+                self.assertFalse(self.complete.exists())
 
     def test_failed_audio_pool_prevents_gpu_launch_and_final_verification(self):
         self.complete.write_text('{"complete": true}')

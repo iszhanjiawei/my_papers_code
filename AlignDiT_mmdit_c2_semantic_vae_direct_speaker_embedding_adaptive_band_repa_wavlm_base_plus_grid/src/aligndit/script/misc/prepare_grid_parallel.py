@@ -155,7 +155,9 @@ def _worker_commands(kind: str, count: int, args, config: Path, run_dir: Path) -
         environment["MKL_NUM_THREADS"] = environment["OMP_NUM_THREADS"]
         # Each GPU worker sees exactly one physical GPU. Its logical cuda:0
         # maintains the same generator/device semantics as the serial extractor.
-        environment["CUDA_VISIBLE_DEVICES"] = "" if kind == "audio" else args.gpus[index]
+        environment["CUDA_VISIBLE_DEVICES"] = (
+            "" if kind == "audio" else args.gpus[index // args.gpu_workers_per_device]
+        )
         command = [sys.executable, "-u", "-m", "aligndit.script.misc.prepare_grid_parallel",
                    "--worker-config", str(config), "--worker-kind", kind,
                    "--shard-index", str(index), "--shard-count", str(count)]
@@ -164,6 +166,8 @@ def _worker_commands(kind: str, count: int, args, config: Path, run_dir: Path) -
 
 
 def coordinate(args) -> None:
+    if args.gpu_workers_per_device <= 0:
+        raise ValueError("--gpu-workers-per-device must be positive")
     if args.audio_workers <= 0 or args.audio_threads <= 0 or args.torch_threads <= 0:
         raise ValueError("Worker and CPU thread counts must be positive")
     if not args.gpus or len(args.gpus) != len(set(args.gpus)):
@@ -208,10 +212,11 @@ def coordinate(args) -> None:
         status = {"run_id": run_id, "state": "running", "started_at": request["started_at"], "pools": {}}
         prep.write_json(run_dir / "status.json", status, replace=True)
         print(f"GRID parallel run {run_id}: {len(rows)} utterances, GPUs={','.join(args.gpus)}, "
+              f"gpu_workers_per_device={args.gpu_workers_per_device}, "
               f"audio_workers={args.audio_workers}, logs={run_dir}", flush=True)
         try:
             audio_count = min(args.audio_workers, len(rows))
-            gpu_count = min(len(args.gpus), len(rows))
+            gpu_count = min(len(args.gpus) * args.gpu_workers_per_device, len(rows))
             status["pools"]["audio"] = run_pool(_worker_commands("audio", audio_count, args, config, run_dir))
             prep.write_json(run_dir / "status.json", status, replace=True)
             status["pools"]["gpu"] = run_pool(_worker_commands("gpu", gpu_count, args, config, run_dir))
@@ -322,6 +327,8 @@ def parse_args(argv: list[str] | None = None):
         sys.argv = original_argv
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gpus", default="0,1,2,3", help="Distinct physical GPU IDs (each worker sees logical cuda:0)")
+    parser.add_argument("--gpu-workers-per-device", type=int, default=1,
+                        help="Independent extraction workers sharing each physical GPU")
     parser.add_argument("--audio-workers", type=int, default=12)
     parser.add_argument("--audio-threads", type=int, default=1)
     parser.add_argument("--torch-threads", type=int, default=defaults.torch_threads)

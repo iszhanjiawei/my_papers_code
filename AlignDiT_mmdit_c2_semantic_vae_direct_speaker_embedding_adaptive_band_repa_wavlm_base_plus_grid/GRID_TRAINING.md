@@ -46,7 +46,7 @@ bash scripts/prepare_grid.sh --plan-only
 # 可中断后用相同命令续跑；日志与逐 worker 状态保存到缓存 parallel_runs/。
 mkdir -p logs
 setsid env PYTHONUNBUFFERED=1 bash scripts/prepare_grid_parallel.sh \
-  --gpus 0,1,2,3 --audio-workers 12 \
+  --gpus 0,1,2,3 --gpu-workers-per-device 2 --audio-workers 12 \
   > logs/grid_prepare_parallel.log 2>&1 < /dev/null &
 PREPARE_PID=$!
 ps -o pid,ppid,sid,tty,stat,cmd -p "$PREPARE_PID"
@@ -66,6 +66,8 @@ bash scripts/prepare_grid.sh --verify-only
 数值配置。父进程持有唯一写锁，所有 worker 成功并通过全量校验后才发布 `complete.json`；
 任一 worker 失败会停止本轮其余 worker，保留已校验产物。单 GPU 串行入口仍为
 `CUDA_VISIBLE_DEVICES=0 bash scripts/prepare_grid.sh`。
+`--gpu-workers-per-device` 默认 1；本机短片提取经验证可设为 2，以增加逐帧读取与推理的
+并发度。该参数只改变任务调度，每个样本仍由唯一 worker 按原数值协议提取。
 
 小样本检查使用独立目录，每个 split 各取 N 条，输出明确标记为 smoke，正式训练器拒绝使用：
 
@@ -174,7 +176,10 @@ ${ROOT_PREFIX}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp32/source_au
 - 两条真实 GRID 训练样本完成 BF16 前向/反向：CTC 权重为 0 和 0.03 时总损失及
   speaker/adaptive-band/REPA 梯度均有限且非零；未执行 optimizer update。
   小 batch 峰值显存约 2.63 GiB，不代表正式训练 batch 的显存需求。
-- 新增 10 项并行调度测试通过，验证精确分片、写锁、失败清理和完整性发布约束。
+- 13 项并行调度测试通过，验证精确分片、写锁、失败清理、同卡并发和完整性发布约束。
+- 四卡小样本并行与同卡双进程分别复现原串行流程的全部 20 个输出 SHA256；
+  另有 64 条视频特征在同卡并发下逐条 SHA256 一致。短时窗口中，同卡三个视频 worker
+  合计约 20.7 条/秒，单 worker 约 8 条/秒；正式续跑采用较保守的每卡两个 worker。
 - 将两条真实样本重复到 30 条的容量检查通过：BF16 前向/反向峰值约 8.81 GiB，
   CTC 权重 0 / 0.03 时损失和梯度均正常。此检查未执行 optimizer update；额外的
   EMA、Adam 两份动量和 DDP bucket 估算约 4.91 GiB，实际训练显存以四卡实跑为准。
