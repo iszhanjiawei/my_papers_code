@@ -1,6 +1,8 @@
 import ast
 import unittest
 from pathlib import Path
+import tempfile
+from types import SimpleNamespace
 
 from grid_wer import normalize
 from native_frontend import tree_for, BASELINE, REPA
@@ -35,6 +37,13 @@ class NativeFrontendTests(unittest.TestCase):
         self.assertIn("DATA/'CelebVDub/mel_tacotron/test'",source)
         self.assertIn('use_truth_duration=False',source)
         self.assertNotIn('extractor(audio * scale)',source)
+
+    def test_legacy_adapter_rejects_unaudited_aligndit_processing(self):
+        from infer import aligndit
+        with tempfile.TemporaryDirectory() as temporary:
+            for method in ('baseline','repa'):
+                with self.assertRaises(RuntimeError):
+                    aligndit(SimpleNamespace(run=Path(temporary),method=method),[])
 
 
 if __name__ == '__main__':

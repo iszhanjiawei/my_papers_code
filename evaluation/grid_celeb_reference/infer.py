@@ -50,6 +50,14 @@ def publish(row, wave, sr, out, details):
 
 
 def aligndit(args, items):
+    if args.method == 'baseline':
+        raise RuntimeError('Legacy online-RMS Mel conditioning is not the Baseline cached-Mel training path. '
+                           'Use native_frontend.py --stage infer --method baseline instead.')
+    if not (args.run/'native_frontend.json').is_file():
+        raise RuntimeError('REPA requires its own audited native visual/reference caches. '
+                           'Use native_frontend.py and native_run.py; comparison-model crops are forbidden.')
+    from native_frontend import verify_audit
+    verify_audit(args.run,args.method)
     tree = BASELINE if args.method == 'baseline' else REPA
     sys.path.insert(0, str(tree / 'src'))
     native = load_module('native_grid_inference', tree / 'src/aligndit/script/eval/infer_celebvdub_grid_reference.py')
