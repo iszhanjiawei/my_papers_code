@@ -5,7 +5,10 @@ the child run belonging to its own model. No cross-model visual cache reuse.
 """
 import argparse
 import json
+import os
+from pathlib import Path
 import sys
+import time
 
 from grid_wer import report
 from native_frontend import NATIVE_RUN, verify_audit
@@ -14,6 +17,8 @@ from run import Pipeline, TASKS
 
 
 class NativePipeline(Pipeline):
+    existing_repa_pid = 0
+
     def job(self, name, script, method, argv, gpu):
         return name, script, ['--run', str(self.run/method), *argv], gpu
 
@@ -26,6 +31,16 @@ class NativePipeline(Pipeline):
         for method in ('baseline','repa'):
             rows(self.run/method)
             verify_audit(self.run/method, method)
+        if self.existing_repa_pid:
+            proc = Path(f'/proc/{self.existing_repa_pid}/cmdline')
+            if proc.exists():
+                command = proc.read_bytes().replace(b'\0',b' ').decode()
+                if str(self.run/'repa') not in command or '--method repa' not in command or '--limit 0' not in command:
+                    raise ValueError('Cannot adopt a different inference process')
+            self.state['jobs']['repa_infer660_adopted'] = {'pid':self.existing_repa_pid,'gpu':self.gpus[1],
+                'status':'running','log':str(self.run/'logs/repa_infer660.log'),
+                'note':'Existing verified native REPA inference retained during Baseline cached-Mel correction'}
+            self.update()
         visual = []
         for m, gpu in zip(('baseline','repa'), self.gpus):
             for shard in range(self.visual_workers):
@@ -35,7 +50,18 @@ class NativePipeline(Pipeline):
         for limit in (33, 0):
             self.required_batch([self.job(f'{m}_infer{limit or 660}', 'native_frontend.py', m,
                 ['--stage','infer','--method',m,'--limit',str(limit)], gpu)
-                for m,gpu in zip(('baseline','repa'),self.gpus)])
+                for m,gpu in zip(('baseline','repa'),self.gpus)
+                if not (m == 'repa' and self.existing_repa_pid)])
+        if self.existing_repa_pid:
+            while Path(f'/proc/{self.existing_repa_pid}/cmdline').exists():
+                if not Path(f'/proc/{self.existing_repa_pid}/cmdline').read_bytes():
+                    break  # completed orphan may briefly remain as a zombie
+                self.update()
+                time.sleep(5)
+            from metrics import validate
+            validate(self.run/'repa','repa',rows(self.run/'repa',evaluation=True))
+            self.state['jobs']['repa_infer660_adopted'].update(status='complete',exit_code=0)
+            self.update()
         avjobs = []
         for m,gpu in zip(('baseline','repa'), self.gpus):
             for kind in ('gt', m):
@@ -70,11 +96,13 @@ class NativePipeline(Pipeline):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
-    p.add_argument('--run', type=__import__('pathlib').Path, default=NATIVE_RUN)
+    p.add_argument('--run', type=Path, default=NATIVE_RUN)
     p.add_argument('--gpus', type=int, nargs=2, default=[0,1])
     p.add_argument('--visual-workers-per-gpu', type=int, choices=[1,2], default=2)
+    p.add_argument('--existing-repa-pid',type=int,default=0)
     args = p.parse_args()
     pipeline = NativePipeline(args.run,args.gpus,args.visual_workers_per_gpu)
+    pipeline.existing_repa_pid = args.existing_repa_pid
     try:
         sys.exit(pipeline.execute())
     except Exception as exc:
