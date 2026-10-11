@@ -1,6 +1,7 @@
 """Extract input-only visual features and independent reference caches."""
 import argparse
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import subprocess
@@ -81,7 +82,16 @@ def visual(run, shard, nshard, limit):
     native = load_module('grid_native_preprocessing', TOOLS / 'stage45_video_embed.py')
     lip_model = native.load_lipreading(torch.device('cuda:0'))
     face_model = native.load_emonet(torch.device('cuda:0'))
-    fa = native.make_face_aligner(0)
+    # The uploaded helper predates face_alignment's compile=True default.
+    # Eager inference uses the identical FAN/S3FD weights and preprocessing,
+    # without expensive compiler warm-up for every independent GPU worker.
+    if 'compile' in inspect.signature(native.face_alignment.FaceAlignment).parameters:
+        lm_type = getattr(native.face_alignment.LandmarksType, 'TWO_D', None)
+        if lm_type is None:
+            lm_type = native.face_alignment.LandmarksType._2D
+        fa = native.face_alignment.FaceAlignment(lm_type, flip_input=False, device='cuda:0', compile=False)
+    else:
+        fa = native.make_face_aligner(0)
     items = rows(run)
     if limit:
         items = items[:limit]

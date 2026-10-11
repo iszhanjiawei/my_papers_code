@@ -136,7 +136,15 @@ def styledubber(args, items):
     encoder=torch.jit.load(str(WEIGHTS/'dvector.pt'),map_location=device).eval()
     stft=TacotronSTFT(1024,256,1024,80,22050,0,8000).cuda().eval()
     program='import json,sys; from g2p_en import G2p; g=G2p(); print(json.dumps([[p for p in g(t) if p.strip() and any(c.isalpha() for c in p)] for t in json.load(sys.stdin)]))'
-    result=subprocess.run([str(PROJECT.parent.parent/'ENTER/envs/hpmdubbing/bin/python'),'-c',program],input=json.dumps([r['target_text'] for r in items]),text=True,capture_output=True,check=True)
+    # Do not expose Python-3.10-only runtime packages to the original 3.8 G2P
+    # interpreter. It already has the author's g2p_en/NLTK environment.
+    g2p_env=os.environ.copy()
+    g2p_env.pop('PYTHONPATH',None)
+    result=subprocess.run([str(PROJECT.parent.parent/'ENTER/envs/hpmdubbing/bin/python'),'-c',program],
+                          input=json.dumps([r['target_text'] for r in items]),env=g2p_env,
+                          text=True,capture_output=True)
+    if result.returncode:
+        raise RuntimeError('Native G2P failed: '+result.stderr)
     phones=dict(zip([r['target_id'] for r in items],json.loads(result.stdout)))
     references={}
     for row in items:
