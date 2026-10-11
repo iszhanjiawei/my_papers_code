@@ -297,6 +297,12 @@ def run(args: argparse.Namespace) -> None:
         if not 0 < args.max_items <= len(records):
             raise ValueError("--max-items must be in [1, 213]")
         records = records[: args.max_items]
+    full_count = len(records)
+    shard, nshard = getattr(args, "shard", 0), getattr(args, "nshard", 1)
+    if not 0 <= shard < nshard <= full_count:
+        raise ValueError("Require 0 <= shard < nshard <= full test count")
+    # Validate the complete historical list first; only partition its workload.
+    records = records[shard::nshard]
     mean, std, normalization = load_normalization(args.normalization.resolve(strict=True))
     cache_spec = read_json_object(cache_root / "state/latents/spec.json")
     config = load_composed_config(args.config.resolve(strict=True))
@@ -314,6 +320,7 @@ def run(args: argparse.Namespace) -> None:
         cache_spec=cache_spec,
         device=device,
     )
+    torch.cuda.reset_peak_memory_stats(device)
 
     started_at = time.time()
     generated_rows = []
@@ -385,6 +392,9 @@ def run(args: argparse.Namespace) -> None:
             "evaluation_manifest_sha256": sha256_file(args.manifest) if args.manifest else None,
             "training_set_diagnostic": args.split == "train",
             "count": len(records),
+            "full_count": full_count,
+            "shard": shard,
+            "nshard": nshard,
             "normalization": str(args.normalization.resolve()),
             "normalization_sha256": sha256_file(args.normalization),
             "test_list": str(args.test_list.resolve()),
@@ -393,6 +403,7 @@ def run(args: argparse.Namespace) -> None:
         "decoder": decoder_metadata,
         "speaker_embedding": speaker_metadata,
         "elapsed_seconds": time.time() - started_at,
+        "peak_cuda_reserved_bytes": torch.cuda.max_memory_reserved(device),
         "generation": {
             "cfg_text": args.cfg_text,
             "cfg_video": args.cfg_video,
@@ -455,6 +466,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, help="Explicit 213-record diagnostic manifest")
     parser.add_argument("--split", choices=["test", "train"], default="test")
     parser.add_argument("--max-items", type=int)
+    parser.add_argument("--shard", type=int, default=0)
+    parser.add_argument("--nshard", type=int, default=1)
     return parser.parse_args()
 
 
