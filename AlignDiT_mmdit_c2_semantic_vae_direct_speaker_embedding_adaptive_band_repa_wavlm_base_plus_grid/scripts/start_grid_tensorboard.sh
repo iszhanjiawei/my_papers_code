@@ -6,6 +6,35 @@ cd "$project_root"
 python_bin="${PYTHON_BIN:-${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python}"
 logdir="$project_root/runs"
 mkdir -p "$logdir" "$project_root/logs"
+# Reuse only the exact live service previously started for this snapshot.
+# This lets preparation expose the port before training creates event files.
+existing_service="$("$python_bin" - "$project_root/logs/tensorboard_grid.json" "$logdir" <<'PY'
+import json, os, sys, urllib.request
+from pathlib import Path
+try:
+    state = json.loads(Path(sys.argv[1]).read_text())
+    pid, port = int(state['pid']), int(state['port'])
+    if pid <= 0 or Path(state['logdir']).resolve() != Path(sys.argv[2]).resolve():
+        raise ValueError('different service')
+    if os.environ.get('TENSORBOARD_PORT') and int(os.environ['TENSORBOARD_PORT']) != port:
+        raise ValueError('different requested port')
+    argv = Path(f'/proc/{pid}/cmdline').read_bytes().decode().split('\0')
+    if 'tensorboard.main' not in argv or argv[argv.index('--logdir') + 1] != sys.argv[2]:
+        raise ValueError('PID no longer belongs to this TensorBoard')
+    if int(argv[argv.index('--port') + 1]) != port:
+        raise ValueError('different listener')
+    with urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=2) as response:
+        if response.status != 200:
+            raise ValueError('unhealthy listener')
+    print(json.dumps(state, ensure_ascii=False))
+except (OSError, ValueError, KeyError, IndexError):
+    pass
+PY
+)"
+if [[ -n "$existing_service" ]]; then
+    printf 'Reusing verified GRID TensorBoard: %s\n' "$existing_service"
+    exit 0
+fi
 # A requested port must be free; otherwise select the first free port >=6020.
 port="$("$python_bin" - <<'PY'
 import os, socket

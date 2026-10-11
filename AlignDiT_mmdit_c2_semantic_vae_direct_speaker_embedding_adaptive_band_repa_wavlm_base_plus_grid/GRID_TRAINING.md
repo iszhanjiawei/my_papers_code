@@ -5,7 +5,7 @@
 Semantic-VAE Direct-C2、CAM++ speaker embedding、adaptive temporal band 和 WavLM-Base+ REPA。
 
 本次已完成全量源数据审计、正式清单冻结及真实小样本特征/模型验证。
-全量模型特征尚未提取，正式训练尚未启动；继续执行下方“全部特征”和“训练”命令即可。
+全量特征提取与训练状态见末尾本机运行记录；下方命令用于复现和断点续跑。
 
 ## 数据协议
 
@@ -42,8 +42,14 @@ GRID_CACHE="${ROOT_PREFIX}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp
 # 全量源数据审计及清单；不加载 GPU 模型。
 bash scripts/prepare_grid.sh --plan-only
 
-# 全部特征。可中断后用相同命令续跑；默认单 GPU，按阶段加载冻结模型。
-CUDA_VISIBLE_DEVICES=0 bash scripts/prepare_grid.sh
+# 全部特征：复用冻结清单，12 个 CPU worker 提取音频，再使用四张 GPU。
+# 可中断后用相同命令续跑；日志与逐 worker 状态保存到缓存 parallel_runs/。
+mkdir -p logs
+setsid env PYTHONUNBUFFERED=1 bash scripts/prepare_grid_parallel.sh \
+  --gpus 0,1,2,3 --audio-workers 12 \
+  > logs/grid_prepare_parallel.log 2>&1 < /dev/null &
+PREPARE_PID=$!
+ps -o pid,ppid,sid,tty,stat,cmd -p "$PREPARE_PID"
 
 # 全量校验完成标记和缓存，不重新提取模型特征。
 bash scripts/prepare_grid.sh --verify-only
@@ -56,6 +62,10 @@ bash scripts/prepare_grid.sh --verify-only
 `--stage audio|latent|video|speaker|repa` 可独立执行对应阶段；只有全部阶段完成且校验通过，
 才发布训练所需的 `complete.json`。输入、模型或协议不一致时拒绝混用旧缓存。
 断点续跑会核对已有文件内容与提取记录；不要手工伪造完成标记。
+并行入口仅将原始清单分成互不重叠的行，各 worker 复用原提取函数、逐条随机种子和
+数值配置。父进程持有唯一写锁，所有 worker 成功并通过全量校验后才发布 `complete.json`；
+任一 worker 失败会停止本轮其余 worker，保留已校验产物。单 GPU 串行入口仍为
+`CUDA_VISIBLE_DEVICES=0 bash scripts/prepare_grid.sh`。
 
 小样本检查使用独立目录，每个 split 各取 N 条，输出明确标记为 smoke，正式训练器拒绝使用：
 
@@ -164,6 +174,11 @@ ${ROOT_PREFIX}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp32/source_au
 - 两条真实 GRID 训练样本完成 BF16 前向/反向：CTC 权重为 0 和 0.03 时总损失及
   speaker/adaptive-band/REPA 梯度均有限且非零；未执行 optimizer update。
   小 batch 峰值显存约 2.63 GiB，不代表正式训练 batch 的显存需求。
+- 新增 10 项并行调度测试通过，验证精确分片、写锁、失败清理和完整性发布约束。
+- 将两条真实样本重复到 30 条的容量检查通过：BF16 前向/反向峰值约 8.81 GiB，
+  CTC 权重 0 / 0.03 时损失和梯度均正常。此检查未执行 optimizer update；额外的
+  EMA、Adam 两份动量和 DDP bucket 估算约 4.91 GiB，实际训练显存以四卡实跑为准。
 
 检查日志在本副本的 `logs/grid_final_tests.log`、`logs/grid_prepare_smoke_final.log`、
 `logs/grid_model_smoke.log` 中，日志与缓存均不提交 Git。
+容量检查日志为 `logs/grid_batch30_capacity.log`。

@@ -39,8 +39,12 @@ def main() -> None:
         "--config-name", default="finetune_grid"
     )
     parser.add_argument("--max-frames", type=int, default=160)
+    parser.add_argument("--batch-size", type=int, default=2,
+                        help="Capacity diagnostic: repeat the two real clips to this batch size; no updates")
     parser.add_argument("--cache-root", type=Path, required=True)
     args = parser.parse_args()
+    if args.batch_size < 2:
+        raise ValueError("--batch-size must be at least 2")
     started = time.monotonic()
     torch.set_num_threads(4)
     if not torch.cuda.is_available():
@@ -72,15 +76,18 @@ def main() -> None:
     ][:2]
     if len(selected) != 2:
         raise RuntimeError("Need two real CTC-feasible examples between 64 and --max-frames frames")
+    selected = [selected[index % len(selected)] for index in range(args.batch_size)]
     batch = dataset.collate_fn([dataset[index] for index in selected])
     print(json.dumps({
         "selected_utterances": batch["utterance_keys"],
         "latent_lengths": batch["mel_lengths"].tolist(),
         "text_lengths": batch["text_lengths"].tolist(),
         "speaker_norms": batch["speaker_embedding"].norm(dim=1).tolist(),
+        "batch_size": args.batch_size,
+        "repeated_clips_for_capacity_only": args.batch_size > 2,
     }), flush=True)
     assert batch["mel"].shape[1] == 64
-    assert batch["speaker_embedding"].shape == (2, 192)
+    assert batch["speaker_embedding"].shape == (args.batch_size, 192)
     assert torch.equal(batch["mel_lengths"], batch["video_lengths"])
 
     vocab_char_map, vocab_size = get_tokenizer(config.datasets.vocab_path, "custom")
@@ -126,6 +133,7 @@ def main() -> None:
     del source_state
     gc.collect()
 
+    parameter_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
     model.to(device).train()
     forward_kwargs = {
         "inp": batch["mel"].permute(0, 2, 1).to(device),
@@ -202,6 +210,10 @@ def main() -> None:
         "parent_path": str(ckpts.pretrained_path),
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "updates_performed": 0,
+        "batch_size": args.batch_size,
+        "parameter_gib": parameter_bytes / 1024**3,
+        "estimated_additional_ema_adam_ddp_gib": 4 * parameter_bytes / 1024**3,
+        "capacity_note": "Additional estimate covers one FP32 EMA copy, two Adam moments and one DDP bucket copy; not an actual optimizer/DDP measurement.",
         "checks": results,
     }, indent=2, sort_keys=True), flush=True)
 
