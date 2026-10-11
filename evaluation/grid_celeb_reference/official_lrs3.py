@@ -56,6 +56,10 @@ def initialize(run):
     from aligndit.script.misc.extract_mel import get_tacotron_mel_spectrogram_processor, single_job
     if (run/'selection.json').exists():
         rows(run)
+        protocol=json.loads((run/'protocol.json').read_text())
+        protocol.update(source_container_adapter='Lossless MPG-to-Matroska stream copy, timestamps start at zero; every decoded RGB frame verified exactly equal to direct PyAV decoding of original MPG',
+            adapter_sha256=sha(__file__))
+        save_json(run/'protocol.json',protocol)
         return
     old = rows(DEFAULT_RUN, evaluation=True)
     run.mkdir(parents=True, exist_ok=True)
@@ -132,6 +136,8 @@ def audit(run):
 def visual(args):
     import numpy as np
     import torch
+    import av
+    import torchvision
     official_imports()
     fairseq_imports()
     for folder in ('face_detection','face_alignment'):
@@ -154,8 +160,22 @@ def visual(args):
             continue
         if sha(row['source_video'])!=row['source_video_sha256']:
             raise ValueError('Changed original target')
+        # torchvision.read_video seeks incorrectly on some GRID MPEG streams
+        # (e.g. returns 63/75 frames). Remux without re-encoding so the native
+        # Auto-AVSR reader receives the complete, pixel-identical RGB video.
+        container=args.run/'assets/container'/(row['target_id']+'.mkv')
+        container.parent.mkdir(parents=True,exist_ok=True)
+        if not container.exists():
+            subprocess.run([str(Path(sys.executable).with_name('ffmpeg')),
+                '-hide_banner','-loglevel','error','-n','-i',row['source_video'],
+                '-map','0:v:0','-an','-c:v','copy','-avoid_negative_ts','make_zero',str(container)],check=True)
+        with av.open(row['source_video']) as original:
+            original_rgb=np.stack([f.to_ndarray(format='rgb24') for f in original.decode(video=0)])
+        remux_rgb=torchvision.io.read_video(str(container),pts_unit='sec')[0].numpy()
+        if original_rgb.shape!=(75,288,360,3) or not np.array_equal(original_rgb,remux_rgb):
+            raise ValueError('Lossless container adapter changed frames')
         with torch.inference_mode():
-            mouth=loader.load_data(row['source_video'])
+            mouth=loader.load_data(str(container))
             if tuple(mouth.shape)!=(75,96,96,3):
                 raise ValueError('Native mouth frames changed')
             save2vid(row['mouth_video'],mouth,25)
@@ -165,7 +185,9 @@ def visual(args):
         dest=Path(row['video_25hz_path']);dest.parent.mkdir(parents=True,exist_ok=True)
         np.save(dest,feat,allow_pickle=False)
         save_json(recordpath,{'target_id':row['target_id'],'mouth_sha256':sha(row['mouth_video']),
-            'feature_sha256':sha(dest),'frontend':'official Auto-AVSR RetinaFace/FAN'})
+            'feature_sha256':sha(dest),'frontend':'official Auto-AVSR RetinaFace/FAN',
+            'source_container':str(container),'source_container_sha256':sha(container),
+            'original_rgb_frame_count':len(original_rgb),'remux_rgb_pixel_equal':True})
         print(f'Visual {i}/{len(items)} {row["target_id"]}',flush=True)
 
 
