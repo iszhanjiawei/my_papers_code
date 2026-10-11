@@ -1,0 +1,36 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus
+  - _self_
+
+# Keep S2c 70k EMA initialization, tokenizer/LibriSpeech normalization, 64-D
+# posterior samples, 12 MM blocks, CAM++, adaptive band and WavLM-Base+ REPA.
+# GRID's existing train/val split is preserved by prepare_grid.py.
+datasets:
+  name: GRID
+  cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp32
+  manifest_path: ${datasets.cache_root}/manifests/train.jsonl
+  # Resolved from the completed GRID manifest contract before model creation;
+  # never inherit CelebV-Dub counts or hashes. Explicit overrides remain checked.
+  expected_manifest_sha256: null
+  expected_inventory_sha256: null
+  expected_record_count: null
+  expected_vae_checkpoint_sha256: 7c455aa8ab3f7d576b4834f8342558894aafaa61a371b84a9bfa4d10a100e516
+  expected_video_checkpoint_sha256: 343c9dbaa29847b8c4d0d9503c43f2877fd2efde9988d41abf14e74f28232b75
+  speaker_embedding_cache_dir: ${datasets.cache_root}/speakers
+  repa_feature_cache_dir: ${datasets.cache_root}/repa
+  num_workers: 8
+
+optim:
+  # GRID has fewer batches per epoch. At four GPUs 1,000 epochs provide enough
+  # updates to reach 200k. The LR decay horizon therefore changes to 1,000 epochs;
+  # LR=5e-5, 20k LR warmup, and CTC 10k..30k warmup remain inherited.
+  # The entry checks actual sampler length/GPU count before loading the model.
+  epochs: 1000
+  run_until_update: 200000
+
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k
+
+ckpts:
+  logger: tensorboard
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k_40hz_char
