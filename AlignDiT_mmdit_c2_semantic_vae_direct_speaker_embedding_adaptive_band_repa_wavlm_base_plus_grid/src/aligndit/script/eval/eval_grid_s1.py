@@ -134,6 +134,8 @@ def merge(a, rows):
         (a.output_dir / f'{task}_results.jsonl').write_text(''.join(json.dumps(r, ensure_ascii=False, allow_nan=False)+'\n' for r in gathered))
         summary = metric_summary(gathered, task)
         summary['display_value'] = f'{summary[task]:.5f}'
+        if task == 'wer' and summary['reference_word_count'] != 6*len(rows):
+            raise RuntimeError('Unexpected GRID corpus WER denominator')
         report['metrics'][task] = summary
     publish(a.output_dir/'evaluation_summary.json', report)
     print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
@@ -191,7 +193,7 @@ def args():
     p.add_argument('--asr-ckpt', type=Path, default=data/'faster-whisper-large-v3')
     p.add_argument('--emo-ckpt', type=Path, default=data/'emotion2vec_plus_large')
     p.add_argument('--avhubert-checkpoint', type=Path, default=data/'large_vox_iter5.pt')
-    p.add_argument('--fairseq-repo', type=Path, default=data/'av_hubert/fairseq')
+    p.add_argument('--fairseq-repo', type=Path, default=data/'av_hubert/fairseq/fairseq')
     p.add_argument('--avhubert-user-dir', type=Path, default=data/'av_hubert/avhubert/avhubert')
     return p.parse_args()
 

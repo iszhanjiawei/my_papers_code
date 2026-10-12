@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from aligndit.script.eval.grid_s1_common import metric_summary, publish, read, sha
@@ -43,10 +44,16 @@ def workers(a, stage):
             jobs.append(job)
             print(f'{stage} shard={shard} gpu={env["CUDA_VISIBLE_DEVICES"]} pid={job.pid}', flush=True)
         publish(a.output_dir/'active_workers.json', {'stage': stage, 'pids': [j.pid for j in jobs]})
-        for job in jobs:
-            result = job.wait()
-            if result:
-                raise RuntimeError(f'{stage} worker {job.pid} exited {result}; inspect worker logs')
+        pending = list(jobs)
+        while pending:
+            for job in pending[:]:
+                result = job.poll()
+                if result is not None:
+                    if result:
+                        raise RuntimeError(f'{stage} worker {job.pid} exited {result}; inspect worker logs')
+                    pending.remove(job)
+            if pending:
+                time.sleep(1)
     finally:
         for job in jobs:
             if job.poll() is None:
@@ -61,6 +68,9 @@ def workers(a, stage):
 
 
 def main():
+    def terminate(signum, frame):
+        raise KeyboardInterrupt(f'Received signal {signum}')
+    signal.signal(signal.SIGTERM, terminate)
     prefix = os.environ.get('ROOT_PREFIX', '')
     data = Path(prefix+'/zjw524/projects/data')
     p = argparse.ArgumentParser(description=__doc__)
