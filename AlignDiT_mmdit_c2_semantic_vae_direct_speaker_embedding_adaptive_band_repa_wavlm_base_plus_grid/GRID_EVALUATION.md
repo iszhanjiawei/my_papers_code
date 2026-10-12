@@ -56,3 +56,35 @@ inference has been verified. Keep the same worker count when reusing metric shar
 Local metric weight binaries, software versions and source hashes are recorded in
 `metric_assets.json`. Final artifacts are `evaluation_summary.json`, `{sim,wer,emosim,avsync}_results.jsonl`,
 `val/*/*.wav`, and joint-feature caches. Metric values are displayed to five decimals.
+
+
+## Full validation result — 2026-10-12
+
+EMA update **100,000**, checkpoint SHA256
+`6394f7e7682f5d096c29a8769d3158f44949746fa84f0c1a66a09ea1dad37da7`.
+Two RTX 4090 GPUs each ran four independent processes (eight total), with one
+utterance sampled per process. All four metrics cover **3,274/3,274** validation
+clips. No additional clips were skipped during inference or evaluation.
+
+| Checkpoint | Coverage | SPKSIM ↑ | WER ↓ | EMOSIM ↑ | AVSync ↑ |
+|---|---:|---:|---:|---:|---:|
+| GRID EMA 100k | 3274/3274 | 0.81041 | 0.12935 | 0.87838 | 0.78267 |
+
+WER is a fraction: **2,541 word errors / 19,644 reference words**,
+equivalent to **12.93525%** after symmetric text normalization. Independent
+recomputation found 2,116 substitutions, 334 deletions and 91 insertions. The other
+metrics are equally weighted sample means. These values describe the same-clip
+Setting1 prompt protocol on GRID, separately from CelebV-Dub results.
+
+Artifacts: `/zjw524/projects/data/evaluations/GRID_s1_100k_seed0_nfe32_cfg5_2`.
+
+- `evaluation_summary.json`: complete four-metric summary and checkpoint identity.
+- `verification.json`: independent coverage, finite-value, WAV duration/hash,
+  joint-feature shape/hash and corpus WER verification.
+- `{sim,wer,emosim,avsync}_results.jsonl`: exactly 3,274 full-ID records each;
+  WER retains raw/normalized texts and substitution/deletion/insertion counts.
+- `val/*/*.wav`: generated target continuations.
+- `avhubert_joint/{gen,gt}/val/*/*.npy`: two sets of 3,274 joint features.
+- `protocol.json`, `metric_assets.json`, receipts and worker logs: provenance.
+
+Runtime artifacts remain outside Git. All evaluation workers have finished.
