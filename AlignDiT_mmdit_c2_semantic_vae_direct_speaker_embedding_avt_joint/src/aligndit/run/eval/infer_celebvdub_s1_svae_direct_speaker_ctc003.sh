@@ -14,11 +14,11 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_40hz_CelebVDub_char"
+checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_40hz_CelebVDub_char_avt_joint"
 step="${CKPT_STEP:-200000}"
 checkpoint="$checkpoint_dir/model_${step}.pt"
 cfg_video="${CFG_VIDEO:-2.0}"
-output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_speaker_cfgv${cfg_video}}"
+output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_speaker_avt_joint_cfgv${cfg_video}}"
 if [[ ! -f "$checkpoint" || -L "$checkpoint" ]]; then
     echo "Missing regular speaker-conditioned checkpoint: $checkpoint" >&2
     exit 1

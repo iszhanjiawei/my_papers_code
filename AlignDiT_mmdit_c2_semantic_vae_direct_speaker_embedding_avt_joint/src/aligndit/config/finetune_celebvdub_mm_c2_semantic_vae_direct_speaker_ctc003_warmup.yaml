@@ -17,10 +17,12 @@ optim:
   run_until_update: 200000
 
 model:
-  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k
+  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_avt_joint
   arch:
+    # Only the 12 MM blocks change topology; the 6 audio-only blocks are retained.
+    text_joint_attention: True
     speaker_dim: 192
     speaker_condition_start_layer: 12
 
 ckpts:
-  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_40hz_CelebVDub_char
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_40hz_CelebVDub_char_avt_joint

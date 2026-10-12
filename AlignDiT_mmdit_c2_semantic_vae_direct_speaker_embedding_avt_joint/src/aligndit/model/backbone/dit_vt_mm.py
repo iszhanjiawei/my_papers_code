@@ -16,6 +16,9 @@ MM-DiT backbone for multimodal dubbing:
   `n_text_layers` are text-free audio-only DiT blocks
 - audio-stream parameter names are kept identical to DiTBlock so
   that the audio-only pretrained checkpoint loads directly by key matching
+- `text_joint_attention=True` replaces the MM-stage text cross-attention with
+  three evolving audio/video/text streams sharing the same attention softmax;
+  the embeddings, audio/video FFNs, CTC taps and audio-only tail are unchanged
 """
 
 from __future__ import annotations
@@ -334,6 +337,115 @@ class MMDiTBlock_VT(DiTCrossBlock):
         return x, v
 
 
+class MMDiTBlock_AVT(DiTBlock):
+    """Three-stream joint attention with the original audio/video sublayers.
+
+    Q/K/V are concatenated in audio, video, text order. Text retains the
+    character encoder's ordinal positions and receives no physical-time RoPE.
+    """
+
+    def __init__(
+        self, dim, heads, dim_head, ff_mult=4, dropout=0.1, qk_norm=None,
+        pe_attn_head=None, attn_backend="torch", attn_mask_enabled=True,
+    ):
+        super().__init__(
+            dim=dim, heads=heads, dim_head=dim_head, ff_mult=ff_mult,
+            dropout=dropout, qk_norm=qk_norm, pe_attn_head=pe_attn_head,
+            attn_backend=attn_backend, attn_mask_enabled=attn_mask_enabled,
+        )
+        if attn_backend != "torch":
+            raise NotImplementedError("only torch attn backend is supported for MMDiTBlock_AVT")
+        self.pe_attn_head = pe_attn_head
+        self.attn_mask_enabled = attn_mask_enabled
+        for prefix in ("v", "t"):
+            setattr(self, f"{prefix}_attn_norm", AdaLayerNorm(dim))
+            setattr(self, f"{prefix}_attn", Attention(
+                processor=AttnProcessor(
+                    pe_attn_head=pe_attn_head, attn_backend=attn_backend,
+                    attn_mask_enabled=attn_mask_enabled,
+                ),
+                dim=dim, heads=heads, dim_head=dim_head,
+                dropout=dropout, qk_norm=qk_norm,
+            ))
+            setattr(self, f"{prefix}_ff_norm", nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6))
+            setattr(self, f"{prefix}_ff", FeedForward(
+                dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh",
+            ))
+
+    _qkv = MMDiTBlock_VT._qkv
+    _apply_rope = MMDiTBlock_VT._apply_rope
+
+    def joint_attn(
+        self, norm_x, norm_v, norm_text, mask=None, v_mask=None,
+        rope=None, v_rope=None, text_mask=None,
+    ):
+        batch = norm_x.shape[0]
+        n_a, n_v, n_t = norm_x.shape[1], norm_v.shape[1], norm_text.shape[1]
+        q_a, k_a, v_a = self._qkv(self.attn, norm_x)
+        q_v, k_v, v_v = self._qkv(self.v_attn, norm_v)
+        q_t, k_t, v_t = self._qkv(self.t_attn, norm_text)
+        q_a, k_a = self._apply_rope(q_a, k_a, rope)
+        q_v, k_v = self._apply_rope(q_v, k_v, v_rope)
+        query = torch.cat((q_a, q_v, q_t), dim=2)
+        key = torch.cat((k_a, k_v, k_t), dim=2)
+        value = torch.cat((v_a, v_v, v_t), dim=2)
+
+        # Preserve the source's A/V padding policy, including its training
+        # mask suppression. Text padding was always masked in cross-attention
+        # and must remain masked now that text keys share the joint softmax.
+        key_mask = None
+        if text_mask is not None or (self.attn_mask_enabled and (mask is not None or v_mask is not None)):
+            valid_a = mask if self.attn_mask_enabled and mask is not None else torch.ones(
+                (batch, n_a), dtype=torch.bool, device=norm_x.device,
+            )
+            valid_v = v_mask if self.attn_mask_enabled and v_mask is not None else torch.ones(
+                (batch, n_v), dtype=torch.bool, device=norm_v.device,
+            )
+            valid_t = text_mask if text_mask is not None else torch.ones(
+                (batch, n_t), dtype=torch.bool, device=norm_text.device,
+            )
+            key_mask = torch.cat((valid_a, valid_v, valid_t), dim=1)[:, None, None, :]
+        out = F.scaled_dot_product_attention(
+            query, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False,
+        )
+        out = out.transpose(1, 2).reshape(batch, n_a + n_v + n_t, self.attn.inner_dim)
+        outputs = []
+        for stream_out, attention, valid in zip(
+            out.split((n_a, n_v, n_t), dim=1),
+            (self.attn, self.v_attn, self.t_attn), (mask, v_mask, text_mask),
+        ):
+            stream_out = attention.to_out[1](attention.to_out[0](stream_out))
+            if valid is not None:
+                stream_out = stream_out.masked_fill(~valid.unsqueeze(-1), 0.0)
+            outputs.append(stream_out)
+        return tuple(outputs)
+
+    def forward(
+        self, x, v, t, mask=None, v_mask=None, rope=None, v_rope=None,
+        text=None, text_mask=None, generation_mask=None,
+    ):
+        if text is None:
+            raise ValueError("AVT joint attention requires the text stream")
+        norm_x, x_gate, x_shift, x_scale, x_ff_gate = self.attn_norm(x, emb=t)
+        norm_v, v_gate, v_shift, v_scale, v_ff_gate = self.v_attn_norm(v, emb=t)
+        norm_t, t_gate, t_shift, t_scale, t_ff_gate = self.t_attn_norm(text, emb=t)
+        attn_x, attn_v, attn_t = self.joint_attn(
+            norm_x, norm_v, norm_t, mask=mask, v_mask=v_mask,
+            rope=rope, v_rope=v_rope, text_mask=text_mask,
+        )
+        x = x + x_gate[:, None] * attn_x
+        v = v + v_gate[:, None] * attn_v
+        text = text + t_gate[:, None] * attn_t
+        x = x + x_ff_gate[:, None] * self.ff(self.ff_norm(x) * (1 + x_scale[:, None]) + x_shift[:, None])
+        v = v + v_ff_gate[:, None] * self.v_ff(self.v_ff_norm(v) * (1 + v_scale[:, None]) + v_shift[:, None])
+        text = text + t_ff_gate[:, None] * self.t_ff(
+            self.t_ff_norm(text) * (1 + t_scale[:, None]) + t_shift[:, None],
+        )
+        if text_mask is not None:
+            text = text.masked_fill(~text_mask.unsqueeze(-1), 0.0)
+        return x, v, text
+
+
 class DiT_VT_MMDiT(DiT):
     def __init__(
         self,
@@ -368,6 +480,7 @@ class DiT_VT_MMDiT(DiT):
         normalize_text_context=False,
         speaker_dim=None,
         speaker_condition_start_layer=None,
+        text_joint_attention=False,
     ):
         super().__init__(
             dim=dim,
@@ -400,6 +513,11 @@ class DiT_VT_MMDiT(DiT):
         self.last_text_context_post_rms: torch.Tensor | None = None
         self.n_mm_layers = n_mm_layers
         self.n_text_layers = n_mm_layers if n_text_layers is None else n_text_layers
+        self.text_joint_attention = bool(text_joint_attention)
+        if self.text_joint_attention and (
+            self.n_mm_layers == 0 or self.n_text_layers != self.n_mm_layers or prompt_isolated_ca
+        ):
+            raise ValueError("AVT joint attention requires n_text_layers == n_mm_layers > 0 and prompt_isolated_ca=False")
         if not 0 <= self.n_mm_layers <= self.n_text_layers <= depth:
             raise ValueError(
                 "expected 0 <= n_mm_layers <= n_text_layers <= depth, got "
@@ -468,7 +586,7 @@ class DiT_VT_MMDiT(DiT):
         }
         self.transformer_blocks = nn.ModuleList(
             [
-                MMDiTBlock_VT(**text_block_kwargs)
+                (MMDiTBlock_AVT(**audio_block_kwargs) if self.text_joint_attention else MMDiTBlock_VT(**text_block_kwargs))
                 if i < self.n_mm_layers
                 else AudioTextDiTBlock(**text_block_kwargs)
                 if i < self.n_text_layers
@@ -489,6 +607,9 @@ class DiT_VT_MMDiT(DiT):
         self.speaker_proj = (
             nn.Linear(self.speaker_dim, self.dim, bias=False) if self.speaker_dim is not None else None
         )
+        self.text_joint_proj = (
+            nn.Linear(self.text_embed.text_embed.embedding_dim, dim) if self.text_joint_attention else None
+        )
 
         # Initialize the re-created blocks without double-zeroing a gated branch.
         #
@@ -500,8 +621,12 @@ class DiT_VT_MMDiT(DiT):
         for block in self.transformer_blocks[: self.n_mm_layers]:
             # Gated MM branches: zero only the modulation/gates. Keep
             # cross_attn.out_proj and v_attn.to_out normally initialized.
-            nn.init.constant_(block.cross_attn_ada.weight, 0)
-            nn.init.constant_(block.cross_attn_ada.bias, 0)
+            if self.text_joint_attention:
+                nn.init.constant_(block.t_attn_norm.linear.weight, 0)
+                nn.init.constant_(block.t_attn_norm.linear.bias, 0)
+            else:
+                nn.init.constant_(block.cross_attn_ada.weight, 0)
+                nn.init.constant_(block.cross_attn_ada.bias, 0)
             nn.init.constant_(block.v_attn_norm.linear.weight, 0)
             nn.init.constant_(block.v_attn_norm.linear.bias, 0)
         for block in self.transformer_blocks[self.n_mm_layers : self.n_text_layers]:
@@ -758,6 +883,11 @@ class DiT_VT_MMDiT(DiT):
 
         if self.normalize_text_context:
             text_embed, text_mask = self._stabilize_text_context(text_embed, text_mask)
+        if self.text_joint_proj is not None:
+            text_embed = self.text_joint_proj(text_embed)
+            if text_mask is not None:
+                text_mask = text_mask[:, :text_embed.shape[1]]
+                text_embed = text_embed.masked_fill(~text_mask.unsqueeze(-1), 0.0)
 
         lens = (
             mask.sum(dim=1)
@@ -788,7 +918,7 @@ class DiT_VT_MMDiT(DiT):
 
         intermediates_ctc = {}
         for layer_i, block in enumerate(self.transformer_blocks):
-            is_mm = isinstance(block, MMDiTBlock_VT)
+            is_mm = isinstance(block, (MMDiTBlock_VT, MMDiTBlock_AVT))
             has_tail_text = isinstance(block, AudioTextDiTBlock)
             block_mask = None if self.training else mask  # memory issue
             block_v_mask = None if self.training else v_mask
@@ -800,7 +930,7 @@ class DiT_VT_MMDiT(DiT):
             if self.checkpoint_activations:
                 # https://pytorch.org/docs/stable/checkpoint.html#torch.utils.checkpoint.checkpoint
                 if is_mm:
-                    x, v = torch.utils.checkpoint.checkpoint(
+                    mm_output = torch.utils.checkpoint.checkpoint(
                         self.ckpt_wrapper(block),
                         x,
                         v,
@@ -837,7 +967,7 @@ class DiT_VT_MMDiT(DiT):
                     )
             else:
                 if is_mm:
-                    x, v = block(
+                    mm_output = block(
                         x,
                         v,
                         block_t,
@@ -866,6 +996,12 @@ class DiT_VT_MMDiT(DiT):
                         mask=block_mask,
                         rope=rope,
                     )
+
+            if is_mm:
+                if self.text_joint_attention:
+                    x, v, text_embed = mm_output
+                else:
+                    x, v = mm_output
 
             if not cache and layer_i in self.layer_map_ctc:  # hack
                 projector = self.projectors_ctc[self.layer_map_ctc[layer_i]]

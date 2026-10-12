@@ -16,10 +16,69 @@ EXPECTED_TARGET_KEYS = 703
 EXPECTED_LOADED_KEYS = 303
 EXPECTED_IGNORED_SOURCE_KEYS = 10
 EXPECTED_NEW_TARGET_KEYS = 400
+EXPECTED_AVT_TARGET_KEYS = 801
+EXPECTED_AVT_NEW_TARGET_KEYS = 498
 EMA_BOOKKEEPING_KEYS = frozenset({"initted", "step"})
 S2C_IGNORED_PROJECTOR_KEYS = frozenset(
     {f"transformer.projectors.0.model.{layer}.{suffix}" for layer in (0, 1, 3, 4, 6) for suffix in ("bias", "weight")}
 )
+
+
+def _expected_new_target_keys(*, text_joint_attention: bool, has_speaker: bool) -> set[str]:
+    """Exact additions to the fixed 18-layer S2c parent, for either C2 topology.
+
+    Keep the original 12 MM / 6 audio staging and all shared condition encoders.
+    AVT replaces each block's eight cross-attention tensors with sixteen text
+    stream tensors and adds only the two input-projection tensors.
+    """
+    keys = {
+        f"transformer.projectors_ctc.{projector}.model.{layer}.{suffix}"
+        for projector in range(2)
+        for layer in (0, 1, 3, 4, 6)
+        for suffix in ("weight", "bias")
+    }
+    keys.add("transformer.text_embed.text_embed.weight")
+    for layer in range(4):
+        prefix = f"transformer.text_embed.text_blocks.{layer}."
+        keys.update(prefix + f"{name}.{suffix}" for name in ("dwconv", "norm", "pwconv1", "pwconv2")
+                    for suffix in ("weight", "bias"))
+        keys.update(prefix + "grn." + suffix for suffix in ("gamma", "beta"))
+
+    video_prefix = "transformer.video_embed."
+    keys.add(video_prefix + "vid_null_emb")
+    keys.update(video_prefix + f"{name}.{suffix}"
+                for name in ("proj", "conv_pos_embed.conv1d.0", "conv_pos_embed.conv1d.2",
+                             "vid_conformer.after_norm", "vid_conformer.embed.out.0", "vid_conformer.embed.out.1")
+                for suffix in ("weight", "bias"))
+    for layer in range(2):
+        prefix = video_prefix + f"vid_conformer.encoders.{layer}."
+        keys.update(prefix + f"{name}.{suffix}"
+                    for name in ("feed_forward.w_1", "feed_forward.w_2", "norm_ff", "norm_mha",
+                                 "self_attn.linear_q", "self_attn.linear_k", "self_attn.linear_v",
+                                 "self_attn.linear_out")
+                    for suffix in ("weight", "bias"))
+        keys.update(prefix + "self_attn." + name
+                    for name in ("linear_pos.weight", "pos_bias_u", "pos_bias_v"))
+
+    for layer in range(12):
+        prefix = f"transformer.transformer_blocks.{layer}."
+        for stream in (("v", "t") if text_joint_attention else ("v",)):
+            keys.update(prefix + f"{stream}_{name}.{suffix}"
+                        for name in ("attn_norm.linear", "attn.to_q", "attn.to_k", "attn.to_v",
+                                     "attn.to_out.0", "ff.ff.0.0", "ff.ff.2")
+                        for suffix in ("weight", "bias"))
+            keys.update(prefix + f"{stream}_attn.{name}.weight" for name in ("q_norm", "k_norm"))
+        if not text_joint_attention:
+            keys.update(prefix + name for name in (
+                "cross_attn.q_proj_weight", "cross_attn.k_proj_weight", "cross_attn.v_proj_weight",
+                "cross_attn.in_proj_bias", "cross_attn.out_proj.weight", "cross_attn.out_proj.bias",
+                "cross_attn_ada.weight", "cross_attn_ada.bias",
+            ))
+    if text_joint_attention:
+        keys.update({"transformer.text_joint_proj.weight", "transformer.text_joint_proj.bias"})
+    if has_speaker:
+        keys.add("transformer.speaker_proj.weight")
+    return keys
 
 
 @dataclass(frozen=True)
@@ -183,6 +242,36 @@ def migrate_s2c_ema_into_model(
             or torch.count_nonzero(speaker).item() != 0
         ):
             raise RuntimeError("S2c speaker migration requires a new, zero-initialized Linear(192, 768) weight")
+    text_joint_attention = bool(getattr(model.transformer, "text_joint_attention", False))
+    expected_new_keys = _expected_new_target_keys(
+        text_joint_attention=text_joint_attention, has_speaker=has_speaker
+    )
+    if set(new_target) != expected_new_keys:
+        raise RuntimeError(
+            "Unexpected S2c-to-C2 new tensor keys: "
+            f"missing={sorted(expected_new_keys - set(new_target))}, "
+            f"unexpected={sorted(set(new_target) - expected_new_keys)}"
+        )
+    # Every new modality stream retains the source audio stream's dimensions
+    # and point-wise FFN. Reject shape changes even if the key counts match.
+    for key in expected_new_keys:
+        if not key.startswith("transformer.transformer_blocks."):
+            continue
+        _, _, layer_index, stream_name = key.split(".", 3)
+        if not stream_name.startswith(("v_", "t_")):
+            continue
+        audio_key = f"transformer.transformer_blocks.{layer_index}.{stream_name[2:]}"
+        if audio_key not in source_state or target_state[key].shape != source_state[audio_key].shape:
+            raise RuntimeError(f"New modality tensor does not match its S2c audio counterpart: {key}")
+    if text_joint_attention:
+        for key, shape in (
+            ("transformer.text_joint_proj.weight", (768, 512)),
+            ("transformer.text_joint_proj.bias", (768,)),
+        ):
+            if tuple(target_state[key].shape) != shape:
+                raise RuntimeError(f"AVT migration requires {key} to have shape {shape}")
+    expected_target_count = EXPECTED_AVT_TARGET_KEYS if text_joint_attention else EXPECTED_TARGET_KEYS
+    expected_new_count = EXPECTED_AVT_NEW_TARGET_KEYS if text_joint_attention else EXPECTED_NEW_TARGET_KEYS
     actual_counts = (
         len(source_state),
         len(target_state),
@@ -192,10 +281,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS + int(has_speaker),
+        expected_target_count + int(has_speaker),
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS + int(has_speaker),
+        expected_new_count + int(has_speaker),
     )
     if actual_counts != expected_counts:
         raise RuntimeError(

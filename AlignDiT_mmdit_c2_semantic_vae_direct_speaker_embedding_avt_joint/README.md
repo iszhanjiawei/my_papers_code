@@ -1,8 +1,10 @@
 # Current experiment
 
-This snapshot adds frozen CAM++ speaker conditioning to Semantic-VAE Direct-C2
-with CTC lambda 0.03. See [SEMANTIC_VAE_SPEAKER_C2.md](SEMANTIC_VAE_SPEAKER_C2.md)
-for this experiment's configuration, training, TensorBoard and inference commands.
+This snapshot replaces the speaker Semantic-VAE C2 model's audio/video joint
+attention plus text cross-attention with audio/video/text joint attention.
+It retains 12 MM blocks, 6 audio-only blocks and the source training recipe.
+See [AVT_JOINT_ATTENTION.md](AVT_JOINT_ATTENTION.md) for this experiment's
+configuration, training, TensorBoard and inference commands.
 
 # AlignDiT
 
