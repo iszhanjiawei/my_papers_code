@@ -12,6 +12,28 @@ from aligndit.script.eval.grid_s1_common import (
 from aligndit.script.eval.eval_celebvdub_grid_reference import word_edit_counts
 
 
+def audit_assets(a):
+    """Record local model binaries and source hashes without loading GPU models."""
+    import importlib.metadata
+    import subprocess
+    files = [a.wavlm_ckpt, a.wavlm_base_ckpt, a.avhubert_checkpoint,
+             a.asr_ckpt/'model.bin', a.asr_ckpt/'config.json', a.asr_ckpt/'tokenizer.json',
+             a.asr_ckpt/'vocabulary.json', a.asr_ckpt/'preprocessor_config.json',
+             a.emo_ckpt/'model.pt', a.emo_ckpt/'config.yaml', a.emo_ckpt/'configuration.json']
+    project = Path(__file__).parents[4]
+    sources = [Path(__file__), Path(__file__).with_name('grid_s1_common.py'),
+               project/'src/f5_tts/eval/utils_eval.py', Path(__file__).with_name('utils.py'),
+               project/'src/aligndit/script/misc/extract_avhubert.py']
+    assets = [{'path': str(path), 'size_bytes': path.stat().st_size, 'sha256': sha(path)} for path in files]
+    versions = {}
+    for package in ('torch', 'torchaudio', 'numpy', 'faster-whisper', 'ctranslate2', 'funasr', 'jiwer'):
+        versions[package] = importlib.metadata.version(package)
+    revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=project, text=True).strip()
+    publish(a.output_dir/'metric_assets.json', {'assets': assets, 'code_revision': revision, 'versions': versions,
+            'source_files': [{'path': str(path), 'sha256': sha(path)} for path in sources]})
+    print('Recorded local metric assets and source hashes', flush=True)
+
+
 def save_results(root, task, rows, results, shard, nshard):
     if len(results) != len(rows):
         raise RuntimeError('Incomplete metric worker results')
@@ -111,6 +133,8 @@ def merge(a, rows):
               'metrics': {}, 'wer_normalization': 'NFKC, casefold, Unicode punctuation to spaces, whitespace collapse, isolated digits 0..9 to English words; preserve all GRID letter words',
               'references': {'sim': 'same-clip canonical GT audio', 'emosim': 'emotion2vec classifier-score cosine vs canonical GT',
                              'avsync': 'mean frame cosine of joint AV-HuBERT features: same mouth video + generated vs canonical GT audio'}}
+    if (a.output_dir/'metric_assets.json').exists():
+        report['metric_assets'] = {'path': str(a.output_dir/'metric_assets.json'), 'sha256': sha(a.output_dir/'metric_assets.json')}
     expected = [identity(r) for r in rows]
     for task in ('sim', 'wer', 'emosim', 'avsync'):
         gathered = []
@@ -142,6 +166,9 @@ def merge(a, rows):
 
 
 def run(a):
+    if a.task == 'audit':
+        audit_assets(a)
+        return
     # Full verification is performed once before metric shards, and again at merge.
     if a.task in ('verify', 'merge'):
         rows, _ = verify_outputs(a.cache_root, a.output_dir, a.limit)
@@ -184,7 +211,7 @@ def args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--cache-root', type=Path, default=data/'GRID_svae1000k_sample_seed666_fp32')
-    p.add_argument('--task', choices=['verify', 'merge', 'sim', 'wer', 'emosim', 'avsync'], required=True)
+    p.add_argument('--task', choices=['audit', 'verify', 'merge', 'sim', 'wer', 'emosim', 'avsync'], required=True)
     p.add_argument('--shard', type=int, default=0)
     p.add_argument('--nshard', '-n', type=int, default=1)
     p.add_argument('--limit', type=int)

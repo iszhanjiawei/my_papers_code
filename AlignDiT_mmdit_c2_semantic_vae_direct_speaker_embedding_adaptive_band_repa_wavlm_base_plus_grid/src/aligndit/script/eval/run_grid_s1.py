@@ -85,13 +85,16 @@ def main():
     if a.workers_per_gpu < 1 or (a.limit and a.limit < len(a.gpus.split(','))*a.workers_per_gpu):
         raise ValueError('Too few clips for worker count')
     a.output_dir.mkdir(parents=True, exist_ok=True)
-    stages = ['infer', 'sim', 'wer', 'emosim', 'avsync', 'merge']
+    stages = ['infer', 'audit', 'sim', 'wer', 'emosim', 'avsync', 'merge']
     selected = stages[stages.index(a.start_stage):]
     try:
         for stage in selected:
             publish(a.output_dir/'pipeline_status.json', {'stage': stage, 'complete': False, 'pid': os.getpid()})
-            if stage != 'merge':
+            if stage not in ('audit', 'merge'):
                 workers(a, stage)
+            if stage == 'audit':
+                subprocess.run([sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1',
+                                '--task', 'audit', '--output-dir', str(a.output_dir)], check=True)
             if stage in ('infer', 'merge'):
                 command = [sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1', '--task', 'verify' if stage=='infer' else 'merge',
                            '--output-dir', str(a.output_dir), '--nshard', str(len(a.gpus.split(','))*a.workers_per_gpu)]

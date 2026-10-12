@@ -53,5 +53,6 @@ processes per GPU. `pipeline_status.json`, `active_workers.json` and individual
 logs record progress. Failed stages preserve verified artifacts. To resume,
 repeat the same command; or use `--start-stage sim/wer/emosim/avsync/merge` after
 inference has been verified. Keep the same worker count when reusing metric shards.
-Final artifacts are `evaluation_summary.json`, `{sim,wer,emosim,avsync}_results.jsonl`,
+Local metric weight binaries, software versions and source hashes are recorded in
+`metric_assets.json`. Final artifacts are `evaluation_summary.json`, `{sim,wer,emosim,avsync}_results.jsonl`,
 `val/*/*.wav`, and joint-feature caches. Metric values are displayed to five decimals.
