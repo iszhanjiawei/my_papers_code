@@ -19,6 +19,9 @@ full video sublayers, rather than introducing the reference's `pre_only` variant
 The source speaker experiment still supplies the Semantic-VAE codec,
 64-channel/40-Hz cache, 192-dimensional CAM++ speaker condition on blocks 12–17,
 CTC taps at layers 6/12 and unchanged flow/CTC training policy.
+The full model has 376,563,842 parameters, versus 321,849,218 in the source.
+The additional text stream changes parameter count; width and layer counts
+remain unchanged.
 
 The same SHA-pinned S2c 70k EMA initializes compatible audio weights, with a
 new optimizer and update counter. The MM text stream requires new parameters.
@@ -64,8 +67,8 @@ PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u \
   They verify shared-softmax numerical equivalence, bidirectional interaction,
   text padding, text state propagation, CFG packing, checkpointed gradients,
   speaker conditioning, CTC taps, and the unchanged 12+6 staging/configuration.
-- The inherited speaker regression passes with the legacy topology disabled
-  only by the explicit AVT configuration switch; the legacy default is retained.
+- The inherited speaker regression passes on the unchanged legacy default.
+  The AVT regression separately verifies speaker conditioning in the new topology.
 - Strict migration loads all 303 compatible S2c EMA tensors exactly, ignores
   the same ten source projector tensors, and validates all 499 new tensors
   against an explicit whitelist (802 target tensors in total).
