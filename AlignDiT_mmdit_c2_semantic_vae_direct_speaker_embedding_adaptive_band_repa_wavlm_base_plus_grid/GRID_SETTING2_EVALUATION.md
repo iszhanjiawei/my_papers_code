@@ -26,8 +26,9 @@ video duration (`25 Hz frame count × 640 samples`) as 16-kHz mono PCM16.
 Keep Setting1's EMA 100k, FP32, seed 0 per target, Euler/EPSS, 32 NFE, sway −1,
 text/video CFG 5/2, and one utterance per process. Run four processes per GPU
 on two RTX 4090s, eight independent workers total. If other workloads share the
-GPUs, Whisper shards wait for at least 6,000 MiB of free memory and serialize
-model allocation; all eight shards are retained without changing ASR parameters.
+GPUs, Whisper shards wait for at least 8,192 MiB of free memory and serialize
+model allocation. Two model slots per GPU remain held until each ASR shard
+finishes; all eight shards are retained without changing ASR parameters.
 
 Metrics retain the existing implementations and Setting1 text normalization:
 

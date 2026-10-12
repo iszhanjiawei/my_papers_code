@@ -54,7 +54,43 @@ def save_results(root, task, rows, results, shard, nshard):
     print(json.dumps(summary), flush=True)
 
 
+def whisper_model_slot(physical_gpu, *, directory=Path('/tmp'), poll_seconds=5):
+    """Hold one of two GPU model slots until this shard finishes ASR."""
+    from contextlib import contextmanager
+    import fcntl
+    import time
+
+    @contextmanager
+    def acquire():
+        handle = None
+        while handle is None:
+            for slot in range(2):
+                candidate = (directory/f'grid_whisper_gpu_{physical_gpu}_slot{slot}.lock').open('a')
+                try:
+                    fcntl.flock(candidate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    candidate.close()
+                else:
+                    handle = candidate
+                    break
+            if handle is None:
+                print('Waiting for a Whisper GPU model slot', flush=True)
+                time.sleep(poll_seconds)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+            handle.close()
+    return acquire()
+
+
 def run_wer(a, rows, tests):
+    physical_gpu = os.environ.get('CUDA_VISIBLE_DEVICES', '0').split(',')[0]
+    with whisper_model_slot(physical_gpu):
+        return run_wer_with_slot(a, rows, tests)
+
+
+def run_wer_with_slot(a, rows, tests):
     from faster_whisper import WhisperModel
     from tqdm import tqdm
     import jiwer
@@ -71,14 +107,28 @@ def run_wer(a, rows, tests):
             free_mib = int(subprocess.check_output(
                 ['nvidia-smi', '--id='+physical_gpu, '--query-gpu=memory.free',
                  '--format=csv,noheader,nounits'], text=True).strip())
-            if free_mib >= 6000:
+            if free_mib < 8192:
+                print(f'Waiting for Whisper GPU memory: {free_mib} MiB free (need 8192 MiB)', flush=True)
+                time.sleep(5)
+                continue
+            model = None
+            warmup_segments = None
+            try:
+                model = WhisperModel(str(a.asr_ckpt), device='cuda', device_index=0, compute_type='float16', cpu_threads=4)
+                warmup_segments, _ = model.transcribe(tests[0][0], language='en', beam_size=5)
+                list(warmup_segments)
                 break
-            print(f'Waiting for Whisper GPU memory: {free_mib} MiB free (need 6000 MiB)', flush=True)
-            time.sleep(5)
-        model = WhisperModel(str(a.asr_ckpt), device='cuda', device_index=0, compute_type='float16', cpu_threads=4)
-        # Materialize decoder buffers before another shard checks available memory.
-        warmup_segments, _ = model.transcribe(tests[0][0], language='en', beam_size=5)
-        list(warmup_segments)
+            except RuntimeError as error:
+                if 'out of memory' not in str(error).lower():
+                    raise
+                print('GPU memory changed during Whisper initialization; releasing model and retrying', flush=True)
+                warmup_segments = None
+                if model is not None:
+                    model.model.unload_model()
+                model = None
+                import gc
+                gc.collect()
+                time.sleep(5)
         fcntl.flock(lock, fcntl.LOCK_UN)
     results = []
     for row, (wav, ref, text) in tqdm(list(zip(rows, tests)), mininterval=5):

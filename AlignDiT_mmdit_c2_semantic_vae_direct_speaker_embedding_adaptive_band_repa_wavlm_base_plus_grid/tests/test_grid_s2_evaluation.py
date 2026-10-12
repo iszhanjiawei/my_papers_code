@@ -3,8 +3,18 @@ import tempfile
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 from collections import Counter
+import time
+from aligndit.script.eval.eval_grid_s1 import whisper_model_slot
 from aligndit.script.eval.grid_s1_common import identity, normalize_text, ensure_contract, read, sha
 from aligndit.script.eval.grid_s2_common import select_references
+
+
+def concurrent_slot_holder(directory):
+    with whisper_model_slot('test', directory=Path(directory), poll_seconds=.01):
+        start=time.monotonic_ns()
+        time.sleep(.05)
+        end=time.monotonic_ns()
+    return start,end
 
 
 def concurrent_contract_writer(path):
@@ -18,6 +28,17 @@ def row(speaker, utterance, text):
 
 
 class GridS2EvaluationTests(unittest.TestCase):
+    def test_whisper_model_slots_limit_concurrent_shards(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with ProcessPoolExecutor(max_workers=4) as executor:
+                intervals=list(executor.map(concurrent_slot_holder, [directory]*8))
+            events=sorted([(start,1) for start,end in intervals]+[(end,-1) for start,end in intervals])
+            active=peak=0
+            for _,delta in events:
+                active+=delta;peak=max(peak,active)
+            self.assertEqual(peak,2)
+            self.assertEqual(active,0)
+
     def test_parallel_workers_publish_one_immutable_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory)/'protocol.json')
