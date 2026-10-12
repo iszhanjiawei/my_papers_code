@@ -8,7 +8,7 @@ import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from aligndit.script.eval.grid_s1_common import PROTOCOL, identity, load_rows, output_record, publish, read, sha
+from aligndit.script.eval.grid_s1_common import PROTOCOL, identity, load_rows, output_record, publish, read, sha, ensure_contract
 from aligndit.script.eval.infer_celebvdub_semantic_vae_s1 import (
     atomic_save_waveform, build_model, historical_setting1_text, load_composed_config, load_normalization,
 )
@@ -39,9 +39,7 @@ def run(a):
                 'reference': 'same target clip complete canonical MPG audio; GT latent prompt plus same-clip CAM++',
                 'output': 'only target continuation; prompt removed; exact original duration; 16k mono PCM16'}
     protocol_path = a.output_dir / 'protocol.json'
-    if protocol_path.exists() and read(protocol_path) != contract:
-        raise RuntimeError('Output directory belongs to another experiment')
-    publish(protocol_path, contract)
+    ensure_contract(protocol_path, contract)
     device = torch.device('cuda:0')
     torch.set_num_threads(4)
     torch.set_float32_matmul_precision('high')

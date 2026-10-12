@@ -1,5 +1,6 @@
 """Auditable GRID Setting1 identities, text normalization and output coverage."""
 import hashlib
+import fcntl
 import json
 import math
 import os
@@ -38,6 +39,22 @@ def publish(path, obj):
     tmp = path.with_name(path.name + f'.{os.getpid()}.tmp')
     tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     os.replace(tmp, path)
+
+
+def ensure_contract(path, contract):
+    """Publish once under a file lock; other GPU workers only validate it."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_name(path.name+'.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if path.exists():
+            if read(path) != contract:
+                raise RuntimeError('Output directory belongs to another experiment')
+        else:
+            publish(path, contract)
+            with path.open('rb') as handle:
+                os.fsync(handle.fileno())
+        fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def load_rows(cache):

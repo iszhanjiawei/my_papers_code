@@ -1,7 +1,15 @@
 import unittest
+import tempfile
+from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor
 from collections import Counter
-from aligndit.script.eval.grid_s1_common import identity, normalize_text
+from aligndit.script.eval.grid_s1_common import identity, normalize_text, ensure_contract, read, sha
 from aligndit.script.eval.grid_s2_common import select_references
+
+
+def concurrent_contract_writer(path):
+    ensure_contract(Path(path), {'protocol': 'test', 'seed': 0})
+    return sha(path)
 
 
 def row(speaker, utterance, text):
@@ -10,6 +18,16 @@ def row(speaker, utterance, text):
 
 
 class GridS2EvaluationTests(unittest.TestCase):
+    def test_parallel_workers_publish_one_immutable_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory)/'protocol.json')
+            with ProcessPoolExecutor(max_workers=4) as executor:
+                hashes = list(executor.map(concurrent_contract_writer, [path]*32))
+            self.assertEqual(len(set(hashes)), 1)
+            self.assertEqual(read(path), {'protocol':'test', 'seed':0})
+            with self.assertRaises(RuntimeError):
+                ensure_contract(path, {'protocol':'another'})
+
     def test_different_text_same_speaker_permutation_is_reproducible(self):
         rows = [row(s, f'clip{i}', f'bin white by {i} two again') for s in ('s1','s2') for i in range(7)]
         first, second = select_references(rows), select_references(list(reversed(rows)))

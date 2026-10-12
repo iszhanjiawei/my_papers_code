@@ -8,7 +8,7 @@ import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from aligndit.script.eval.grid_s1_common import identity, load_rows, output_record, publish, read, sha
+from aligndit.script.eval.grid_s1_common import identity, load_rows, output_record, publish, read, sha, ensure_contract
 from aligndit.script.eval.grid_s2_common import PROTOCOL, load_pairs, SELECTION
 from aligndit.script.eval.infer_celebvdub_grid_reference import make_sampling_inputs, reference_target_text
 from aligndit.script.eval.infer_celebvdub_semantic_vae_s1 import (
@@ -45,9 +45,7 @@ def run(a):
                 'reference': 'same-speaker different-text validation clip canonical audio; latent and CAM++ both from this independent reference',
                 'output': 'only target continuation; prompt removed; exact original duration; 16k mono PCM16'}
     protocol_path = a.output_dir / 'protocol.json'
-    if protocol_path.exists() and read(protocol_path) != contract:
-        raise RuntimeError('Output directory belongs to another experiment')
-    publish(protocol_path, contract)
+    ensure_contract(protocol_path, contract)
     device = torch.device('cuda:0')
     torch.set_num_threads(4)
     torch.set_float32_matmul_precision('high')
