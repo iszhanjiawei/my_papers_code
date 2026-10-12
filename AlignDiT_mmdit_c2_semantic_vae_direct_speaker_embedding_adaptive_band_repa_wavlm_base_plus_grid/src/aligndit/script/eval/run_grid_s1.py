@@ -19,10 +19,10 @@ def workers(a, stage):
         for shard in range(count):
             log = a.output_dir/f'{stage}_worker{shard}.log'
             if stage == 'infer':
-                command = [sys.executable, '-u', '-m', 'aligndit.script.eval.infer_grid_s1',
+                command = [sys.executable, '-u', '-m', f'aligndit.script.eval.infer_grid_{a.setting}',
                            '--checkpoint', str(a.checkpoint), '--step', str(a.step)]
             else:
-                command = [sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1', '--task', stage]
+                command = [sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1', '--setting', a.setting, '--task', stage]
                 summary_path = a.output_dir/f'{stage}_shard{shard}_summary.json'
                 results_path = a.output_dir/f'{stage}_shard{shard}.jsonl'
                 if summary_path.exists() and results_path.exists():
@@ -74,6 +74,7 @@ def main():
     prefix = os.environ.get('ROOT_PREFIX', '')
     data = Path(prefix+'/zjw524/projects/data')
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--setting', choices=['s1','s2'], default='s1')
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--checkpoint', type=Path, default=data/'ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k_40hz_char/model_100000.pt')
     p.add_argument('--step', type=int, default=100000)
@@ -85,6 +86,9 @@ def main():
     if a.workers_per_gpu < 1 or (a.limit and a.limit < len(a.gpus.split(','))*a.workers_per_gpu):
         raise ValueError('Too few clips for worker count')
     a.output_dir.mkdir(parents=True, exist_ok=True)
+    if a.setting == 's2':
+        from aligndit.script.eval.grid_s2_common import prepare_pairs
+        prepare_pairs(data/'GRID_svae1000k_sample_seed666_fp32', a.output_dir)
     stages = ['infer', 'audit', 'sim', 'wer', 'emosim', 'avsync', 'merge']
     selected = stages[stages.index(a.start_stage):]
     try:
@@ -94,10 +98,10 @@ def main():
                 workers(a, stage)
             if stage == 'audit':
                 subprocess.run([sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1',
-                                '--task', 'audit', '--output-dir', str(a.output_dir)], check=True)
+                                '--task', 'audit', '--setting', a.setting, '--output-dir', str(a.output_dir)], check=True)
             if stage in ('infer', 'merge'):
                 command = [sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1', '--task', 'verify' if stage=='infer' else 'merge',
-                           '--output-dir', str(a.output_dir), '--nshard', str(len(a.gpus.split(','))*a.workers_per_gpu)]
+                           '--setting', a.setting, '--output-dir', str(a.output_dir), '--nshard', str(len(a.gpus.split(','))*a.workers_per_gpu)]
                 if a.limit:
                     command += ['--limit', str(a.limit)]
                 subprocess.run(command, check=True)

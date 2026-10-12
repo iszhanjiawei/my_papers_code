@@ -79,7 +79,7 @@ def identity(row):
     return path.with_suffix('').as_posix()
 
 
-def output_record(root, row):
+def output_record(root, row, protocol=PROTOCOL):
     path = Path(root) / row['audio_relative_path']
     receipt = read(Path(root) / 'receipts' / (identity(row) + '.json'))
     contract = read(Path(root) / 'protocol.json')
@@ -90,21 +90,35 @@ def output_record(root, row):
     with wave.open(str(path)) as f:
         if (f.getframerate(), f.getnchannels(), f.getsampwidth(), f.getnframes()) != (16000, 1, 2, row['original_num_samples']):
             raise RuntimeError(f'Incorrect WAV format/duration: {path}')
-    if contract.get('protocol') != PROTOCOL:
+    if contract.get('protocol') != protocol:
         raise RuntimeError('Wrong evaluation protocol')
     return receipt
 
 
-def verify_outputs(cache, root, limit=None):
+def verify_outputs(cache, root, limit=None, protocol=PROTOCOL):
     rows, _ = load_rows(cache)
+    pair_map = reference_rows = None
+    if protocol == 'grid_val_setting2_same_speaker_cross_utterance_gttext_v1':
+        from aligndit.script.eval.grid_s2_common import load_pairs
+        pair_map, reference_rows = load_pairs(Path(cache), Path(root), rows)
+        if read(Path(root)/'protocol.json').get('reference_pairs_sha256') != sha(Path(root)/'reference_pairs.json'):
+            raise RuntimeError('Setting2 pairs differ from inference protocol')
     if limit is not None:
         rows = rows[:limit]
-    outputs = [output_record(root, row) for row in rows]
+    outputs = [output_record(root, row, protocol) for row in rows]
+    if pair_map is not None:
+        for row, receipt in zip(rows, outputs):
+            ref = reference_rows[identity(row)]
+            if (receipt.get('reference_id') != pair_map[identity(row)]['reference_id']
+                    or receipt.get('prompt_frames') != ref['latent_frames']
+                    or receipt.get('target_frames') != row['latent_frames']
+                    or receipt.get('sampler_frames') != ref['latent_frames']+row['latent_frames']):
+                raise RuntimeError('Setting2 output reference or prompt/target geometry mismatch')
     actual = {p.relative_to(root).as_posix() for p in Path(root).glob('val/*/*.wav')}
     expected = {r['audio_relative_path'] for r in rows}
     if actual != expected:
         raise RuntimeError('Generated WAV coverage differs from requested validation list')
-    summary = {'protocol': PROTOCOL, 'count': len(rows), 'complete': limit is None,
+    summary = {'protocol': protocol, 'count': len(rows), 'complete': limit is None,
                'partial_smoke_test': limit is not None, 'outputs': outputs,
                'protocol_sha256': sha(Path(root) / 'protocol.json')}
     publish(Path(root) / 'inference_summary.json', summary)
