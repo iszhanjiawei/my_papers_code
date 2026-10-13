@@ -89,6 +89,29 @@ EMA, seed 0, CFG text/video 5/2 and 32 NFE. Inference loads all new weights stri
 Older generic launchers remain for upstream compatibility; use the entries above
 for this experiment, not an old baseline YAML with its original output directory.
 
+### Setting 1 target-only text ablation
+
+Set `TEXT_CONDITIONING=target-only` to send the target transcript once instead of
+the historical same-clip `reference transcript + two spaces + target transcript`.
+Only the model text changes: the same GT-clip reference latent and CAM++, the
+`P+T` timeline, video, target latent crop, decoder and sampling settings are kept.
+The historical char-text duration floor is retained in both modes: one of the
+213 clips has a 58-frame audio/video layout but historically samples 67 frames.
+Those nine extra tail frames remain outside the unchanged target crop.
+The default remains `reference-target`. Target-only default output directories
+have a `_target_only` suffix and cannot overwrite the historical results.
+
+```bash
+CKPT_STEP=150000 EVAL_GPU=0 TEXT_CONDITIONING=target-only \
+    bash src/aligndit/run/eval/eval_celebvdub_s1_svae_direct_speaker_ctc003.sh
+CKPT_STEP=200000 EVAL_GPU=1 TEXT_CONDITIONING=target-only \
+    bash src/aligndit/run/eval/eval_celebvdub_s1_svae_direct_speaker_ctc003.sh
+```
+
+For background runs, launch each command with `setsid env` and unbuffered Python,
+as required by the repository's `AGENTS.md`. Each inference summary records the
+selected text mode and each clip's actual model text and prompt/target lengths.
+
 ### Pre-launch verification (2026-09-12)
 
 - 19 adaptive-band CPU regression tests passed, including exact legacy-disabled

@@ -214,6 +214,20 @@ def historical_setting1_text(text: str) -> str:
     return prompt_text + " " + text
 
 
+def setting1_model_text(text: str, mode: str = "reference-target") -> str:
+    """Change only text conditioning; retain the same-clip S1 audio timeline."""
+    if mode == "reference-target":
+        return historical_setting1_text(text)
+    if mode == "target-only":
+        return text
+    raise ValueError(f"Unknown Setting 1 text conditioning: {mode}")
+
+
+def setting1_sampling_duration(text: str, frames: int) -> int:
+    """Preserve the historical char-token sampler's effective noise length."""
+    return max(2 * frames, len(historical_setting1_text(text)) + 1, frames + 1)
+
+
 def load_setting1_speaker_embeddings(
     config,
     records: list[dict[str, Any]],
@@ -331,10 +345,12 @@ def run(args: argparse.Namespace) -> None:
                 speaker_kwargs["speaker_embedding"] = speaker_embedding.unsqueeze(0).to(
                     device=device, dtype=torch.float32
                 )
+            model_text = setting1_model_text(str(row["text"]), args.text_conditioning)
+            sampling_duration = setting1_sampling_duration(str(row["text"]), frames)
             generated, _ = model.sample(
                 cond=cond,
-                text=[historical_setting1_text(str(row["text"]))],
-                duration=torch.tensor([2 * frames], device=device),
+                text=[model_text],
+                duration=torch.tensor([sampling_duration], device=device),
                 video=total_video,
                 lens=torch.tensor([frames], device=device),
                 steps=args.nfe,
@@ -368,6 +384,12 @@ def run(args: argparse.Namespace) -> None:
                     "relative_path": output_path.relative_to(output_dir).as_posix(),
                     "samples": original_samples,
                     "sha256": sha256_file(output_path),
+                    "model_text": model_text,
+                    "text_conditioning": args.text_conditioning,
+                    "prompt_frames": frames,
+                    "target_frames": frames,
+                    "requested_duration": 2 * frames,
+                    "sampling_duration": sampling_duration,
                 }
             )
 
@@ -400,7 +422,13 @@ def run(args: argparse.Namespace) -> None:
             "ode_method": "euler",
             "seed": args.seed,
             "sway": args.sway,
-            "text_protocol": "historical CelebV-Dub Setting 1 prompt + two spaces + target",
+            "text_conditioning": args.text_conditioning,
+            "duration_protocol": "historical concatenated-text length floor retained in both text modes",
+            "text_protocol": (
+                "historical CelebV-Dub Setting 1 prompt + two spaces + target"
+                if args.text_conditioning == "reference-target"
+                else "target transcript only; unchanged same-clip audio prompt and timeline"
+            ),
             "use_epss": True,
         },
         "normalization_contract": {
@@ -452,6 +480,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sway", type=float, default=-1.0)
     parser.add_argument("--cfg-text", type=float, default=5.0)
     parser.add_argument("--cfg-video", type=float, default=2.0)
+    parser.add_argument(
+        "--text-conditioning", choices=["reference-target", "target-only"], default="reference-target",
+        help="Select model text only; reference latent, CAM++, video and duration are unchanged",
+    )
     parser.add_argument("--manifest", type=Path, help="Explicit 213-record diagnostic manifest")
     parser.add_argument("--split", choices=["test", "train"], default="test")
     parser.add_argument("--max-items", type=int)
