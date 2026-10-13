@@ -229,8 +229,9 @@ mean RMS differs by only 0.40 dB, low-energy frame fraction is 4.11% versus
 4.01%, and there are no empty ASR outputs. These checks cannot exclude every
 word-level timing or phonetic error.
 
-The next evaluation candidate is target-only text with the existing independent
-reference audio and CAM++, followed by all four metrics on a fixed full set.
+At diagnosis time, the next evaluation candidate was target-only text with the
+existing independent reference audio and CAM++, followed by all four metrics
+on a fixed full set. That full-set evaluation is recorded below.
 Training independent reference/target pairs or separating reference and target
 text attention are hypotheses for subsequent experiments. The 132-target WER
 improvement alone does not establish speaker, emotion or AVSync preservation,
@@ -245,3 +246,92 @@ Diagnostic artifacts are under
 The independent ablation audit passed all 792 WAV/receipt/ASR bindings,
 528 source files, feature normalization/geometry hashes, fixed selection,
 reference assignments and independent edit-count/summary recomputations.
+
+## Full-set target-only text validation, 2026-10-13
+
+The target-only variant has now completed all four metrics on the same 3,274
+validation targets. Only the text supplied to `model.sample` changes, from
+`reference transcript + two spaces + target transcript` to the target transcript.
+The actual independent reference latent and reference CAM++ remain present.
+Reference pairing, checkpoint/configuration, normalization, decoder, target
+video, prompt/target frame geometry, target crop and sampler parameters match
+the historical S2 protocol. This is an inference input intervention, with no
+retraining or CFG adjustment.
+
+| Same 3274-target S2 protocol | SPKSIM ↑ | WER ↓ | EMOSIM ↑ | AVSync ↑ |
+|---|---:|---:|---:|---:|
+| Historical reference + target text | 0.66391 | 0.47180 | 0.81068 | 0.70023 |
+| Target-only text, independent reference latent/CAM++ retained | **0.68471** | **0.15038** | **0.84482** | **0.76594** |
+
+Corpus WER is **2954/19644 = 15.03767%**, with S=2431, D=400 and I=123.
+Compared with 47.17980%, this is a reduction of **32.14213 percentage points**
+or **68.12689% relative**. Across targets, 2,570 improve, 583 tie and 121 worsen;
+aggregate WER improves for all 33 speakers. Exact ASR sentences increase from
+233 to 1,704. The three other metric means also improve against the same
+references, rather than merely preserving their historical scores.
+
+On the diagnostic subset of 2,015 targets whose GT recordings are recognized
+without errors, S2 WER falls from 5121/12090 (42.35732%) to 895/12090
+(7.40281%). S1 on this selected subset is 609/12090 (5.03722%). This subset is
+a diagnostic control and does not replace the full-set denominator.
+
+The previous fixed 132-target intervention is reproduced by the full-run
+entry point: WER remains 122/792 (15.40404%), and normalized ASR hypotheses
+and per-target edit counts match for **132/132** targets. This replication
+does not assert bitwise equality of waveforms.
+
+The full run used EMA 100k, FP32/high TF32 precision, seed 0, 32 NFE,
+Euler/EPSS, sway=-1 and CFG text/video=5/2. SPKSIM uses the actual independent
+reference audio; EMOSIM uses target GT classifier-score vectors; AVSync uses
+joint AV-HuBERT features from the same mouth video paired with generated or
+GT audio. WER uses the identical frozen Whisper/normalization protocol. All
+four outputs contain exactly 3,274 full IDs, finite scores and complete coverage.
+
+Independent verification passed all 3,274 WAV/receipt/reference bindings,
+reference permutation, durations and prompt/target slices; independently
+recomputed all metric summaries and word edit counts; checked all 6,548 joint
+feature files and bindings; and rehashed 11 metric assets and the checkpoint.
+The maximum independent NumPy AVSync recomputation difference is
+1.5688893884e-7. The original S2 protocol, pairs, four result files, summary
+and verification remain byte-identical to their launch-time hashes.
+The inference and metric processes have finished and released their GPU memory.
+
+The run used the pre-existing target-only worktree extension based on Git
+revision `4fa7f3426c6348962c289861d4f6b3b53aeb5089`. Its exact source hashes and
+uncommitted evaluation/test diff are preserved as `launch_source_snapshot.json`
+and `launch_worktree.patch`; no source files were changed during this validation.
+The focused `test_grid_s2_evaluation.py` suite passed all 10 tests before launch.
+Validated immutable GT joint features were reused through hard links; the
+evaluator rechecks their audio/mouth/model bindings and file hashes.
+
+From this experiment directory, the reproducible entry point is:
+
+```bash
+TASK_OUT="${ROOT_PREFIX:-}/zjw524/projects/data/evaluations/GRID_s2_target_only_100k_seed0_nfe32_cfg5_2"
+mkdir -p "$TASK_OUT"
+setsid env PYTHONUNBUFFERED=1 bash src/aligndit/run/eval/eval_grid_s2_100k.sh \
+  --text-conditioning target-only --output-dir "$TASK_OUT" \
+  --gpus 0,1 --workers-per-gpu 4 \
+  > "$TASK_OUT/pipeline.log" 2>&1 < /dev/null &
+```
+
+Use a distinct output directory for each text-conditioning mode. The entry
+point validates existing protocol/receipt bindings before reusing outputs.
+Run `independent_verify.py` and then `paired_comparison.py` from the output
+directory to reproduce the post-run audit and paired descriptive comparisons.
+
+These full-set results support target-only text as the preferred tested S2
+input for this checkpoint and supplied-GT-dialogue protocol. Removing the
+reference transcript also changes text length and positions; the improvement
+does not uniquely identify semantic copying or one attention component as the
+cause. It does not establish generalization to other datasets, checkpoints or
+predicted target transcripts. Preserve the historical concatenated-text result
+as a distinct baseline rather than replacing it retroactively.
+
+Artifacts:
+`/zjw524/projects/data/evaluations/GRID_s2_target_only_100k_seed0_nfe32_cfg5_2/`,
+including `evaluation_summary.json`, `verification.json`,
+`paired_comparison.{py,json}`, `protocol.json`, `reference_pairs.json`,
+`metric_assets.json`, per-target WAVs/receipts, four full result JSONLs,
+`avhubert_joint/{gen,gt}/`, source snapshots and launch/worker/audit logs.
+All runtime artifacts remain outside Git.
