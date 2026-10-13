@@ -117,6 +117,31 @@ The completed 213-clip EMA 150k/200k comparison is recorded in
 Both checkpoints deteriorated on all four metrics; retain historical text
 concatenation for this snapshot's Setting 1 protocol.
 
+### Raw full-sequence diagnostic
+
+Set `TEXT_CONDITIONING=target-only OUTPUT_REGION=raw-full` to decode
+`trajectory[-1]` in full, before the sampler's reference-prefix replacement.
+There is no latent crop, waveform crop, or reference-audio concatenation. The
+reference latent, CAM++, target video and sampling parameters remain conditions.
+Raw normalized latents are saved alongside the complete WAVs for auditing.
+The historical effective sampling length is retained, including the one
+67-frame exception above. The standard output remains `OUTPUT_REGION=target`.
+
+```bash
+CKPT_STEP=150000 EVAL_GPU=0 TEXT_CONDITIONING=target-only OUTPUT_REGION=raw-full \
+    bash src/aligndit/run/eval/eval_celebvdub_s1_svae_direct_speaker_ctc003.sh
+CKPT_STEP=200000 EVAL_GPU=1 TEXT_CONDITIONING=target-only OUTPUT_REGION=raw-full \
+    bash src/aligndit/run/eval/eval_celebvdub_s1_svae_direct_speaker_ctc003.sh
+```
+
+WER, SPKSIM and EMOSIM read the **complete** WAV against the original single
+target transcript/GT clip. AVSync is a separately labeled **target-window
+diagnostic**: the mouth video only describes the target region, so its metric
+audio is read in memory starting at `P*400` samples for the original target
+sample count. The extractor records each window in `audio_region_protocol.json`
+and never rewrites the complete WAV. Full-sequence and original target-only
+metrics have different output-duration protocols; their comparison is diagnostic.
+
 ### Pre-launch verification (2026-09-12)
 
 - 19 adaptive-band CPU regression tests passed, including exact legacy-disabled

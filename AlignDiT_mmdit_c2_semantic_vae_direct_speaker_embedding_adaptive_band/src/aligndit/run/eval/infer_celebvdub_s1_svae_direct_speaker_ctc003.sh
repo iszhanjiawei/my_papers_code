@@ -25,7 +25,14 @@ case "$text_conditioning" in
     target-only) text_suffix="_target_only" ;;
     *) echo "Unsupported TEXT_CONDITIONING: $text_conditioning" >&2; exit 1 ;;
 esac
-output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_adaptive_band_cfgv${cfg_video}${text_suffix}}"
+output_region="${OUTPUT_REGION:-target}"
+region_suffix=""
+case "$output_region" in
+    target) ;;
+    raw-full) region_suffix="_raw_full" ;;
+    *) echo "Unsupported OUTPUT_REGION: $output_region" >&2; exit 1 ;;
+esac
+output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_adaptive_band_cfgv${cfg_video}${text_suffix}${region_suffix}}"
 if [[ ! -f "$checkpoint" || -L "$checkpoint" ]]; then
     echo "Missing regular speaker-conditioned checkpoint: $checkpoint" >&2
     exit 1
@@ -44,6 +51,7 @@ CUDA_VISIBLE_DEVICES="${EVAL_GPU:-0}" OMP_NUM_THREADS=1 PYTHONPATH="$project_roo
     --cfg-video "$cfg_video" \
     --cfg-text "${CFG_TEXT:-5.0}" \
     --text-conditioning "$text_conditioning" \
+    --output-region "$output_region" \
     --seed "${INFER_SEED:-0}" \
     --nfe "${NFE:-32}" \
     --device cuda:0 \

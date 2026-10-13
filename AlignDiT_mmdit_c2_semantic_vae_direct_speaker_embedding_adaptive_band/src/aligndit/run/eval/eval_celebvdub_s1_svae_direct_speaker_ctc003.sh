@@ -25,7 +25,14 @@ case "$TEXT_CONDITIONING" in
     target-only) text_suffix="_target_only" ;;
     *) echo "Unsupported TEXT_CONDITIONING: $TEXT_CONDITIONING" >&2; exit 1 ;;
 esac
-export OUTPUT_DIR="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${CKPT_STEP}_adaptive_band_cfgv${CFG_VIDEO}${text_suffix}}"
+export OUTPUT_REGION="${OUTPUT_REGION:-target}"
+region_suffix=""
+case "$OUTPUT_REGION" in
+    target) ;;
+    raw-full) region_suffix="_raw_full" ;;
+    *) echo "Unsupported OUTPUT_REGION: $OUTPUT_REGION" >&2; exit 1 ;;
+esac
+export OUTPUT_DIR="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${CKPT_STEP}_adaptive_band_cfgv${CFG_VIDEO}${text_suffix}${region_suffix}}"
 export OMP_NUM_THREADS=1
 
 celebvdub="${ROOT_PREFIX}/zjw524/projects/alignDiT_idea6/papers_codes/alignDiT_baseline/AlignDiT/data/CelebVDub"
@@ -50,6 +57,12 @@ CUDA_VISIBLE_DEVICES="$EVAL_GPU" PYTHONPATH="$project_root/src" \
 "$python_bin" -u src/aligndit/script/eval/eval_celebvdub_test.py \
     -e emosim -g "$OUTPUT_DIR" -n 1 \
     --test-list "$test_list" --celebvdub-root "$celebvdub" --emo_ckpt "$emo"
+av_region_args=()
+if [[ "$OUTPUT_REGION" == "raw-full" ]]; then
+    # Preserve the complete WAV. Only AVSync's audio input is restricted to the
+    # target video's corresponding window; a full-length AVSync is undefined.
+    av_region_args=(--audio-region-summary "$OUTPUT_DIR/inference_summary.json")
+fi
 CUDA_VISIBLE_DEVICES="$EVAL_GPU" PYTHONPATH="$project_root/src:$avhubert_fairseq" \
 "$python_bin" -u src/aligndit/script/misc/extract_avhubert.py \
     --nshard 1 --rank 0 \
@@ -57,7 +70,8 @@ CUDA_VISIBLE_DEVICES="$EVAL_GPU" PYTHONPATH="$project_root/src:$avhubert_fairseq
     --a-input-dir "$OUTPUT_DIR/test" \
     --output-dir "$OUTPUT_DIR/avhubert_feat/test" \
     --ckpt-path "$avhubert_ckpt" \
-    --user_dir "$avhubert_user_dir"
+    --user_dir "$avhubert_user_dir" \
+    "${av_region_args[@]}"
 CUDA_VISIBLE_DEVICES="$EVAL_GPU" PYTHONPATH="$project_root/src" \
 "$python_bin" -u src/aligndit/script/eval/eval_celebvdub_test.py \
     -e avsync -g "$OUTPUT_DIR" -n 1 \

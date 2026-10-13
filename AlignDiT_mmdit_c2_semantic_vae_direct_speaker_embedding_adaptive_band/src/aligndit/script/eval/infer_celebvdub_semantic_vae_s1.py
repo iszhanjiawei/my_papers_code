@@ -228,6 +228,15 @@ def setting1_sampling_duration(text: str, frames: int) -> int:
     return max(2 * frames, len(historical_setting1_text(text)) + 1, frames + 1)
 
 
+def select_output_latent(generated, trajectory, frames: int, output_region: str):
+    """Raw-full bypasses the sampler's reference-prefix replacement entirely."""
+    if output_region == "target":
+        return generated[:, frames : 2 * frames].float()
+    if output_region == "raw-full":
+        return trajectory[-1].float()
+    raise ValueError(f"Unknown output region: {output_region}")
+
+
 def load_setting1_speaker_embeddings(
     config,
     records: list[dict[str, Any]],
@@ -347,7 +356,7 @@ def run(args: argparse.Namespace) -> None:
                 )
             model_text = setting1_model_text(str(row["text"]), args.text_conditioning)
             sampling_duration = setting1_sampling_duration(str(row["text"]), frames)
-            generated, _ = model.sample(
+            generated, trajectory = model.sample(
                 cond=cond,
                 text=[model_text],
                 duration=torch.tensor([sampling_duration], device=device),
@@ -361,8 +370,9 @@ def run(args: argparse.Namespace) -> None:
                 use_epss=True,
                 **speaker_kwargs,
             )
-            generated_normalized = generated[:, frames : 2 * frames].float()
-            if generated_normalized.shape != (1, frames, LATENT_DIM) or not torch.isfinite(generated_normalized).all():
+            generated_normalized = select_output_latent(generated, trajectory, frames, args.output_region)
+            output_frames = frames if args.output_region == "target" else sampling_duration
+            if generated_normalized.shape != (1, output_frames, LATENT_DIM) or not torch.isfinite(generated_normalized).all():
                 raise RuntimeError(f"Invalid generated latent for {row['utterance_key']}")
             mean_tensor = torch.from_numpy(mean).to(device)
             std_tensor = torch.from_numpy(std).to(device)
@@ -370,19 +380,33 @@ def run(args: argparse.Namespace) -> None:
             waveform = decoder(generated_raw.transpose(1, 2)).squeeze(0).float().cpu()
             padded_samples = int(row["padded_num_samples"])
             original_samples = int(row["original_num_samples"])
-            if waveform.shape != (1, padded_samples) or not torch.isfinite(waveform).all():
+            expected_samples = padded_samples if args.output_region == "target" else output_frames * HOP_LENGTH
+            if waveform.shape != (1, expected_samples) or not torch.isfinite(waveform).all():
                 raise RuntimeError(
                     f"Semantic-VAE decoder output mismatch for {row['utterance_key']}: {tuple(waveform.shape)}"
                 )
-            waveform = waveform[:, :original_samples]
+            if args.output_region == "target":
+                waveform = waveform[:, :original_samples]
             clip = str(row["utterance_key"]).removeprefix("celebvdub/")
             output_path = output_dir / f"{clip}.wav"
             atomic_save_waveform(output_path, waveform)
+            latent_metadata = {}
+            if args.output_region == "raw-full":
+                latent_path = output_dir / "raw_latent" / f"{clip}.npy"
+                latent_path.parent.mkdir(parents=True, exist_ok=True)
+                np.save(latent_path, generated_normalized.squeeze(0).cpu().numpy(), allow_pickle=False)
+                if not torch.equal(generated_normalized[:, frames:2 * frames], generated[:, frames:2 * frames]):
+                    raise RuntimeError("Sampler reference replacement changed the target region")
+                latent_metadata = {
+                    "raw_latent_relative_path": latent_path.relative_to(output_dir).as_posix(),
+                    "raw_latent_sha256": sha256_file(latent_path),
+                    "target_latent_equal_to_sampler_target": True,
+                }
             generated_rows.append(
                 {
                     "utterance_key": row["utterance_key"],
                     "relative_path": output_path.relative_to(output_dir).as_posix(),
-                    "samples": original_samples,
+                    "samples": waveform.shape[-1],
                     "sha256": sha256_file(output_path),
                     "model_text": model_text,
                     "text_conditioning": args.text_conditioning,
@@ -390,6 +414,12 @@ def run(args: argparse.Namespace) -> None:
                     "target_frames": frames,
                     "requested_duration": 2 * frames,
                     "sampling_duration": sampling_duration,
+                    "output_region": args.output_region,
+                    "output_latent_frames": output_frames,
+                    "reference_prefix_replaced_before_selection": args.output_region == "target",
+                    "target_audio_start_samples": 0 if args.output_region == "target" else frames * HOP_LENGTH,
+                    "target_audio_num_samples": original_samples,
+                    **latent_metadata,
                 }
             )
 
@@ -423,6 +453,11 @@ def run(args: argparse.Namespace) -> None:
             "seed": args.seed,
             "sway": args.sway,
             "text_conditioning": args.text_conditioning,
+            "output_region": args.output_region,
+            "decoded_latent_source": (
+                "sampler output target region" if args.output_region == "target"
+                else "trajectory[-1], before reference-prefix replacement; entire sampled sequence"
+            ),
             "duration_protocol": "historical concatenated-text length floor retained in both text modes",
             "text_protocol": (
                 "historical CelebV-Dub Setting 1 prompt + two spaces + target"
@@ -483,6 +518,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--text-conditioning", choices=["reference-target", "target-only"], default="reference-target",
         help="Select model text only; reference latent, CAM++, video and duration are unchanged",
+    )
+    parser.add_argument(
+        "--output-region", choices=["target", "raw-full"], default="target",
+        help="Decode the usual target crop or all raw sampled frames before reference-prefix replacement",
     )
     parser.add_argument("--manifest", type=Path, help="Explicit 213-record diagnostic manifest")
     parser.add_argument("--split", choices=["test", "train"], default="test")
