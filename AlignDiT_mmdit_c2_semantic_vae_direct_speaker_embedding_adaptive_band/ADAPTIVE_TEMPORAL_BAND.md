@@ -112,6 +112,11 @@ For background runs, launch each command with `setsid env` and unbuffered Python
 as required by the repository's `AGENTS.md`. Each inference summary records the
 selected text mode and each clip's actual model text and prompt/target lengths.
 
+The completed 213-clip EMA 150k/200k comparison is recorded in
+[SETTING1_TARGET_ONLY_EVALUATION.md](SETTING1_TARGET_ONLY_EVALUATION.md).
+Both checkpoints deteriorated on all four metrics; retain historical text
+concatenation for this snapshot's Setting 1 protocol.
+
 ### Pre-launch verification (2026-09-12)
 
 - 19 adaptive-band CPU regression tests passed, including exact legacy-disabled
