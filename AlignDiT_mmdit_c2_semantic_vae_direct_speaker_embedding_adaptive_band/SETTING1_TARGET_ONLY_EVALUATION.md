@@ -80,4 +80,3 @@ WER 表中为小数。例如 150k 新模式为 **770/2378 = 32.38015%**，200k �
 - [完整相对路径的指标配对](/zjw524/projects/data/evaluations/CelebVDub_s1_adaptive_band_target_only_150k_200k_20261014_003419/paired_metric_bindings.jsonl)
 
 两组 WAV、AV-HuBERT 特征、四份指标文件分别位于 `150000/` 和 `200000/`；执行日志为 `150000.log`、`200000.log`，核验脚本与日志保存在同一根目录。运行产物不提交 Git。传统结果仍为原 checkpoint 目录下的 `eval_s1_{150000,200000}_adaptive_band_cfgv2.0/`。
-
