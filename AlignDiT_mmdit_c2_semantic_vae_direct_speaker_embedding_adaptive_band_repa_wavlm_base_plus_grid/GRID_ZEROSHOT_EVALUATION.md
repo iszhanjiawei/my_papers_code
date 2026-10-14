@@ -163,3 +163,83 @@ the resampled channel mean against the canonical PCM16 audio. Original failure
 logs/status are preserved. Smoke re-audits explicitly record this verifier-only
 source change, while retaining strict hashes for all inference and metric
 sources. Full runs require every source hash to remain unchanged.
+
+## Full results, 2026-10-15
+
+Both current-model checkpoints completed all 3,274 targets, with zero failures
+and strict independent verification. Every non-checkpoint protocol field is
+identical between the two runs, including external reference cache hashes,
+target identities/text, generation geometry, seed and CFG. All values below
+are sample means or corpus WER fractions, displayed to five decimal places.
+
+| GRID EMA | Targets | SPKSIM_GT | SPKSIM_REF ↑ | Original WER ↓ | Digits-only WER ↓ | Digits/silence WER ↓ | EMOSIM ↑ | AVSync ↑ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100k | 3274 | 0.48523 | 0.13241 | 0.48981 | 0.20567 | 0.19512 | 0.60627 | 0.70233 |
+| 150k | 3274 | 0.51334 | 0.13604 | 0.48218 | 0.19644 | 0.18565 | 0.65329 | 0.70901 |
+
+The main WER is **3833/19644 = 19.51232%** at 100k and
+**3647/19644 = 18.56547%** at 150k: **0.94685 percentage points** lower,
+or **4.85260% relative reduction**. The 150k checkpoint improves 692 targets,
+ties 1,996 and worsens 586 on main edit counts; 23 speaker/reference groups
+improve and ten worsen. Exact main-WER sentences increase from 1,347 to 1,420.
+These are paired descriptive comparisons, not a significance test or uniform
+per-target improvement.
+
+| EMA | WER normalization | S | D | I | Edits / reference words |
+|---|---|---:|---:|---:|---:|
+| 100k | Original | 5736 | 3608 | 413 | 9757 / 19920 |
+| 100k | Digits only | 2911 | 717 | 469 | 4097 / 19920 |
+| 100k | Digits/silence | 2891 | 457 | 485 | 3833 / 19644 |
+| 150k | Original | 5631 | 3570 | 404 | 9605 / 19920 |
+| 150k | Digits only | 2752 | 677 | 484 | 3913 / 19920 |
+| 150k | Digits/silence | 2736 | 414 | 497 | 3647 / 19644 |
+
+The original 48–49% WER values and the roughly 19% main values come from the
+same generated WAVs and ASR hypotheses. Digit normalization has a large effect
+on this score; it does not change model output. The matching GT-audio controls
+are 0.43213 / 0.13042 / 0.11820. These are separate references for interpreting
+the evaluator, not quantities to subtract from generation error.
+
+All reported aggregate point estimates favor 150k. SPKSIM_REF increases by
+only 0.00363, versus 0.02810 for SPKSIM_GT; the improvement in target content
+does not establish strong external voice cloning. Preserve the distinction
+between target-identity similarity and external-reference similarity.
+The WER normalizer and seven-target exclusion difference also prevent treating
+the older local S2 score or the document's five-model table as an identical
+controlled comparison to this result.
+
+Independent audits verified all 6,548 generated WAVs across both checkpoints,
+the frozen 33-reference assignments and frontend, 13,096 logical joint feature
+files/bindings (GT reused), complete metric coverage, raw target truth and all
+three normalized corpus counts. NumPy AVSync recomputation differs by at most
+1.4883993449e-7. Each audit rehashed 11 metric model assets and its generator
+checkpoint and checked all launch/metric source hashes. Both full-run reports
+have `source_hashes_unchanged=true`, no verifier-only source exceptions, and
+`requested=succeeded=3274, failed=0, complete=true`. Their smoke raw hypotheses,
+main normalized hypotheses and per-target main edit counts match the full run
+for **33/33 targets per checkpoint**. No bitwise WAV equality is asserted.
+The coordinator and workers have exited, and their GPU memory is released.
+
+Checkpoint hashes:
+
+- `model_100000.pt`: `6394f7e7682f5d096c29a8769d3158f44949746fa84f0c1a66a09ea1dad37da7`.
+- `model_150000.pt`: `2230f55c1347d6f91d9b3ca7401de4de6060fa4d6f417d13ba0cb576b8531242`.
+
+The evaluation entry, tests and protocol were committed as
+`d76b8ee8989d5a565bd1d1527ea493da2aad1a9a` before the full launch. Exact
+pre-existing working-tree source versions remain identified by the preserved
+patch and launch hashes; those pre-existing edits were not mixed into the
+evaluation commit.
+
+Runtime root:
+`/zjw524/projects/data/evaluations/GRID_CelebVDub_zeroshot_target_only_100k_150k_20261015/`.
+
+- `ema_{100000,150000}/evaluation_summary.json`: all metric values and corpus counts.
+- `ema_{100000,150000}/verification.json`: full strict independent verification.
+- `checkpoint_comparison.json` and `compare_checkpoints.py`: matched-protocol
+  checks, per-target/per-group WER changes and smoke replication.
+- `listening_pairs.tsv`: one fixed target per reference group, linking target
+  GT, original CelebV-Dub reference and both checkpoint outputs for listening.
+- `gt_wer_three_protocols.json`, `gt_wer_three_protocols_results.jsonl`, shared
+  reference caches, WAVs, receipts, joint features, source snapshots and all logs
+  remain runtime artifacts outside Git.
