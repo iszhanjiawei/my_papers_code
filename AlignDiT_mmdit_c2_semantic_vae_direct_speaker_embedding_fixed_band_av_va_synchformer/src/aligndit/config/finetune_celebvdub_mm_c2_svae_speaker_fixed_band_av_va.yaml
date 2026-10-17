@@ -1,0 +1,14 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_fixed_band
+  - _self_
+
+# Isolated AV+VA control: retain the fixed 100-ms AV prior and additionally
+# apply its transpose to VA. AA/VV and every inherited training setting stay.
+# This switch adds no parameter or state tensor; the sidecar records direction.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_fixed_band_av_va_ctc003_warmup10k30k
+  arch:
+    temporal_band_bidirectional: True
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_fixed_band_av_va_ctc003_warmup10k30k_40hz_CelebVDub_char
