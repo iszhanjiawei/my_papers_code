@@ -6,6 +6,9 @@ It retains 12 MM blocks, 6 audio-only blocks and the source training recipe.
 See [AVT_JOINT_ATTENTION.md](AVT_JOINT_ATTENTION.md) for this experiment's
 configuration, training, TensorBoard and inference commands.
 
+The 100k/150k/200k EMA checkpoints have completed the full 213-clip CelebV-Dub
+Setting 1 evaluation; see [the four-metric results and audit](EVALUATION_S1_100K_150K_200K.md).
+
 # AlignDiT
 
 Official PyTorch implementation for the following paper:
