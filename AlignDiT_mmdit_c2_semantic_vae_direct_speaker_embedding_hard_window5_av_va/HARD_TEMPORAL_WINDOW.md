@@ -109,3 +109,24 @@ this new config and checkpoint directory.
 `FIXED_TEMPORAL_BAND.md`, `ADAPTIVE_TEMPORAL_BAND.md` and other inherited
 experiment notes describe historical snapshots, not this experiment's active
 attention rule or launch commands.
+
+### Verified on 2026-10-25 (Asia/Shanghai)
+
+- 15 hard-window tests, 60 inherited attention tests, four speaker checks and
+  four configuration/checkpoint/diagnostic suites passed. Fully masked padding
+  rows now use a discarded same-modality self-key to avoid PyTorch 2.4 SDPA NaN
+  gradients; no cross-modal exclusion is relaxed.
+- Four-GPU BF16 smoke `hard_window5_av_va_smoke_20261025` completed three updates
+  with losses 1.34673667, 1.41288972 and 1.36197352. Strict S2c migration matched
+  313 source / 704 target / 303 loaded / 10 ignored / 401 new tensors.
+- The saved checkpoint passed strict EMA and online loading. Real-data backward
+  checks at CTC weights 0 and 0.03 had finite global gradient norms 1.10872352
+  and 1.26567543. A one-item, two-NFE inference produced 17,462 finite samples
+  at 16 kHz. These checks establish functionality, not generation quality.
+- TensorBoard's Scalars API exposed total/diffusion/weighted-CTC losses and
+  constant radius 2 / size 5. Client-side forwarding URLs are not exposed to
+  the execution session; server-local HTTP availability was verified.
+- Original-source SHA256 checks matched all 253 copied files, with no shared
+  source inodes. Reports are in `logs/` and
+  `ckpts/hard_window5_av_va_smoke_20261025/`; live launch details are recorded in
+  `logs/launch_status_20261025.json`.
