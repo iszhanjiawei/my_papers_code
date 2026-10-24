@@ -1,0 +1,14 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_fixed_band_av_va
+  - _self_
+
+# Aligned 40-Hz cross-modal attention sees only i-2 through i+2, in both
+# AV and VA directions. Inside-window bias is zero; outside is -infinity.
+# Inherited Gaussian constants are unused when the hard-window radius is set.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_hard_window5_av_va_ctc003_warmup10k30k
+  arch:
+    temporal_band_fixed_window_radius_frames: 2
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_hard_window5_av_va_ctc003_warmup10k30k_40hz_CelebVDub_char
