@@ -87,17 +87,38 @@ runs/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_av_va_ctc003_warmup10k3
 TensorBoard uses **6020** by default (`TENSORBOARD_PORT` override). The startup
 script serves the exact formal event directory; `TENSORBOARD_LOGDIR` can select
 another run. Only rank 0 writes total/flow/CTC losses, learning rate, weighted
-CTC and existing speaker/global gradient diagnostics. After startup, verify
+CTC, existing speaker/global gradient diagnostics and fixed-band offset/sigma
+statistics. After startup, verify
 workers, finite progressing losses, event updates, TensorBoard HTTP response
 and scalar tags. Use the application's Ports panel to obtain the actual
 forwarded URL for the current port.
 
 A real-data smoke run must use a separate `model.name` and `ckpts.save_dir`,
-with `optim.run_until_update=3`, `ckpts.save_per_updates=3` and
-`ckpts.last_per_updates=3`. Retain the full batch size and 200-epoch scheduler.
+with `optim.run_until_update=3`. The trainer saves `model_last.pt` when it reaches
+this limit; retain the original save intervals, full batch size and 200-epoch scheduler.
 For smoke curves, start TensorBoard with `TENSORBOARD_LOGDIR="$PWD/runs"` to
 serve both smoke and formal event directories. Confirm all smoke workers exit
 before starting the formal run.
+
+## Validation (2026-10-24)
+
+- All 14 fixed-band attention tests pass, including independent explicit joint
+  softmax equivalence and CUDA BF16 checkpointed backward. Disabling the band
+  matches the original AVT initialization, RNG, state and outputs exactly.
+- All 11 training/inference contract tests pass. The inherited AVT regression
+  suite passes its 9 CPU tests (its optional CUDA test was skipped).
+- Full-size models have the same 376,563,842 trainable parameters, 802 state
+  keys and shapes, 12 AVT MM-DiT blocks and 6 audio-only blocks. No parameter or
+  state tensor is added by the prior.
+- A separate 4-GPU real-data run, `avt_joint_fixed_band_av_va_smoke3_20261024`,
+  completes 3 updates with the original 3,600-frame batch per GPU. Losses are
+  1.3477653, 1.4531589 and 1.3474160; speaker/global gradients are finite.
+  TensorBoard reports offset 0 ms and sigma 100 ms at all 3 steps, and
+  `model_last.pt` is saved at update 3. Both online and EMA weights reload
+  strictly with all 802 model keys and finite tensors. EMA retains the
+  inherited step policy (parent 70,000 + 3 new updates = 70,003); the new
+  training update counter is 3. Runtime verification reports are in `logs/`
+  and are excluded from version control.
 
 ## Inference and evaluation
 
