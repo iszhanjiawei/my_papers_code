@@ -1,13 +1,16 @@
 # Current experiment
 
-This snapshot replaces the speaker Semantic-VAE C2 model's audio/video joint
-attention plus text cross-attention with audio/video/text joint attention.
-It retains 12 MM blocks, 6 audio-only blocks and the source training recipe.
-See [AVT_JOINT_ATTENTION.md](AVT_JOINT_ATTENTION.md) for this experiment's
-configuration, training, TensorBoard and inference commands.
+This isolated copy adds the fixed bidirectional audio/video Gaussian attention
+prior to the existing audio/video/text joint-attention model. The prior uses
+zero offset and sigma = 0.100 seconds; text participates in the same joint
+softmax, with no temporal penalty on text edges. The 12 AVT blocks, 6 audio-only
+blocks and complete AVT training recipe are retained.
+See [AVT_FIXED_BAND_AV_VA.md](AVT_FIXED_BAND_AV_VA.md) for the current
+configuration, initialization, training, TensorBoard and inference commands.
 
-The 100k/150k/200k EMA checkpoints have completed the full 213-clip CelebV-Dub
-Setting 1 evaluation; see [the four-metric results and audit](EVALUATION_S1_100K_150K_200K.md).
+[AVT_JOINT_ATTENTION.md](AVT_JOINT_ATTENTION.md) and the inherited evaluation
+reports describe the source AVT experiment; their checkpoints and results do
+not belong to this new fixed-band run.
 
 # AlignDiT
 

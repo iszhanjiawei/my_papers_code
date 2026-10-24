@@ -22,6 +22,7 @@ from hydra.utils import get_class
 from tqdm import tqdm
 
 from aligndit.model.cfm_vt import CFM_VT
+from aligndit.model.fixed_temporal_band_contract import validate_fixed_band_contract
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.speaker_embedding import (
     load_speaker_embedding,
@@ -118,6 +119,7 @@ def load_composed_config(config_path: Path):
 
 def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, device: torch.device) -> CFM_VT:
     config = load_composed_config(config_path)
+    validate_fixed_band_contract(config, checkpoint_path)
     arch = config.model.arch
     representation = config.model.audio_representation
     required_arch = {
@@ -427,7 +429,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=Path(__file__).parents[2]
-        / "config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml",
+        / "config/finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va.yaml",
     )
     parser.add_argument(
         "--cache-root",

@@ -28,6 +28,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from x_transformers.x_transformers import apply_rotary_pos_emb
 
+from aligndit.model.fixed_temporal_band import FixedTemporalBand
 from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
@@ -377,7 +378,7 @@ class MMDiTBlock_AVT(DiTBlock):
 
     def joint_attn(
         self, norm_x, norm_v, norm_text, mask=None, v_mask=None,
-        rope=None, v_rope=None, text_mask=None,
+        rope=None, v_rope=None, text_mask=None, temporal_band_bias=None,
     ):
         batch = norm_x.shape[0]
         n_a, n_v, n_t = norm_x.shape[1], norm_v.shape[1], norm_text.shape[1]
@@ -405,9 +406,36 @@ class MMDiTBlock_AVT(DiTBlock):
                 (batch, n_t), dtype=torch.bool, device=norm_text.device,
             )
             key_mask = torch.cat((valid_a, valid_v, valid_t), dim=1)[:, None, None, :]
-        out = F.scaled_dot_product_attention(
-            query, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False,
-        )
+        if temporal_band_bias is None:
+            out = F.scaled_dot_product_attention(
+                query, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False,
+            )
+        else:
+            if temporal_band_bias.shape != (batch, n_a, n_v):
+                raise ValueError(
+                    f"temporal_band_bias must have shape {(batch, n_a, n_v)}, "
+                    f"got {tuple(temporal_band_bias.shape)}"
+                )
+            # Shared keys/values and one joint softmax per query are retained.
+            # Splitting only the query dimension avoids a full joint-square
+            # additive mask and does not partition the softmax by modality.
+            # In [A,V,T] order, only AV and its exact VA transpose get a bias:
+            # [[0, B_av, 0], [B_av.T, 0, 0], [0, 0, 0]].
+            audio_bias = F.pad(temporal_band_bias.to(q_a.dtype), (n_a, n_t))[:, None]
+            video_bias = F.pad(temporal_band_bias.transpose(-1, -2).to(q_v.dtype), (0, n_v + n_t))[:, None]
+            if key_mask is not None:
+                audio_bias = audio_bias.masked_fill(~key_mask, float("-inf"))
+                video_bias = video_bias.masked_fill(~key_mask, float("-inf"))
+            out_a = F.scaled_dot_product_attention(
+                q_a, key, value, attn_mask=audio_bias, dropout_p=0.0, is_causal=False,
+            )
+            out_v = F.scaled_dot_product_attention(
+                q_v, key, value, attn_mask=video_bias, dropout_p=0.0, is_causal=False,
+            )
+            out_t = F.scaled_dot_product_attention(
+                q_t, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False,
+            )
+            out = torch.cat((out_a, out_v, out_t), dim=2)
         out = out.transpose(1, 2).reshape(batch, n_a + n_v + n_t, self.attn.inner_dim)
         outputs = []
         for stream_out, attention, valid in zip(
@@ -422,7 +450,7 @@ class MMDiTBlock_AVT(DiTBlock):
 
     def forward(
         self, x, v, t, mask=None, v_mask=None, rope=None, v_rope=None,
-        text=None, text_mask=None, generation_mask=None,
+        text=None, text_mask=None, generation_mask=None, temporal_band_bias=None,
     ):
         if text is None:
             raise ValueError("AVT joint attention requires the text stream")
@@ -432,6 +460,7 @@ class MMDiTBlock_AVT(DiTBlock):
         attn_x, attn_v, attn_t = self.joint_attn(
             norm_x, norm_v, norm_t, mask=mask, v_mask=v_mask,
             rope=rope, v_rope=v_rope, text_mask=text_mask,
+            temporal_band_bias=temporal_band_bias,
         )
         x = x + x_gate[:, None] * attn_x
         v = v + v_gate[:, None] * attn_v
@@ -481,7 +510,22 @@ class DiT_VT_MMDiT(DiT):
         speaker_dim=None,
         speaker_condition_start_layer=None,
         text_joint_attention=False,
+        temporal_band_enabled=False,
+        temporal_band_mode="fixed",
+        temporal_band_audio_fps=40.0,
+        temporal_band_video_fps=40.0,
+        temporal_band_fixed_offset_seconds=0.0,
+        temporal_band_fixed_sigma_seconds=0.100,
+        temporal_band_bidirectional=False,
     ):
+        if type(temporal_band_enabled) is not bool or type(temporal_band_bidirectional) is not bool:
+            raise TypeError("temporal_band_enabled and temporal_band_bidirectional must be bools")
+        if temporal_band_mode != "fixed":
+            raise ValueError("This AVT snapshot supports only temporal_band_mode='fixed'")
+        if temporal_band_enabled and (not text_joint_attention or not temporal_band_bidirectional):
+            raise ValueError("Enabled fixed band requires AVT joint attention and temporal_band_bidirectional=True")
+        if temporal_band_bidirectional and not temporal_band_enabled:
+            raise ValueError("temporal_band_bidirectional requires an enabled fixed band")
         super().__init__(
             dim=dim,
             depth=depth,
@@ -639,6 +683,24 @@ class DiT_VT_MMDiT(DiT):
             # Preserve the parent Direct-C2 model at initialization. A second
             # zero gate here would block gradients into the projection.
             nn.init.constant_(self.speaker_proj.weight, 0)
+
+        # The donor's fixed prior has no parameters/buffers and consumes no RNG.
+        # Constructing it after initialization preserves all AVT tensors exactly.
+        self.temporal_band_enabled = temporal_band_enabled
+        self.temporal_band_mode = temporal_band_mode
+        self.temporal_band_bidirectional = temporal_band_bidirectional
+        self.temporal_band = None
+        self.last_temporal_band_offset_seconds = None
+        self.last_temporal_band_sigma_seconds = None
+        self.last_temporal_band_valid_mask = None
+        if temporal_band_enabled:
+            self.temporal_band = FixedTemporalBand(
+                dim=dim, audio_fps=temporal_band_audio_fps, video_fps=temporal_band_video_fps,
+                offset_seconds=temporal_band_fixed_offset_seconds,
+                sigma_seconds=temporal_band_fixed_sigma_seconds,
+            )
+            if abs(self.temporal_band.audio_fps / self.temporal_band.video_fps - self.audio_video_ratio) > 1e-6:
+                raise ValueError("temporal-band audio/video frame-rate ratio must match audio_video_ratio")
 
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
@@ -889,6 +951,17 @@ class DiT_VT_MMDiT(DiT):
                 text_mask = text_mask[:, :text_embed.shape[1]]
                 text_embed = text_embed.masked_fill(~text_mask.unsqueeze(-1), 0.0)
 
+        temporal_band_bias = None
+        if self.temporal_band is not None:
+            # Constants depend only on shape and physical frame times, including
+            # packed CFG's full/TTS/null branches. Do not gate on padding masks:
+            # the inherited trainer suppresses A/V padding attention masks.
+            offset_seconds, sigma_seconds = self.temporal_band(v, seq_len)
+            temporal_band_bias = self.temporal_band.bias(offset_seconds, sigma_seconds, video_len)
+            self.last_temporal_band_offset_seconds = offset_seconds.detach()
+            self.last_temporal_band_sigma_seconds = sigma_seconds.detach()
+            self.last_temporal_band_valid_mask = mask.detach() if mask is not None else None
+
         lens = (
             mask.sum(dim=1)
             if mask is not None
@@ -930,6 +1003,7 @@ class DiT_VT_MMDiT(DiT):
             if self.checkpoint_activations:
                 # https://pytorch.org/docs/stable/checkpoint.html#torch.utils.checkpoint.checkpoint
                 if is_mm:
+                    band_args = (temporal_band_bias,) if isinstance(block, MMDiTBlock_AVT) else ()
                     mm_output = torch.utils.checkpoint.checkpoint(
                         self.ckpt_wrapper(block),
                         x,
@@ -942,6 +1016,7 @@ class DiT_VT_MMDiT(DiT):
                         text_embed,
                         text_mask,
                         generation_mask,
+                        *band_args,
                         use_reentrant=False,
                     )
                 elif has_tail_text:
@@ -967,6 +1042,7 @@ class DiT_VT_MMDiT(DiT):
                     )
             else:
                 if is_mm:
+                    band_kwargs = {"temporal_band_bias": temporal_band_bias} if isinstance(block, MMDiTBlock_AVT) else {}
                     mm_output = block(
                         x,
                         v,
@@ -978,6 +1054,7 @@ class DiT_VT_MMDiT(DiT):
                         text=text_embed,
                         text_mask=text_mask,
                         generation_mask=generation_mask,
+                        **band_kwargs,
                     )
                 elif has_tail_text:
                     x = block(

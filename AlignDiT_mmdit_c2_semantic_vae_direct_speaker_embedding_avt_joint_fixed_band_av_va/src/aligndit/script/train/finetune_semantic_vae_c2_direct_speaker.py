@@ -11,10 +11,15 @@ from accelerate.utils import set_seed
 from omegaconf import OmegaConf
 
 from aligndit.model.cfm_vt import CFM_VT
+from aligndit.model.fixed_temporal_band_contract import (
+    make_fixed_band_contract,
+    validate_fixed_band_training_config,
+)
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
+from aligndit.model.trainer_semantic_vae_fixed_band import SemanticVaeFixedBandTrainer
 from f5_tts.model.utils import get_tokenizer
 
 
@@ -27,6 +32,7 @@ def main(model_cfg):
     model_cls = hydra.utils.get_class(f"aligndit.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
     audio_cfg = model_cfg.model.audio_representation
+    temporal_band_enabled = validate_fixed_band_training_config(model_cfg)
     if model_cfg.ckpts.log_samples:
         raise ValueError("Use the Semantic-VAE inference entry for samples; inherited mel sample logging is unsupported")
     speaker_dim = int(model_arc.speaker_dim)
@@ -69,7 +75,8 @@ def main(model_cfg):
         ctc_lambda=model_cfg.model.ctc_lambda,
     )
 
-    trainer = SemanticVaeDirectC2SpeakerTrainer(
+    trainer_cls = SemanticVaeFixedBandTrainer if temporal_band_enabled else SemanticVaeDirectC2SpeakerTrainer
+    trainer = trainer_cls(
         model,
         epochs=model_cfg.optim.epochs,
         learning_rate=model_cfg.optim.learning_rate,
@@ -118,6 +125,8 @@ def main(model_cfg):
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
+        if temporal_band_enabled:
+            contract["temporal_band"] = make_fixed_band_contract(model_arc, model.transformer.temporal_band)
         contract_path = save_dir / "speaker_training_contract.json"
         if contract_path.exists():
             previous = json.loads(contract_path.read_text())
