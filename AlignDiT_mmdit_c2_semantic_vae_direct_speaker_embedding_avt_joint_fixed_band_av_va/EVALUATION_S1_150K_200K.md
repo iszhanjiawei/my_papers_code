@@ -40,4 +40,55 @@ outside Git, alongside the checkpoints.
 
 ## Results
 
-Pending completion and coverage audit.
+Evaluation and coverage audit completed on 2026-10-26. Both checkpoints
+complete all pipeline stages on their assigned GPUs and cover **213/213**
+clips. Metric directions and five-decimal results:
+
+| EMA checkpoint | Physical GPU | SPKSIM ↑ | WER ↓ | EMOSIM ↑ | AVSync ↑ |
+|---|---:|---:|---:|---:|---:|
+| 150k | 0 | 0.64895 | 0.04668 | 0.74785 | 0.57954 |
+| 200k | 1 | 0.65431 | 0.05172 | 0.75167 | 0.57856 |
+
+150k has lower WER and slightly higher AVSync. 200k has higher SPKSIM and
+EMOSIM. No checkpoint is best on all four metrics. These are descriptive
+comparisons of the same test set, without a statistical significance claim.
+WER is a fraction: 150k has 111 word errors / 2,378 reference words, and 200k
+has 123 / 2,378. The WER percentages are 4.66779% and 5.17241%, respectively.
+
+## Verification and artifacts
+
+For each checkpoint, the audit verifies all 213 WAVs, 213 generated AV-HuBERT
+features and 213 records in each of the four metric files. Every waveform is
+16-kHz mono, finite, has the inference receipt's sample count and matches its
+SHA256. Generated feature shapes match the corresponding GT features and all
+values are finite. AVSync is recomputed from the feature arrays; the other
+sample means and corpus WER are recomputed from per-clip records and agree
+with the reported results. Summary lines and blank lines are excluded from
+sample counts. Audit records use full test/video/clip identities, retaining
+clips with repeated basenames in different videos.
+
+Checkpoint and evaluation root:
+
+```text
+${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_av_va_ctc003_warmup10k30k_40hz_CelebVDub_char
+```
+
+| EMA checkpoint | SHA256 | Evaluation subdirectory |
+|---|---|---|
+| `model_150000.pt` | `2a8040e0f8735e0e18b4afd643189e25823e0b4c80ba3e03faeb082818128db6` | `eval_s1_150000_speaker_avt_joint_fixed_band_av_va_cfgv2.0` |
+| `model_200000.pt` | `a90801f8c429f2a644ab508ef70fa807dc0277350c85acf7da0503bd2267ceb8` | `eval_s1_200000_speaker_avt_joint_fixed_band_av_va_cfgv2.0` |
+
+Each output directory contains `test/` WAVs, `inference_summary.json`,
+`inference_audio_audit.json`, `avhubert_feat/test/`, the four original
+`_*_results.jsonl` files, `evaluation_per_clip.jsonl` with full clip IDs, and
+`evaluation_audit.json` with exact recomputed metrics and coverage.
+
+Run records and original logs are retained in this project's ignored `logs/`:
+
+- `evaluation_s1_20261026_runs.json`
+- `eval_s1_150000_fixed_band_cfgv2.0.log`
+- `eval_s1_200000_fixed_band_cfgv2.0.log`
+- `audit_s1_fixed_band_150k_200k_20261026.log`
+
+The evaluation source and model configuration are unchanged in this
+evaluation task. Only this reproducibility/results document is added to Git.
