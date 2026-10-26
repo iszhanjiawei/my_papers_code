@@ -151,3 +151,31 @@ The inherited `AVT_FIXED_BAND_AV_VA.md`, `AVT_JOINT_ATTENTION.md` and evaluation
 reports are historical source-experiment records. Their measured results do
 not describe this strict-window9 experiment. Logs, event files, generated
 samples and checkpoints are runtime artifacts excluded from Git.
+
+## Validation (2026-10-27)
+
+- All 17 attention tests pass, including independent full joint-softmax
+  equivalence, exact zero AV/VA probabilities outside ±4, inclusion of both
+  endpoints, 3,073-frame integer geometry, CFG, checkpointed gradients and
+  CUDA BF16 finite backward for fully masked rows. Gaussian mode with an
+  omitted/None radius matches the source model initialization and outputs
+  exactly. The hard mask adds no parameters, state tensors or RNG consumption.
+- All 11 new hard-window contract tests and all 11 inherited Gaussian
+  contract tests pass. Shell syntax and the three-field configuration
+  comparison pass. Newly added/updated supporting Python files pass Ruff;
+  the backbone retains the same 24 pre-existing Ruff diagnostics, with no
+  new diagnostics compared with the source.
+- Independently constructed production models using the real 159-symbol
+  vocabulary and complete CFM wrapper both have 376,563,842 trainable
+  parameters, 802 identical state keys/shapes/dtypes, 12 AVT blocks and
+  6 audio-only blocks.
+- The separate real-data run `avt_joint_hard_window9_av_va_smoke3_20261027`
+  completes 3 updates on four GPUs at 3,600 frames/GPU. Total/flow losses are
+  1.3477484, 1.4532063 and 1.3474190; global and speaker gradients are finite.
+  TensorBoard records radius 4, width 9 and zero offset at all three steps.
+  Its saved update-3 checkpoint reloads online and EMA weights strictly with
+  all 802 model keys. All online, EMA and optimizer tensors are finite. EMA
+  retains the original parent-step policy (70,000 + 3 = 70,003). The actual
+  checkpoint sidecar passes the hard9 configuration and rejects Gaussian and
+  radius-2 configurations. Detailed reports are retained under this project's
+  ignored `logs/` directory.
