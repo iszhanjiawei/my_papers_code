@@ -15,10 +15,16 @@ class SemanticVaeFixedBandTrainer(SemanticVaeDirectC2SpeakerTrainer):
         diagnostics = super()._forward_diagnostics(loss, loss_components)
         backbone = self.accelerator.unwrap_model(self.model).transformer
         valid = backbone.last_temporal_band_valid_mask
-        for label, tensor in (
+        parameters = [
             ("offset_ms", backbone.last_temporal_band_offset_seconds),
-            ("sigma_ms", backbone.last_temporal_band_sigma_seconds),
-        ):
+        ]
+        radius = backbone.temporal_band.window_radius_frames
+        if radius is None:
+            parameters.append(("sigma_ms", backbone.last_temporal_band_sigma_seconds))
+        else:
+            diagnostics["temporal_band/window_radius_frames"] = float(radius)
+            diagnostics["temporal_band/window_size_frames"] = float(2 * radius + 1)
+        for label, tensor in parameters:
             if tensor is None:
                 raise RuntimeError("Fixed-band training did not produce temporal parameters")
             values = tensor.detach().float()

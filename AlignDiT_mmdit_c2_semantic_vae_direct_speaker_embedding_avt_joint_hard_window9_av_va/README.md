@@ -1,16 +1,19 @@
 # Current experiment
 
-This isolated copy adds the fixed bidirectional audio/video Gaussian attention
-prior to the existing audio/video/text joint-attention model. The prior uses
-zero offset and sigma = 0.100 seconds; text participates in the same joint
-softmax, with no temporal penalty on text edges. The 12 AVT blocks, 6 audio-only
-blocks and complete AVT training recipe are retained.
-See [AVT_FIXED_BAND_AV_VA.md](AVT_FIXED_BAND_AV_VA.md) for the current
+This isolated copy adds a strict **nine-frame** bidirectional audio/video
+attention window to the existing audio/video/text joint-attention model.
+For each aligned 40-Hz audio/video position, cross-modal keys within ±4 frames
+are permitted; all farther audio/video keys have exactly zero attention weight.
+The temporal mask does not penalize text edges or same-modality edges. The
+12 AVT blocks, 6 audio-only blocks and complete AVT training recipe are retained.
+See [AVT_HARD_WINDOW9_AV_VA.md](AVT_HARD_WINDOW9_AV_VA.md) for this experiment's
 configuration, initialization, training, TensorBoard and inference commands.
 
+[AVT_FIXED_BAND_AV_VA.md](AVT_FIXED_BAND_AV_VA.md),
 [AVT_JOINT_ATTENTION.md](AVT_JOINT_ATTENTION.md) and the inherited evaluation
-reports describe the source AVT experiment; their checkpoints and results do
-not belong to this new fixed-band run.
+reports are historical source-experiment records. Their checkpoints and results
+do not belong to this strict-window9 run. The source Gaussian sigma of 100 ms
+corresponds to four frames, but it had no strict window boundary.
 
 # AlignDiT
 

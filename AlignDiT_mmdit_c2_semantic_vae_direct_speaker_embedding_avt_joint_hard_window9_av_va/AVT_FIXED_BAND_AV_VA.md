@@ -1,3 +1,7 @@
+> Historical record: this document describes the source AVT joint + Gaussian fixed-band experiment.
+> Its checkpoints, commands and results do not represent the strict-window9 run.
+> See [AVT_HARD_WINDOW9_AV_VA.md](AVT_HARD_WINDOW9_AV_VA.md) for the current experiment.
+
 # AVT joint attention with fixed bidirectional audio/video bands
 
 This isolated source copy starts from

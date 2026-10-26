@@ -1,3 +1,7 @@
+> Historical record: this document describes the source AVT joint + Gaussian fixed-band evaluation.
+> Its checkpoints, commands and results do not represent the strict-window9 run.
+> See [AVT_HARD_WINDOW9_AV_VA.md](AVT_HARD_WINDOW9_AV_VA.md) for the current experiment.
+
 # AVT joint + fixed AV/VA band: 150k / 200k evaluation
 
 Evaluate the numbered 150,000 and 200,000 checkpoints of this snapshot, using

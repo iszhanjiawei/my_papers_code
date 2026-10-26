@@ -423,9 +423,23 @@ class MMDiTBlock_AVT(DiTBlock):
             # [[0, B_av, 0], [B_av.T, 0, 0], [0, 0, 0]].
             audio_bias = F.pad(temporal_band_bias.to(q_a.dtype), (n_a, n_t))[:, None]
             video_bias = F.pad(temporal_band_bias.transpose(-1, -2).to(q_v.dtype), (0, n_v + n_t))[:, None]
+            audio_has_keys = video_has_keys = text_has_keys = None
+            text_key_mask = key_mask
             if key_mask is not None:
                 audio_bias = audio_bias.masked_fill(~key_mask, float("-inf"))
                 video_bias = video_bias.masked_fill(~key_mask, float("-inf"))
+                # PyTorch 2.4 SDPA can produce NaN gradients for a completely
+                # masked row. Temporarily allow one same-modality key, then
+                # discard that row's result. Forbidden AV/VA entries stay
+                # -inf, including when a hard window contains no valid keys.
+                audio_has_keys = torch.isfinite(audio_bias).any(dim=-1, keepdim=True)
+                audio_bias[..., 0] = audio_bias[..., 0].masked_fill(~audio_has_keys.squeeze(-1), 0.0)
+                video_has_keys = torch.isfinite(video_bias).any(dim=-1, keepdim=True)
+                video_bias[..., n_a] = video_bias[..., n_a].masked_fill(~video_has_keys.squeeze(-1), 0.0)
+                if n_t:
+                    text_has_keys = key_mask.any(dim=-1, keepdim=True)
+                    text_key_mask = key_mask.clone()
+                    text_key_mask[..., n_a + n_v] |= ~text_has_keys.squeeze(-1)
             out_a = F.scaled_dot_product_attention(
                 q_a, key, value, attn_mask=audio_bias, dropout_p=0.0, is_causal=False,
             )
@@ -433,8 +447,13 @@ class MMDiTBlock_AVT(DiTBlock):
                 q_v, key, value, attn_mask=video_bias, dropout_p=0.0, is_causal=False,
             )
             out_t = F.scaled_dot_product_attention(
-                q_t, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False,
+                q_t, key, value, attn_mask=text_key_mask, dropout_p=0.0, is_causal=False,
             )
+            if audio_has_keys is not None:
+                out_a = out_a.masked_fill(~audio_has_keys, 0.0)
+                out_v = out_v.masked_fill(~video_has_keys, 0.0)
+            if text_has_keys is not None:
+                out_t = out_t.masked_fill(~text_has_keys, 0.0)
             out = torch.cat((out_a, out_v, out_t), dim=2)
         out = out.transpose(1, 2).reshape(batch, n_a + n_v + n_t, self.attn.inner_dim)
         outputs = []
@@ -517,6 +536,7 @@ class DiT_VT_MMDiT(DiT):
         temporal_band_fixed_offset_seconds=0.0,
         temporal_band_fixed_sigma_seconds=0.100,
         temporal_band_bidirectional=False,
+        temporal_band_fixed_window_radius_frames=None,
     ):
         if type(temporal_band_enabled) is not bool or type(temporal_band_bidirectional) is not bool:
             raise TypeError("temporal_band_enabled and temporal_band_bidirectional must be bools")
@@ -526,6 +546,8 @@ class DiT_VT_MMDiT(DiT):
             raise ValueError("Enabled fixed band requires AVT joint attention and temporal_band_bidirectional=True")
         if temporal_band_bidirectional and not temporal_band_enabled:
             raise ValueError("temporal_band_bidirectional requires an enabled fixed band")
+        if temporal_band_fixed_window_radius_frames is not None and not temporal_band_enabled:
+            raise ValueError("temporal_band_fixed_window_radius_frames requires an enabled fixed band")
         super().__init__(
             dim=dim,
             depth=depth,
@@ -698,6 +720,7 @@ class DiT_VT_MMDiT(DiT):
                 dim=dim, audio_fps=temporal_band_audio_fps, video_fps=temporal_band_video_fps,
                 offset_seconds=temporal_band_fixed_offset_seconds,
                 sigma_seconds=temporal_band_fixed_sigma_seconds,
+                window_radius_frames=temporal_band_fixed_window_radius_frames,
             )
             if abs(self.temporal_band.audio_fps / self.temporal_band.video_fps - self.audio_video_ratio) > 1e-6:
                 raise ValueError("temporal-band audio/video frame-rate ratio must match audio_video_ratio")

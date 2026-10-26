@@ -1,3 +1,7 @@
+> Historical record: this document describes the source AVT joint experiment without the strict window.
+> Its checkpoints, commands and results do not represent the strict-window9 run.
+> See [AVT_HARD_WINDOW9_AV_VA.md](AVT_HARD_WINDOW9_AV_VA.md) for the current experiment.
+
 # Semantic-VAE speaker C2 with audio/video/text joint attention
 
 This independent copy of `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding`

@@ -1,9 +1,12 @@
-"""Parameter-free, content-independent Gaussian prior on physical frame times.
+"""Parameter-free fixed Gaussian prior or strict local cross-modal window.
 
 The center follows each audio query's timestamp plus a fixed offset; "fixed"
 does not mean that every query attends to one global video timestamp. Positive
 offsets point towards later video frames. Width is the Gaussian standard
-deviation in seconds, not a hard cutoff or a number of frames.
+deviation in seconds in the legacy Gaussian mode. Setting ``window_radius_frames``
+selects a hard index window on equal-rate, zero-offset streams: only frame pairs
+within that radius can attend. Sigma remains an interface-compatible constant
+but has no effect in hard-window mode.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ class FixedTemporalBand(nn.Module):
         video_fps: float = 40.0,
         offset_seconds: float = 0.0,
         sigma_seconds: float = 0.100,
+        window_radius_frames: int | None = None,
     ):
         super().__init__()
         if not isinstance(dim, int) or isinstance(dim, bool) or dim <= 0:
@@ -38,11 +42,17 @@ class FixedTemporalBand(nn.Module):
             raise ValueError("audio_fps and video_fps must be positive")
         if sigma_seconds <= 0:
             raise ValueError("sigma_seconds must be positive")
+        if window_radius_frames is not None:
+            if type(window_radius_frames) is not int or window_radius_frames < 0:
+                raise ValueError("window_radius_frames must be a nonnegative integer or None")
+            if audio_fps != video_fps or offset_seconds != 0.0:
+                raise ValueError("hard temporal windows require equal audio/video frame rates and zero offset")
         self.dim = dim
         self.audio_fps = float(audio_fps)
         self.video_fps = float(video_fps)
         self.offset_seconds = float(offset_seconds)
         self.sigma_seconds = float(sigma_seconds)
+        self.window_radius_frames = window_radius_frames
 
     def forward(self, video: torch.Tensor, audio_len: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Return FP32 [batch, audio queries] constants on the video's device.
@@ -62,12 +72,15 @@ class FixedTemporalBand(nn.Module):
         return offset, sigma
 
     def bias(self, offset_seconds: torch.Tensor, sigma_seconds: torch.Tensor, video_len: int) -> torch.Tensor:
-        """Return FP32 [batch, audio queries, video keys] soft logit bias.
+        """Return FP32 [batch, audio queries, video keys] additive logit bias.
 
         Offset and sigma tensors come from ``forward``, whose constructor-
         validated constants are finite with positive sigma. Compute physical
-        distances directly in FP32, including under BF16 autocast; expanded
-        dot-product forms suffer cancellation on long sequences.
+        distances directly in FP32 in Gaussian mode, including under BF16
+        autocast; expanded dot-product forms suffer cancellation on long
+        sequences. Hard-window mode compares integer indices and returns zero
+        inside the inclusive radius and negative infinity outside. It does not
+        apply a Gaussian weighting within the window.
         """
         if offset_seconds.ndim != 2 or sigma_seconds.shape != offset_seconds.shape:
             raise ValueError("offset_seconds and sigma_seconds must have matching [batch, audio] shapes")
@@ -77,6 +90,15 @@ class FixedTemporalBand(nn.Module):
             raise ValueError("offset_seconds and sigma_seconds must be on the same device")
         if not isinstance(video_len, int) or isinstance(video_len, bool) or video_len <= 0:
             raise ValueError("video_len must be a positive integer")
+        if self.window_radius_frames is not None:
+            # Integer geometry prevents floating timestamp rounding from
+            # admitting or excluding an endpoint, even far along a sequence.
+            audio_indices = torch.arange(offset_seconds.shape[1], device=offset_seconds.device, dtype=torch.long)
+            video_indices = torch.arange(video_len, device=offset_seconds.device, dtype=torch.long)
+            allowed = (video_indices[None, :] - audio_indices[:, None]).abs() <= self.window_radius_frames
+            bias = torch.zeros(allowed.shape, device=offset_seconds.device, dtype=torch.float32)
+            bias.masked_fill_(~allowed, float("-inf"))
+            return bias[None].expand(offset_seconds.shape[0], -1, -1)
         audio_times = torch.arange(offset_seconds.shape[1], device=offset_seconds.device, dtype=torch.float32)
         video_times = torch.arange(video_len, device=offset_seconds.device, dtype=torch.float32)
         audio_times = audio_times / self.audio_fps
