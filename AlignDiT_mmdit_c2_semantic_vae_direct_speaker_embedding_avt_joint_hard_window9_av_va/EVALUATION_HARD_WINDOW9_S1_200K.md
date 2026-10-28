@@ -57,4 +57,52 @@ artifacts remain outside Git.
 
 ## Results
 
-Pending full pipeline completion and independent coverage/metric audit.
+Completed on 2026-10-28 on physical GPU 1. All four metrics and the independent
+coverage/metric audit pass for **213/213** clips.
+
+| EMA checkpoint | SPKSIM ↑ | WER ↓ | EMOSIM ↑ | AVSync ↑ |
+|---|---:|---:|---:|---:|
+| Strict hard-window9, 200k | 0.65990 | 0.04752 | 0.76125 | 0.56899 |
+
+Corpus WER is **113 word errors / 2,378 reference words = 0.0475189235**,
+or 4.75189%.
+
+Checkpoint SHA256:
+`a80a8395f3c65c1f8fd376307594335c024ab8cfe539d5e7bb3f0c510aa532b0`.
+
+The audit verifies exactly 213 WAVs, 213 generated AV-HuBERT features and
+213 records per metric, excluding blank lines and summary lines. WAVs are
+finite 16-kHz mono, have the inference receipt's sample count and match its
+SHA256. Generated feature shapes match GT and all values are finite. Full
+test/video/clip identities are retained, including clips with identical
+basenames in different videos. AVSync is recomputed from the feature arrays;
+the other sample means and corpus WER are recomputed from per-clip records.
+All recomputed values agree with the original evaluator's reported results.
+
+## Same-run 150k / 200k comparison
+
+The inference summaries match in generation settings, test-list and latent
+normalization hashes, decoder metadata and same-clip speaker/reference sources.
+Both checkpoints come from this same strict-window9 training run and both
+audits cover the complete 213-clip test set.
+
+| EMA checkpoint | SPKSIM ↑ | WER ↓ | EMOSIM ↑ | AVSync ↑ |
+|---|---:|---:|---:|---:|
+| 150k | 0.65257 | 0.04542 | 0.78132 | 0.57165 |
+| 200k | 0.65990 | 0.04752 | 0.76125 | 0.56899 |
+
+200k has higher SPKSIM by 0.00733. 150k has lower WER (108 vs 113 word errors),
+higher EMOSIM and higher AVSync. This is a descriptive comparison on the same
+test set; the four metrics favor different checkpoints.
+
+Each checkpoint's output directory retains its target WAVs under `test/`,
+generated features under `avhubert_feat/test/`, `inference_summary.json`,
+four original `_*_results.jsonl` files, full-ID `evaluation_per_clip.jsonl`
+and `evaluation_audit.json`. The 200k directory additionally contains
+`comparison_protocol_150k_200k.json` and `comparison_with_150k.json`.
+
+The project's ignored run record is
+`logs/evaluation_hard_window9_s1_200k_20261028.json`. Original stage and audit
+logs use the filenames in the reproduction commands above. Model,
+configuration and evaluator source remain those of the existing experiment;
+this task adds only the reproducibility/results document to Git.
