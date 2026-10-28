@@ -1,19 +1,16 @@
 # Current experiment
 
-This isolated copy adds a strict **nine-frame** bidirectional audio/video
-attention window to the existing audio/video/text joint-attention model.
-For each aligned 40-Hz audio/video position, cross-modal keys within ±4 frames
-are permitted; all farther audio/video keys have exactly zero attention weight.
-The temporal mask does not penalize text edges or same-modality edges. The
-12 AVT blocks, 6 audio-only blocks and complete AVT training recipe are retained.
-See [AVT_HARD_WINDOW9_AV_VA.md](AVT_HARD_WINDOW9_AV_VA.md) for this experiment's
-configuration, initialization, training, TensorBoard and inference commands.
+This isolated snapshot copies `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_hard_window9_av_va`.
+It changes only the strict A↔V window from nine frames (±4) to **five frames (±2)**.
+Audio, video and text still use joint attention; all out-of-window direct AV/VA
+attention weights are exactly zero. The 12 AVT blocks, 6 audio-only blocks,
+parent checkpoint, losses, data and complete training recipe are unchanged.
+Run names, checkpoint directories and service ports identify the independent experiment.
 
-[AVT_FIXED_BAND_AV_VA.md](AVT_FIXED_BAND_AV_VA.md),
-[AVT_JOINT_ATTENTION.md](AVT_JOINT_ATTENTION.md) and the inherited evaluation
-reports are historical source-experiment records. Their checkpoints and results
-do not belong to this strict-window9 run. The source Gaussian sigma of 100 ms
-corresponds to four frames, but it had no strict window boundary.
+See [AVT_HARD_WINDOW5_AV_VA.md](AVT_HARD_WINDOW5_AV_VA.md) for configuration,
+initialization, training, TensorBoard and inference commands. All other inherited
+experiment and evaluation reports are historical records from the source snapshots;
+their results are not measurements of this five-frame experiment.
 
 # AlignDiT
 

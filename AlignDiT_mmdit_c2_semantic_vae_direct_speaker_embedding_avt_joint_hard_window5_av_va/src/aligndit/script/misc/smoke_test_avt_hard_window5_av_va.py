@@ -1,4 +1,4 @@
-"""Independent checks for strict nine-frame AV/VA windows in AVT attention.
+"""Independent checks for strict five-frame AV/VA windows in AVT attention.
 
 Run with PYTHONPATH=src. Pass --cuda for GPU 0 BF16/backward checks after
 resource availability has been confirmed. Tests use synthetic inputs only.
@@ -29,9 +29,10 @@ from f5_tts.model.modules import DiTBlock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
-SOURCE_ROOT = PROJECT_ROOT.parent / "AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_av_va"
-CONFIG_NAME = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window9_av_va"
-SOURCE_CONFIG = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va"
+SOURCE_ROOT = PROJECT_ROOT.parent / "AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_hard_window9_av_va"
+GAUSSIAN_SOURCE_ROOT = PROJECT_ROOT.parent / "AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_av_va"
+CONFIG_NAME = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window5_av_va"
+SOURCE_CONFIG = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window9_av_va"
 GAUSSIAN_ARCH = {
     "temporal_band_enabled": True,
     "temporal_band_mode": "fixed",
@@ -41,15 +42,15 @@ GAUSSIAN_ARCH = {
     "temporal_band_fixed_sigma_seconds": 0.1,
     "temporal_band_bidirectional": True,
 }
-HARD_ARCH = {**GAUSSIAN_ARCH, "temporal_band_fixed_window_radius_frames": 4}
+HARD_ARCH = {**GAUSSIAN_ARCH, "temporal_band_fixed_window_radius_frames": 2}
 
 
 def make_model(**overrides):
     return warm_start(DiT_VT_MMDiT(**{**BASE_ARCH, **HARD_ARCH, **overrides}))
 
 
-def load_source_module(name, relative):
-    spec = importlib.util.spec_from_file_location(name, SOURCE_ROOT / relative)
+def load_source_module(name, relative, root=SOURCE_ROOT):
+    spec = importlib.util.spec_from_file_location(name, root / relative)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -63,7 +64,7 @@ def config_at(root, name):
         return OmegaConf.to_container(compose(config_name=name), resolve=False)
 
 
-def explicit_joint_attention(block, streams, masks, radius=4):
+def explicit_joint_attention(block, streams, masks, radius=2):
     """Independently form full logits; no production bias helper or SDPA used."""
     qkv = [[], [], []]
     attentions = (block.attn, block.v_attn, block.t_attn)
@@ -118,50 +119,50 @@ def capture_attention(block, streams, **kwargs):
 
 
 class HardWindowGeometryTests(unittest.TestCase):
-    def test_exact_nine_positions_interior_clipped_edges_and_inclusive_endpoints(self):
-        band = FixedTemporalBand(dim=32, window_radius_frames=4)
+    def test_exact_five_positions_interior_clipped_edges_and_inclusive_endpoints(self):
+        band = FixedTemporalBand(dim=32, window_radius_frames=2)
         bias = band.bias(*band(torch.randn(2, 23, 32), audio_len=23), video_len=23)
-        expected = (torch.arange(23)[:, None] - torch.arange(23)[None, :]).abs() <= 4
+        expected = (torch.arange(23)[:, None] - torch.arange(23)[None, :]).abs() <= 2
         self.assertEqual(bias.dtype, torch.float32)
         torch.testing.assert_close(torch.isfinite(bias), expected[None].expand(2, -1, -1))
         self.assertEqual(torch.count_nonzero(bias[torch.isfinite(bias)]).item(), 0)
         self.assertTrue(torch.isneginf(bias[~expected[None].expand_as(bias)]).all())
-        self.assertEqual(expected.sum(-1).tolist(), [5, 6, 7, 8] + [9] * 15 + [8, 7, 6, 5])
+        self.assertEqual(expected.sum(-1).tolist(), [3, 4] + [5] * 19 + [4, 3])
         for center in range(5, 18):
-            for delta in (-4, 4):
+            for delta in (-2, 2):
                 self.assertEqual(bias[0, center, center + delta].item(), 0)
-            for delta in (-5, 5):
+            for delta in (-3, 3):
                 self.assertTrue(torch.isneginf(bias[0, center, center + delta]))
 
     def test_long_integer_geometry_sigma_and_feature_content_cannot_change_support(self):
         length = 3073
-        band = FixedTemporalBand(dim=8, window_radius_frames=4)
+        band = FixedTemporalBand(dim=8, window_radius_frames=2)
         bias = band.bias(*band(torch.full((1, length, 8), torch.nan), audio_len=length), video_len=length)
-        self.assertEqual(torch.isfinite(bias[0]).sum(-1).tolist(), [5, 6, 7, 8] + [9] * (length - 8) + [8, 7, 6, 5])
+        self.assertEqual(torch.isfinite(bias[0]).sum(-1).tolist(), [3, 4] + [5] * (length - 4) + [4, 3])
         for center in (40, 511, 1024, 2047, length - 6):
-            self.assertTrue(torch.isfinite(bias[0, center, center - 4:center + 5]).all())
-            self.assertTrue(torch.isneginf(bias[0, center, center - 5]))
-            self.assertTrue(torch.isneginf(bias[0, center, center + 5]))
-        alternate = FixedTemporalBand(dim=8, sigma_seconds=17, window_radius_frames=4)
+            self.assertTrue(torch.isfinite(bias[0, center, center - 2:center + 3]).all())
+            self.assertTrue(torch.isneginf(bias[0, center, center - 3]))
+            self.assertTrue(torch.isneginf(bias[0, center, center + 3]))
+        alternate = FixedTemporalBand(dim=8, sigma_seconds=17, window_radius_frames=2)
         other = alternate.bias(*alternate(torch.randn(3, 19, 8) * 100, audio_len=21), video_len=19)
         expected = band.bias(*band(torch.zeros(3, 19, 8), audio_len=21), video_len=19)
         torch.testing.assert_close(other, expected, atol=0, rtol=0)
         self.assertFalse(bias.requires_grad)
 
     def test_radius_none_reproduces_original_gaussian_module_exactly(self):
-        source = load_source_module("_source_fixed_band_for_hard9", "src/aligndit/model/fixed_temporal_band.py")
+        source = load_source_module("_source_fixed_band_for_hard5", "src/aligndit/model/fixed_temporal_band.py", GAUSSIAN_SOURCE_ROOT)
         settings = {"dim": 8, "audio_fps": 40, "video_fps": 25, "offset_seconds": 0.05, "sigma_seconds": 0.08}
         old, new = source.FixedTemporalBand(**settings), FixedTemporalBand(**settings, window_radius_frames=None)
         video = torch.randn(2, 17, 8)
         torch.testing.assert_close(new.bias(*new(video, 29), 17), old.bias(*old(video, 29), 17), atol=0, rtol=0)
 
     def test_invalid_radius_and_hard_window_geometry_rejected(self):
-        for value in (-1, True, 4.0, "4"):
+        for value in (-1, True, 2.0, "2"):
             with self.subTest(value=value), self.assertRaises((TypeError, ValueError)):
                 FixedTemporalBand(dim=8, window_radius_frames=value)
         for options in ({"video_fps": 25}, {"offset_seconds": 0.025}):
             with self.subTest(options=options), self.assertRaises(ValueError):
-                FixedTemporalBand(dim=8, window_radius_frames=4, **options)
+                FixedTemporalBand(dim=8, window_radius_frames=2, **options)
 
 
 class HardAVTAttentionTests(unittest.TestCase):
@@ -172,7 +173,7 @@ class HardAVTAttentionTests(unittest.TestCase):
         self.streams = tuple(torch.randn(2, length, 32) for length in (15, 13, 4))
         self.masks = tuple(torch.arange(s.shape[1])[None] < torch.tensor([s.shape[1], s.shape[1] - 2])[:, None]
                            for s in self.streams)
-        band = FixedTemporalBand(dim=32, window_radius_frames=4)
+        band = FixedTemporalBand(dim=32, window_radius_frames=2)
         self.bias = band.bias(*band(self.streams[1], audio_len=15), video_len=13)
 
     def test_explicit_joint_softmax_unequal_lengths_masks_train_and_eval(self):
@@ -199,13 +200,13 @@ class HardAVTAttentionTests(unittest.TestCase):
     def test_actual_probabilities_exactly_zero_outside_both_directions_text_and_self_global(self):
         _, prior, probability, _ = capture_attention(self.block, self.streams, temporal_band_bias=self.bias)
         av, va = probability[:, :, :15, 15:28], probability[:, :, 15:28, :15]
-        allowed = (torch.arange(15)[:, None] - torch.arange(13)[None, :]).abs() <= 4
+        allowed = (torch.arange(15)[:, None] - torch.arange(13)[None, :]).abs() <= 2
         self.assertEqual(torch.count_nonzero(av[..., ~allowed]).item(), 0)
         self.assertEqual(torch.count_nonzero(va[..., ~allowed.T]).item(), 0)
         self.assertTrue((av[..., allowed] > 0).all())
         self.assertTrue((va[..., allowed.T] > 0).all())
         for index in (3, 6, 8):
-            for delta in (-4, 4):
+            for delta in (-2, 2):
                 if 0 <= index + delta < 13:
                     self.assertTrue((av[:, :, index, index + delta] > 0).all())
                     self.assertTrue((va[:, :, index + delta, index] > 0).all())
@@ -218,7 +219,7 @@ class HardAVTAttentionTests(unittest.TestCase):
 
     def test_outside_cross_modal_features_cannot_change_direct_query_output(self):
         baseline = self.block.joint_attn(*self.streams, temporal_band_bias=self.bias)
-        for receiving, sending, query, outside, inside in ((0, 1, 5, 10, 9), (1, 0, 5, 10, 9)):
+        for receiving, sending, query, outside, inside in ((0, 1, 5, 8, 7), (1, 0, 5, 8, 7)):
             changed = [stream.clone() for stream in self.streams]
             changed[sending][:, outside] = torch.randn_like(changed[sending][:, outside]) * 30
             result = self.block.joint_attn(*changed, temporal_band_bias=self.bias)
@@ -280,12 +281,12 @@ class HardAVTBackboneTests(unittest.TestCase):
 
     def test_hard_radius_adds_no_parameters_state_or_rng(self):
         models, states = [], []
-        for config in ({}, GAUSSIAN_ARCH, HARD_ARCH):
+        for config in ({}, GAUSSIAN_ARCH, {**GAUSSIAN_ARCH, "temporal_band_fixed_window_radius_frames": 4}, HARD_ARCH):
             torch.manual_seed(83)
             models.append(DiT_VT_MMDiT(**{**BASE_ARCH, **config}))
             states.append(torch.get_rng_state().clone())
-        self.assertEqual(list(models[2].temporal_band.parameters()), [])
-        self.assertEqual(dict(models[2].temporal_band.state_dict()), {})
+        self.assertEqual(list(models[-1].temporal_band.parameters()), [])
+        self.assertEqual(dict(models[-1].temporal_band.state_dict()), {})
         for model, state in zip(models[1:], states[1:]):
             torch.testing.assert_close(state, states[0], atol=0, rtol=0)
             self.assertEqual(set(model.state_dict()), set(models[0].state_dict()))
@@ -294,8 +295,8 @@ class HardAVTBackboneTests(unittest.TestCase):
             model.load_state_dict(models[0].state_dict(), strict=True)
 
     def test_radius_none_matches_original_gaussian_source_outputs_and_rng_exactly(self):
-        source = load_source_module("_gaussian_avt_backbone_for_hard9", "src/aligndit/model/backbone/dit_vt_mm.py")
-        source.FixedTemporalBand = load_source_module("_gaussian_band_for_hard9", "src/aligndit/model/fixed_temporal_band.py").FixedTemporalBand
+        source = load_source_module("_gaussian_avt_backbone_for_hard5", "src/aligndit/model/backbone/dit_vt_mm.py", GAUSSIAN_SOURCE_ROOT)
+        source.FixedTemporalBand = load_source_module("_gaussian_band_for_hard5", "src/aligndit/model/fixed_temporal_band.py", GAUSSIAN_SOURCE_ROOT).FixedTemporalBand
         models, states = [], []
         for cls in (source.DiT_VT_MMDiT, DiT_VT_MMDiT):
             torch.manual_seed(83)
@@ -329,7 +330,7 @@ class HardAVTBackboneTests(unittest.TestCase):
                     for handle in handles:
                         handle.remove()
                 self.assertEqual(len(observed), 2)
-                expected_allowed = (torch.arange(12)[:, None] - torch.arange(12)[None, :]).abs() <= 4
+                expected_allowed = (torch.arange(12)[:, None] - torch.arange(12)[None, :]).abs() <= 2
                 for kwargs in observed:
                     bias = kwargs["temporal_band_bias"]
                     torch.testing.assert_close(torch.isfinite(bias), expected_allowed[None].expand_as(bias))
@@ -386,7 +387,7 @@ class HardAVTBackboneTests(unittest.TestCase):
         expected = copy.deepcopy(base)
         expected["model"]["name"] = target["model"]["name"]
         expected["ckpts"]["save_dir"] = target["ckpts"]["save_dir"]
-        expected["model"]["arch"]["temporal_band_fixed_window_radius_frames"] = 4
+        expected["model"]["arch"]["temporal_band_fixed_window_radius_frames"] = 2
         self.assertEqual(target, expected)
         arch = target["model"]["arch"]
         self.assertEqual((arch["depth"], arch["n_mm_layers"], arch["n_text_layers"]), (18, 12, 12))
@@ -395,7 +396,7 @@ class HardAVTBackboneTests(unittest.TestCase):
         self.assertEqual(target["optim"]["run_until_update"], 200000)
         # Full-sized architecture on meta: inspect every state shape without
         # allocating model weights or touching a GPU.
-        original = load_source_module("_gaussian_avt_for_meta_hard9", "src/aligndit/model/backbone/dit_vt_mm.py")
+        original = load_source_module("_hard9_avt_for_meta_hard5", "src/aligndit/model/backbone/dit_vt_mm.py")
         with torch.device("meta"):
             models = [DiT_VT_MMDiT(**{**arch, "text_num_embeds": 256, "mel_dim": 64}),
                       original.DiT_VT_MMDiT(**{**base["model"]["arch"], "text_num_embeds": 256, "mel_dim": 64})]

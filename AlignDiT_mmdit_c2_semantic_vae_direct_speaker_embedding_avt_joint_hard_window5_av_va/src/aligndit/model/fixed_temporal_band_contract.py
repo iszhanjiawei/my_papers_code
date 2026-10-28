@@ -19,7 +19,7 @@ FIXED_BAND_KEYS = (
     "temporal_band_fixed_sigma_seconds", "temporal_band_bidirectional",
 )
 EXPERIMENT_MARKER = "avt_joint_fixed_band_av_va"
-HARD_WINDOW_MARKER = "avt_joint_hard_window9_av_va"
+HARD_WINDOW_MARKER = "avt_joint_hard_window5_av_va"
 RADIUS_KEY = "temporal_band_fixed_window_radius_frames"
 
 
@@ -82,8 +82,8 @@ def validate_fixed_band_training_config(config) -> bool:
         raise ValueError("Temporal-band rates must match the already-interpolated 40-Hz cache")
     marker = EXPERIMENT_MARKER
     if radius is not None:
-        if radius != 4:
-            raise ValueError("This hard_window9_av_va experiment requires window radius 4 (nine frames)")
+        if radius != 2:
+            raise ValueError("This hard_window5_av_va experiment requires window radius 2 (five frames)")
         marker = HARD_WINDOW_MARKER
     if any(marker not in value for value in (run_name, str(save_dir))):
         raise ValueError(f"{marker} runs require dedicated model.name and ckpts.save_dir")

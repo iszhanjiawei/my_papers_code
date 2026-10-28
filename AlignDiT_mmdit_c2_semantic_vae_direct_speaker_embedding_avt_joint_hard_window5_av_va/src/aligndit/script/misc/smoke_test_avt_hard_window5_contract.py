@@ -1,4 +1,4 @@
-"""CPU identity/config/diagnostic checks for the AVT joint nine-frame window."""
+"""CPU identity/config/diagnostic checks for the AVT joint five-frame window."""
 
 from __future__ import annotations
 
@@ -25,17 +25,17 @@ from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirect
 from aligndit.model.trainer_semantic_vae_fixed_band import SemanticVaeFixedBandTrainer
 
 
-class HardWindow9ContractTests(unittest.TestCase):
+class HardWindow5ContractTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name) / "avt_joint_hard_window9_av_va_test"
+        self.root = Path(self.temporary.name) / "avt_joint_hard_window5_av_va_test"
         self.root.mkdir()
         self.checkpoint = self.root / "model_150000.pt"
         self.sidecar = self.root / "speaker_training_contract.json"
         self.config = OmegaConf.create({
             "model": {
-                "name": "avt_joint_hard_window9_av_va_test",
+                "name": "avt_joint_hard_window5_av_va_test",
                 "audio_representation": {"frame_rate": 40.0},
                 "arch": {
                     "depth": 18, "n_mm_layers": 12, "n_text_layers": 12,
@@ -44,12 +44,12 @@ class HardWindow9ContractTests(unittest.TestCase):
                     "temporal_band_audio_fps": 40.0, "temporal_band_video_fps": 40.0,
                     "temporal_band_fixed_offset_seconds": 0.0,
                     "temporal_band_fixed_sigma_seconds": 0.100,
-                    "temporal_band_bidirectional": True, RADIUS_KEY: 4,
+                    "temporal_band_bidirectional": True, RADIUS_KEY: 2,
                 },
             },
             "ckpts": {"save_dir": str(self.root)},
         })
-        self.band = FixedTemporalBand(dim=64, window_radius_frames=4)
+        self.band = FixedTemporalBand(dim=64, window_radius_frames=2)
         self.contract = self.make_sidecar(self.config, self.band)
 
     @staticmethod
@@ -67,9 +67,9 @@ class HardWindow9ContractTests(unittest.TestCase):
         self.write_contract()
         validate_fixed_band_contract(self.config, self.checkpoint)
         band = self.contract["temporal_band"]
-        self.assertEqual(band["parameters"][RADIUS_KEY], 4)
-        self.assertEqual(band["window_radius_frames"], 4)
-        self.assertEqual(band["window_size_frames"], 9)
+        self.assertEqual(band["parameters"][RADIUS_KEY], 2)
+        self.assertEqual(band["window_radius_frames"], 2)
+        self.assertEqual(band["window_size_frames"], 5)
         self.assertEqual(band["kernel"], "hard_window")
         self.assertEqual(band["attention_mode"], "avt_joint")
         self.assertFalse(band["gaussian_sigma_active"])
@@ -78,7 +78,7 @@ class HardWindow9ContractTests(unittest.TestCase):
             self.assertIn(block, band["scope"])
 
     def test_training_rejects_wrong_radius_types_geometry_and_topology(self):
-        cases = [(RADIUS_KEY, value) for value in (None, 2, 5, 4.0, True, -1, "4")]
+        cases = [(RADIUS_KEY, value) for value in (None, 4, 5, 2.0, True, -1, "2")]
         cases.extend((
             ("temporal_band_audio_fps", 25.0), ("temporal_band_video_fps", 25.0),
             ("temporal_band_fixed_offset_seconds", 0.025), ("temporal_band_bidirectional", False),
@@ -93,10 +93,11 @@ class HardWindow9ContractTests(unittest.TestCase):
 
     def test_training_rejects_inherited_paths_names_and_unlabeled_weights(self):
         for location in ("model.name", "ckpts.save_dir"):
-            config = copy.deepcopy(self.config)
-            OmegaConf.update(config, location, "avt_joint_fixed_band_av_va_test")
-            with self.subTest(location=location), self.assertRaises(ValueError):
-                validate_fixed_band_training_config(config)
+            for inherited in ("avt_joint_fixed_band_av_va_test", "avt_joint_hard_window9_av_va_test"):
+                config = copy.deepcopy(self.config)
+                OmegaConf.update(config, location, inherited)
+                with self.subTest(location=location, inherited=inherited), self.assertRaises(ValueError):
+                    validate_fixed_band_training_config(config)
         self.checkpoint.write_bytes(b"identity check only")
         with self.assertRaises(RuntimeError):
             validate_fixed_band_training_config(self.config)
@@ -117,7 +118,7 @@ class HardWindow9ContractTests(unittest.TestCase):
         validate_fixed_band_contract(gaussian, self.checkpoint)
 
     def test_changed_radius_rejected_in_both_directions(self):
-        for radius in (2, 5):
+        for radius in (4, 5):
             changed = copy.deepcopy(self.config)
             changed.model.arch[RADIUS_KEY] = radius
             self.write_contract()
@@ -139,8 +140,8 @@ class HardWindow9ContractTests(unittest.TestCase):
 
     def test_hard_sidecar_rejects_contradictory_semantics(self):
         cases = (("kernel", "gaussian"), ("attention_mode", "av_joint_text_cross"),
-                 ("window_radius_frames", 2), ("window_size_frames", 5),
-                 ("window_size_frames", 9.0), ("gaussian_sigma_active", True),
+                 ("window_radius_frames", 4), ("window_size_frames", 9),
+                 ("window_size_frames", 5.0), ("gaussian_sigma_active", True),
                  ("boundary_policy", "shift to full width"))
         for key, value in cases:
             contract = copy.deepcopy(self.contract)
@@ -152,7 +153,7 @@ class HardWindow9ContractTests(unittest.TestCase):
     def test_missing_contract_and_invalid_radius_types_are_rejected(self):
         with self.assertRaises(RuntimeError):
             validate_fixed_band_contract(self.config, self.checkpoint)
-        for radius in (4.0, True, "4", -1):
+        for radius in (2.0, True, "2", -1):
             contract = copy.deepcopy(self.contract)
             contract["temporal_band"]["parameters"][RADIUS_KEY] = radius
             self.write_contract(contract)
@@ -160,8 +161,8 @@ class HardWindow9ContractTests(unittest.TestCase):
                 validate_fixed_band_contract(self.config, self.checkpoint)
 
     def test_contract_creation_checks_actual_band(self):
-        for band in (FixedTemporalBand(dim=64), FixedTemporalBand(dim=64, window_radius_frames=2),
-                     FixedTemporalBand(dim=64, window_radius_frames=4, sigma_seconds=0.2)):
+        for band in (FixedTemporalBand(dim=64), FixedTemporalBand(dim=64, window_radius_frames=4),
+                     FixedTemporalBand(dim=64, window_radius_frames=2, sigma_seconds=0.2)):
             with self.subTest(radius=band.window_radius_frames), self.assertRaises(RuntimeError):
                 make_fixed_band_contract(self.config.model.arch, band)
         self.band.register_buffer("unexpected_state", torch.ones(1))
@@ -181,8 +182,8 @@ class HardWindow9ContractTests(unittest.TestCase):
         trainer.accelerator = SimpleNamespace(unwrap_model=lambda model: model)
         with patch.object(SemanticVaeDirectC2SpeakerTrainer, "_forward_diagnostics", side_effect=lambda *_: {}):
             diagnostics = trainer._forward_diagnostics(torch.tensor(1.0), {})
-            self.assertEqual(diagnostics["temporal_band/window_radius_frames"], 4.0)
-            self.assertEqual(diagnostics["temporal_band/window_size_frames"], 9.0)
+            self.assertEqual(diagnostics["temporal_band/window_radius_frames"], 2.0)
+            self.assertEqual(diagnostics["temporal_band/window_size_frames"], 5.0)
             self.assertEqual(diagnostics["temporal_band/offset_ms_mean"], 0.0)
             self.assertFalse(any("sigma" in key for key in diagnostics))
             backbone.temporal_band = FixedTemporalBand(dim=64)
@@ -190,13 +191,13 @@ class HardWindow9ContractTests(unittest.TestCase):
             self.assertAlmostEqual(diagnostics["temporal_band/sigma_ms_mean"], 100.0)
             self.assertFalse(any("window_size" in key for key in diagnostics))
 
-    def test_composed_hard9_config_is_accepted(self):
+    def test_composed_hard5_config_is_accepted(self):
         config_dir = Path(__file__).resolve().parents[2] / "config"
         with initialize_config_dir(version_base="1.3", config_dir=str(config_dir)):
-            config = compose(config_name="finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window9_av_va")
+            config = compose(config_name="finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window5_av_va")
         config.ckpts.save_dir = str(self.root)
         self.assertTrue(validate_fixed_band_training_config(config))
-        self.assertEqual(config.model.arch[RADIUS_KEY], 4)
+        self.assertEqual(config.model.arch[RADIUS_KEY], 2)
         self.assertTrue(config.model.arch.text_joint_attention)
 
 

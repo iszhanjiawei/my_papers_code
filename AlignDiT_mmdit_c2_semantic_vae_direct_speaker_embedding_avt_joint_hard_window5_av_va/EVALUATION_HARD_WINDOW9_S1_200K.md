@@ -1,3 +1,6 @@
+> Historical record copied from the hard-window9 source experiment.
+> For this snapshot, use [AVT_HARD_WINDOW5_AV_VA.md](AVT_HARD_WINDOW5_AV_VA.md); these results and commands describe the source run.
+
 # Strict AVT hard-window9: 200k EMA evaluation
 
 Evaluate this experiment's completed `model_200000.pt`, retaining strict
