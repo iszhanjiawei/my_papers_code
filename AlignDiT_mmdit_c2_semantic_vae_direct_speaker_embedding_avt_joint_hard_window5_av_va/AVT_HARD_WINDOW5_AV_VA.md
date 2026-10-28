@@ -138,3 +138,44 @@ PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u src/aligndit/script/mis
 Copy hashes, configuration audits and launch status are stored in ignored
 `logs/`. Logs, events, samples and checkpoints are runtime artifacts excluded
 from Git.
+
+## Verified validation and initial launch (2026-10-28, UTC+08:00)
+
+All 28 tests passed: 17 attention tests including CUDA BF16 backward, and
+11 contract tests including rejection of hard9/Gaussian identities. Shell
+syntax and the changed test files' Ruff checks passed. An independent resolved
+configuration comparison found exactly the three declared changes; 73 core
+model/training Python files remain byte-identical to hard9. The training
+identity contract has only the marker, expected radius and corresponding
+error-message changes. The source snapshot's 254 recorded file hashes remain
+unchanged.
+
+The separate real-data four-GPU smoke run
+`avt_joint_hard_window5_av_va_smoke3_20261028` completed three updates with losses
+1.3477957, 1.4531729 and 1.3474433. TensorBoard confirmed finite total/flow/CTC
+scalars and gradients, radius 2 and width 5. The saved checkpoint strictly
+reloads both online and EMA weights; all 802 online, 804 EMA and 2304 optimizer
+tensors are finite. The production model retains 376,563,842 parameters,
+802 state keys and 12+6 blocks. Checkpoint update is 3 and EMA internal step is
+70003. All smoke workers exited before the formal launch.
+
+Formal training started **2026-10-28 18:06:48 +08:00** with no overrides,
+launcher PID **923265**, workers **923395–923398**, GPUs **0–3**, independent
+sessions and no controlling terminal. The initial check reached update 59
+with finite loss 1.3807278; this is a timestamped launch observation, not a
+live progress counter. The run is configured to stop at update 200000 and save
+numbered checkpoints at 50000, 100000, 150000 and 200000.
+
+TensorBoard PID **913937**, port **6022**, serves this project's `runs/`.
+The exact formal event directory and run name are listed above. Both the
+HTTP endpoint and real scalar API were checked; only one rank-0 event file
+was present. Direct internal endpoint: `http://10.251.30.65:6022/`. The IDE
+client's actual forwarded URL is not available to the agent: open its bottom
+Ports panel, locate port 6022 and click the forwarded-address link shown there.
+
+Runtime audit records in `logs/`:
+`source_copy_manifest.json`, `independent_configuration_audit.json`,
+`window5_unit_validation.json`, `smoke_scalar_verification.json`,
+`smoke_checkpoint_verification.json`, `formal_training_status.json`.
+Formal text log: `logs/train_speaker_avt_joint_hard_window5_av_va.log`.
+Read the live log/event stream for subsequent progress.
