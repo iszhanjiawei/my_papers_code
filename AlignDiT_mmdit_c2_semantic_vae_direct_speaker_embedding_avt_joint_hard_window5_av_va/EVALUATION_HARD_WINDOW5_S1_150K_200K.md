@@ -91,4 +91,69 @@ with full IDs to preserve cross-video duplicate basenames.
 
 ## Results
 
-Pending completion of both complete-set evaluations and independent audits.
+Completed on **2026-10-30**, physical GPU **0** for 150k and GPU **1** for 200k.
+Both pipelines finished successfully and both independent audits pass for
+**213/213** clips. All metric values below are recomputed from the complete
+per-clip records; summary lines are excluded.
+
+| EMA checkpoint | SPKSIM ↑ | WER ↓ | EMOSIM ↑ | AVSync ↑ |
+|---|---:|---:|---:|---:|
+| 150k | 0.65115 | 0.05088 | 0.74839 | 0.56307 |
+| 200k | 0.65686 | 0.05719 | 0.73519 | 0.56215 |
+
+Corpus WER uses **2,378 reference words** in each evaluation:
+- 150k: **121 word errors / 2378 = 0.0508830950** (5.08831%).
+- 200k: **136 word errors / 2378 = 0.0571909167** (5.71909%).
+
+200k increases SPKSIM by 0.00571. 150k has lower WER
+(121 versus 136 word errors), higher EMOSIM by 0.01320,
+and higher AVSync by 0.00092. Thus the three latter metrics
+favor 150k, while speaker similarity favors 200k. These are descriptive
+checkpoint comparisons on the same test set.
+
+## Integrity and matching protocols
+
+Both runs have exactly 213 WAVs, 213 generated AV-HuBERT features and 213
+records per metric. The audit checks full clip identities and ordered metric
+mapping, waveform SHA256 and sample counts, finite arrays, generated feature
+shapes against GT, feature-based AVSync and agreement with reported metrics.
+An additional check confirms every WAV is 16-kHz mono PCM16 and has exactly
+the original target sample count from the Semantic-VAE test manifest.
+
+The complete generation, dataset, decoder, speaker-conditioning and latent
+normalization metadata match between checkpoints. These fields also match
+the audited hard9 evaluation protocol; no extra result is inferred from that
+protocol check. Both checkpoints retain strict five-frame attention, with
+the matching training sidecar required by inference.
+
+Checkpoint SHA256:
+
+- 150k: `ed7b0619d294d1e627d1828fa7a1ec864f509c568043d83e0ef044b2ef98ecb4`.
+- 200k: `684f5c494e15e0fb1aa9f085ee28bca601c6c56e754ee92bf019fc61f3bfa0bc`.
+
+## Artifacts
+
+Each output directory listed above contains:
+
+- `test/`: all 213 target WAVs;
+- `avhubert_feat/test/`: all 213 generated features;
+- `inference_summary.json`: generation/decoder/reference metadata and WAV receipts;
+- `_sim_results.jsonl`, `_wer_results.jsonl`, `_emosim_results.jsonl`, `_avsync_results.jsonl`;
+- `evaluation_per_clip.jsonl`: full-ID per-clip metrics and word-edit counts;
+- `evaluation_audit.json`: complete coverage and recomputed aggregates.
+
+The 200k directory additionally contains `comparison_protocol_150k_200k.json`
+and `comparison_with_150k.json`.
+
+Ignored project logs:
+
+- `logs/eval_s1_150000_hard_window5_cfgv2.0_20261030.log`;
+- `logs/eval_s1_200000_hard_window5_cfgv2.0_20261030.log`;
+- `logs/audit_s1_150k_200k_hard_window5_20261030.log`;
+- `logs/comparison_s1_150k_200k_hard_window5_20261030.log`;
+- `logs/evaluation_hard_window5_s1_150k_200k_20261030.json`.
+
+Actual detached evaluation pipeline PIDs were 1929593 (150k, GPU 0) and
+1929612 (200k, GPU 1); both have exited successfully. Model, training, inference
+and evaluator source remain unchanged. Only this reproduction/results document
+is added to Git for this request.
