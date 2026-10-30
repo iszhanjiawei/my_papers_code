@@ -138,3 +138,55 @@ Other inherited experiment/evaluation reports describe their historical source
 runs. Copy hashes, configuration audits, validation logs, TensorBoard events
 and launch status are runtime artifacts kept outside Git under `logs/`,
 `runs/` and the independent checkpoint directories.
+
+## Verified launch on 2026-10-30 (Asia/Shanghai)
+
+Implementation revision: `74eaf43507b8a9a9a75a1a118156139bf1a187fc`.
+The independent audit confirmed the four resolved configuration differences
+listed above, 73 byte-identical core Python files, and unchanged hashes for
+all 256 tracked files in the source hard5 snapshot.
+
+Validation passed 17 attention tests on GPU 0 (including BF16 forward/backward)
+and 11 configuration/contract tests. Coverage includes exact zero probability
+outside both AV/VA windows, inclusive ±6 and excluded ±7 boundaries, text and
+same-modality behavior, masks/CFG, long-sequence geometry and legacy Gaussian
+regression. A separate four-GPU, three-update real-data run produced losses
+1.347798, 1.453215 and 1.347398 with finite gradients. Its saved online and EMA
+states both reloaded strictly: 376,563,842 parameters, 802 model state keys,
+update 3, EMA counter 70003. Model, EMA and optimizer tensors were all finite.
+
+The formal run started at **15:10:59 +08:00**, from the original S2c 70k EMA
+parent with a fresh optimizer/update counter and an initially empty independent
+checkpoint directory. No smoke overrides were passed. The live training
+sidecar confirms radius 6, width 13, 12+6 blocks, `epochs=200` and
+`run_until_update=150000`.
+
+- Detached training launcher PID/SID: **2010198**, TTY `?`.
+- Rank 0–3 worker PIDs: **2010496, 2010497, 2010498, 2010499**.
+- All workers use this snapshot as their working directory, `PYTHONPATH=src`,
+  and physical GPUs **0,1,2,3**.
+- Training log: `logs/train_speaker_avt_joint_hard_window13_av_va.log`.
+- Detached TensorBoard PID/SID: **1994449**, port **6023**, TTY `?`.
+- TensorBoard service logdir: this snapshot's `runs/`; formal event directory
+  and run name are given above.
+
+At **15:17:38 +08:00**, TensorBoard had recorded **448 updates**, with latest
+loss **1.405890**. All recorded total/flow/CTC losses and global/speaker
+gradients were finite; window scalars remained 6/13. The single rank-0 event
+file grew from 291,118 to 399,973 bytes between checks and steps advanced from
+325 to 448. No traceback, CUDA out-of-memory or worker failure appeared.
+These values are a launch-time snapshot, not a claim about later progress.
+
+Both `http://127.0.0.1:6023/` and the internal address
+[http://10.251.30.65:6023/](http://10.251.30.65:6023/) returned HTTP 200, and
+the scalar API served the actual formal loss series. The IDE client's
+forwarded-address link is unavailable to the server-side tools, so external
+client access has not been verified. Open the bottom **Ports** panel, locate
+**6023**, and use that row's actual **Forwarded Address** link.
+
+Detailed runtime evidence remains excluded from Git:
+`logs/independent_configuration_audit.json`,
+`logs/hard_window13_test_verification.json`,
+`logs/smoke_scalar_verification.json`,
+`logs/smoke_checkpoint_verification.json`, and
+`logs/formal_training_status.json`.
