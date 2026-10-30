@@ -1,16 +1,16 @@
 # Current experiment
 
-This isolated snapshot copies `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_hard_window9_av_va`.
-It changes only the strict A↔V window from nine frames (±4) to **five frames (±2)**.
-Audio, video and text still use joint attention; all out-of-window direct AV/VA
-attention weights are exactly zero. The 12 AVT blocks, 6 audio-only blocks,
-parent checkpoint, losses, data and complete training recipe are unchanged.
-Run names, checkpoint directories and service ports identify the independent experiment.
+This isolated snapshot copies `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_hard_window5_av_va`.
+It changes the strict A↔V window from five frames (±2) to **thirteen frames (±6)**
+and stops the new run at **150000 updates**. Audio, video and text retain joint
+attention. Direct AV/VA attention weights outside the window are exactly zero.
+The 12 AVT blocks, 6 audio-only blocks, parent checkpoint, losses, data, batch,
+learning rate and original 200-epoch scheduler horizon retain their source values.
 
-See [AVT_HARD_WINDOW5_AV_VA.md](AVT_HARD_WINDOW5_AV_VA.md) for configuration,
-initialization, training, TensorBoard and inference commands. All other inherited
-experiment and evaluation reports are historical records from the source snapshots;
-their results are not measurements of this five-frame experiment.
+See [AVT_HARD_WINDOW13_AV_VA.md](AVT_HARD_WINDOW13_AV_VA.md) for this experiment's
+configuration, training, TensorBoard and inference commands. Other inherited
+experiment and evaluation reports are historical records of their named source
+snapshots; their results are not measurements of this thirteen-frame run.
 
 # AlignDiT
 

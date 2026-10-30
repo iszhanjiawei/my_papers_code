@@ -1,6 +1,5 @@
-> Historical record: this document describes the source AVT joint experiment without the strict window.
-> Its checkpoints, commands and results do not represent the strict-window9 run.
-> See [AVT_HARD_WINDOW9_AV_VA.md](AVT_HARD_WINDOW9_AV_VA.md) for the current experiment.
+> Historical source-experiment record. For the current thirteen-frame run,
+> see [AVT_HARD_WINDOW13_AV_VA.md](AVT_HARD_WINDOW13_AV_VA.md).
 
 # Semantic-VAE speaker C2 with audio/video/text joint attention
 

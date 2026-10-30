@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Isolated AVT-joint hard-window5 A<->V Direct-C2 + CAM++ speaker training with CTC disabled through 10k and linearly warmed to
+# Isolated AVT-joint hard-window13 A<->V Direct-C2 + CAM++ speaker training with CTC disabled through 10k and linearly warmed to
 # 0.03 at 30k. All other settings, including LR=5e-5, match Direct-C2.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$script_dir"
@@ -43,7 +43,7 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-echo "Launching isolated $project_root: AVT joint12 + strict A<->V window5 (radius=2 frames) + CAM++ tail6, LR=5e-5, CTC 0@10k -> 0.03@30k, stop at 200k" >&2
+echo "Launching isolated $project_root: AVT joint12 + strict A<->V window13 (radius=6 frames) + CAM++ tail6, LR=5e-5, CTC 0@10k -> 0.03@30k, stop at 150k" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     OMP_NUM_THREADS=1 \
@@ -58,7 +58,7 @@ exec env \
         --num_machines 1 \
         --dynamo_backend no \
         --num_processes 4 \
-        --main_process_port "${TRAIN_PORT:-29639}" \
+        --main_process_port "${TRAIN_PORT:-29641}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
-        --config-name finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window5_av_va \
+        --config-name finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window13_av_va \
         "$@"

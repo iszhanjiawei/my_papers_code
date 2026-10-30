@@ -1,3 +1,6 @@
+> Historical source-experiment record. For the current thirteen-frame run,
+> see [AVT_HARD_WINDOW13_AV_VA.md](AVT_HARD_WINDOW13_AV_VA.md).
+
 # Strict AVT hard-window5: 150k and 200k EMA evaluation
 
 This report concerns only

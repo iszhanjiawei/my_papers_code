@@ -1,5 +1,5 @@
-> Historical record copied from the hard-window9 source experiment.
-> For this snapshot, use [AVT_HARD_WINDOW5_AV_VA.md](AVT_HARD_WINDOW5_AV_VA.md); these results and commands describe the source run.
+> Historical source-experiment record. For the current thirteen-frame run,
+> see [AVT_HARD_WINDOW13_AV_VA.md](AVT_HARD_WINDOW13_AV_VA.md).
 
 # AVT joint attention with a strict nine-frame A↔V window
 

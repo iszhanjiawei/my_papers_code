@@ -1,3 +1,6 @@
+> Historical source-experiment record. For the current thirteen-frame run,
+> see [AVT_HARD_WINDOW13_AV_VA.md](AVT_HARD_WINDOW13_AV_VA.md).
+
 # AVT joint attention with a strict five-frame A↔V window
 
 This experiment is an independent copy of

@@ -1,6 +1,5 @@
-> Historical record: this document describes the inherited source experiment evaluation.
-> Its checkpoints, commands and results do not represent the strict-window9 run.
-> See [AVT_HARD_WINDOW9_AV_VA.md](AVT_HARD_WINDOW9_AV_VA.md) for the current experiment.
+> Historical source-experiment record. For the current thirteen-frame run,
+> see [AVT_HARD_WINDOW13_AV_VA.md](AVT_HARD_WINDOW13_AV_VA.md).
 
 # AVT Joint：100k / 150k / 200k CelebV-Dub Setting 1 评测
 
