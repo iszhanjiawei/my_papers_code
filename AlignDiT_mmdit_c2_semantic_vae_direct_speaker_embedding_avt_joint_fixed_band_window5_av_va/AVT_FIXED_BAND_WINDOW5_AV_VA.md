@@ -139,3 +139,72 @@ use `CKPT_STEP=150000` for the earlier numbered save. The protocol remains
 Historical copied reports describe their source experiments, not this run.
 Logs, verification reports, events, generated samples and weights are runtime
 artifacts excluded from Git.
+
+## Validation on 2026-10-31
+
+Implementation revision: `b23d124a304a1571df3e21087cc5e83fa8a666da`.
+Independent review confirmed exactly the three configuration differences
+listed above and unchanged hashes for all 247 source files. Excluding the
+intentional experiment guard and inference default-path edits, 108 production
+Python files are byte-identical to the source. The actual parent checkpoint
+and parent-contract hashes match the original pinned values.
+
+All **18 attention tests on GPU 0**, including BF16 forward/backward, and
+**12 configuration/contract tests** pass; Ruff is clean. Tests verify the
+five-position one-sigma core, finite Gaussian prior at ±3, fourfold negative
+bias at the same distance, AV/VA transpose, independent full-joint softmax
+equivalence, padding/CFG behavior, long-sequence geometry, unchanged
+parameters/state/RNG and rejection of mismatched sigma contracts. Padding
+and CFG backward checks cover valid nonempty audio with dropped conditions.
+
+The separate four-GPU run `avt_joint_fixed_band_window5_av_va_smoke3_20261031`
+completed three real updates with the original batch and scheduler settings.
+Losses were **1.347806, 1.453211 and 1.347453**. Total/flow/CTC losses and
+global/speaker gradients were finite. TensorBoard's actual sigma statistics
+were **50 ms** (within FP32 rounding), with zero offset.
+
+At **22:52:23 +08:00**, the saved online and EMA states both passed strict
+reload. The model retained 376,563,842 parameters, 802 state keys and 12+6
+blocks. All 802 online, 804 EMA and 2304 optimizer tensors were finite.
+Training update was 3 and inherited EMA step 70003. The reloaded model
+retained sigma 0.050, the expected finite bias at ±2/±3 and zero band
+parameters/state. All smoke workers exited before the formal launch.
+
+Detailed evidence is stored in ignored runtime reports:
+`logs/independent_configuration_audit.json`,
+`logs/soft_window5_test_verification.json`,
+`logs/smoke_scalar_verification.json` and
+`logs/smoke_checkpoint_verification.json`.
+
+## Formal launch on 2026-10-31 (Asia/Shanghai)
+
+The formal run started at **22:55:12 +08:00**, using an initially absent
+checkpoint directory and no smoke overrides. Strict S2c EMA migration passed
+with EMA step 70000; training uses a fresh optimizer and update counter.
+The actual training sidecar confirms sigma 0.050, offset 0, 12+6 blocks,
+`epochs=200` and `run_until_update=200000`.
+
+- Detached training launcher PID/SID: **3571230**, TTY `?`.
+- Rank 0–3 workers: **3571468, 3571470, 3571471, 3571472**.
+- All workers use this snapshot as their working directory, `PYTHONPATH=src`
+  and physical GPUs **0,1,2,3**.
+- Text log: `logs/train_speaker_avt_joint_fixed_band_window5_av_va.log`.
+- Detached TensorBoard PID/SID: **3552210**, port **6024**, TTY `?`.
+- TensorBoard service logdir: this snapshot's `runs/`; the exact formal run
+  and event directory are listed above.
+
+At **22:56:55 +08:00**, TensorBoard had recorded **46 updates**, latest loss
+**1.407523**, with finite total/flow/CTC losses and global/speaker gradients.
+Sigma remained 50 ms within FP32 rounding and offset remained zero. Between
+checks, recorded steps advanced from 9 to 46 and the single rank-0 event
+file grew from 14,923 to 46,383 bytes. There was no traceback, out-of-memory
+error or worker failure. These are launch-time observations, not later
+training progress.
+
+Both `http://127.0.0.1:6024/` and the internal address
+[http://10.251.30.65:6024/](http://10.251.30.65:6024/) returned HTTP 200,
+and the scalar API served this formal run's actual losses. The IDE client's
+forwarded URL is unavailable to server-side tools, so external client access
+has not been verified. Open the bottom Ports panel, locate **6024**, and
+click its displayed Forwarded Address link. Runtime evidence is saved in
+`logs/formal_training_status.json` and remains excluded from Git.
