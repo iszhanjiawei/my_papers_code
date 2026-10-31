@@ -1,3 +1,5 @@
+> Historical source experiment record copied for provenance. It does not report WavLM TRA training or evaluation. See [the active experiment](WAVLM_TRA_HARD_WINDOW9.md).
+
 # Strict AVT hard-window9: 150k EMA evaluation
 
 Target: this experiment's `model_150000.pt`, with the original strict AV/VA

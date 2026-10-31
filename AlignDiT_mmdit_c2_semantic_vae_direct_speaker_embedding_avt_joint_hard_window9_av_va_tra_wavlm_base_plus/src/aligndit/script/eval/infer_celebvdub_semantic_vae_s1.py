@@ -29,6 +29,11 @@ from aligndit.model.speaker_embedding import (
     speaker_embedding_path,
     validate_speaker_cache_metadata,
 )
+from aligndit.model.wavlm_tra_contract import (
+    CHECKPOINT_CONTRACT_KEY,
+    build_wavlm_tra_contract,
+    validate_wavlm_tra_inference_contract,
+)
 from aligndit.script.eval.semantic_vae_decoder import (
     HOP_LENGTH,
     LATENT_DIM,
@@ -120,6 +125,10 @@ def load_composed_config(config_path: Path):
 def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, device: torch.device) -> CFM_VT:
     config = load_composed_config(config_path)
     validate_fixed_band_contract(config, checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=True)
+    # Reject constant REPA, different schedules and forged sidecars before
+    # allocating the model. This validation never reads training-only caches.
+    validate_wavlm_tra_inference_contract(config, checkpoint_path, checkpoint)
     arch = config.model.arch
     representation = config.model.audio_representation
     required_arch = {
@@ -150,10 +159,12 @@ def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, de
         vocab_char_map=vocab_char_map,
         audio_video_ratio=1,
         ctc_lambda=float(config.model.ctc_lambda),
+        repa_lambda=float(config.model.repa_lambda),
+        repa_schedule=str(config.model.repa_schedule),
+        repa_schedule_eps=float(config.model.repa_schedule_eps),
         odeint_kwargs={"method": "euler"},
     )
 
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=True)
     checkpoint_schema = checkpoint.get("checkpoint_schema_version")
     training_policy = checkpoint.get("training_policy")
     if checkpoint_schema is not None or training_policy is not None:
@@ -169,6 +180,7 @@ def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, de
             "optimizer_state_dict",
             "scheduler_state_dict",
             "update",
+            CHECKPOINT_CONTRACT_KEY,
         }
         if set(checkpoint) != expected_keys:
             raise RuntimeError(
@@ -394,6 +406,7 @@ def run(args: argparse.Namespace) -> None:
         },
         "decoder": decoder_metadata,
         "speaker_embedding": speaker_metadata,
+        "wavlm_tra": build_wavlm_tra_contract(config),
         "elapsed_seconds": time.time() - started_at,
         "generation": {
             "cfg_text": args.cfg_text,
@@ -429,7 +442,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=Path(__file__).parents[2]
-        / "config/finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window9_av_va.yaml",
+        / "config/finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window9_av_va_tra_wavlm_base_plus.yaml",
     )
     parser.add_argument(
         "--cache-root",

@@ -1,3 +1,7 @@
+# Current experiment: hard-window9 AVT + WavLM TRA
+
+See [WAVLM_TRA_HARD_WINDOW9.md](WAVLM_TRA_HARD_WINDOW9.md) for the active configuration, objective and training entry. The upstream README below and copied earlier experiment/evaluation notes are retained for provenance.
+
 # Current experiment
 
 This isolated copy adds a strict **nine-frame** bidirectional audio/video

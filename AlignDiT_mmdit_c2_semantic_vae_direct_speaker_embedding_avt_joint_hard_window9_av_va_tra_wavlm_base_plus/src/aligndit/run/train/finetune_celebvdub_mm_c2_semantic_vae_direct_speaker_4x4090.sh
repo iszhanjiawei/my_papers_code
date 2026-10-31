@@ -43,10 +43,12 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-echo "Launching isolated $project_root: AVT joint12 + strict A<->V window9 (radius=4 frames) + CAM++ tail6, LR=5e-5, CTC 0@10k -> 0.03@30k, stop at 200k" >&2
+echo "Launching isolated $project_root: AVT joint12 + strict A<->V window9 (radius=4 frames) + WavLM TRA (lambda=0.1, w=t) + CAM++ tail6, LR=5e-5, CTC 0@10k -> 0.03@30k, stop at 200k" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
     NCCL_TIMEOUT=1200 \
     NCCL_IB_DISABLE=1 \
     NCCL_P2P_DISABLE=1 \
@@ -58,7 +60,7 @@ exec env \
         --num_machines 1 \
         --dynamo_backend no \
         --num_processes 4 \
-        --main_process_port "${TRAIN_PORT:-29637}" \
+        --main_process_port "${TRAIN_PORT:-29647}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
-        --config-name finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window9_av_va \
+        --config-name finetune_celebvdub_mm_c2_svae_speaker_avt_joint_hard_window9_av_va_tra_wavlm_base_plus \
         "$@"

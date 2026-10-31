@@ -22,9 +22,19 @@ EMA_BOOKKEEPING_KEYS = frozenset({"initted", "step"})
 S2C_IGNORED_PROJECTOR_KEYS = frozenset(
     {f"transformer.projectors.0.model.{layer}.{suffix}" for layer in (0, 1, 3, 4, 6) for suffix in ("bias", "weight")}
 )
+REPA_PROJECTOR_SHAPES = {
+    "transformer.repa_projector.0.weight": (2048, 768),
+    "transformer.repa_projector.0.bias": (2048,),
+    "transformer.repa_projector.2.weight": (2048, 2048),
+    "transformer.repa_projector.2.bias": (2048,),
+    "transformer.repa_projector.4.weight": (768, 2048),
+    "transformer.repa_projector.4.bias": (768,),
+}
 
 
-def _expected_new_target_keys(*, text_joint_attention: bool, has_speaker: bool) -> set[str]:
+def _expected_new_target_keys(
+    *, text_joint_attention: bool, has_speaker: bool, has_repa: bool = False
+) -> set[str]:
     """Exact additions to the fixed 18-layer S2c parent, for either C2 topology.
 
     Keep the original 12 MM / 6 audio staging and all shared condition encoders.
@@ -78,6 +88,8 @@ def _expected_new_target_keys(*, text_joint_attention: bool, has_speaker: bool) 
         keys.update({"transformer.text_joint_proj.weight", "transformer.text_joint_proj.bias"})
     if has_speaker:
         keys.add("transformer.speaker_proj.weight")
+    if has_repa:
+        keys.update(REPA_PROJECTOR_SHAPES)
     return keys
 
 
@@ -242,9 +254,24 @@ def migrate_s2c_ema_into_model(
             or torch.count_nonzero(speaker).item() != 0
         ):
             raise RuntimeError("S2c speaker migration requires a new, zero-initialized Linear(192, 768) weight")
+    # TRA changes only the auxiliary training objective. Permit exactly the
+    # six new WavLM projector tensors, retaining all AVT/hard-window checks.
+    has_repa = getattr(model.transformer, "repa_projector", None) is not None
+    if has_repa:
+        actual_repa_keys = {key for key in target_keys if key.startswith("transformer.repa_projector.")}
+        if actual_repa_keys != set(REPA_PROJECTOR_SHAPES) or any(
+            key not in new_target
+            or tuple(target_state[key].shape) != shape
+            or not torch.isfinite(target_state[key]).all()
+            for key, shape in REPA_PROJECTOR_SHAPES.items()
+        ):
+            raise RuntimeError(
+                "S2c REPA migration requires exactly six new finite tensors for the "
+                "768->2048->2048->768 three-layer projector"
+            )
     text_joint_attention = bool(getattr(model.transformer, "text_joint_attention", False))
     expected_new_keys = _expected_new_target_keys(
-        text_joint_attention=text_joint_attention, has_speaker=has_speaker
+        text_joint_attention=text_joint_attention, has_speaker=has_speaker, has_repa=has_repa
     )
     if set(new_target) != expected_new_keys:
         raise RuntimeError(
@@ -281,10 +308,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        expected_target_count + int(has_speaker),
+        expected_target_count + int(has_speaker) + len(REPA_PROJECTOR_SHAPES) * int(has_repa),
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        expected_new_count + int(has_speaker),
+        expected_new_count + int(has_speaker) + len(REPA_PROJECTOR_SHAPES) * int(has_repa),
     )
     if actual_counts != expected_counts:
         raise RuntimeError(

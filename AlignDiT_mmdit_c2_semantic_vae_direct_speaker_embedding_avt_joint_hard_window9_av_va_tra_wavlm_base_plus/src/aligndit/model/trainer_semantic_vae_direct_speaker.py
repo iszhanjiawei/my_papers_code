@@ -7,9 +7,21 @@ import math
 import torch
 
 from aligndit.model.trainer_semantic_vae_direct_ctc_warmup import SemanticVaeDirectC2CtcWarmupTrainer
+from aligndit.model.wavlm_tra_contract import validate_wavlm_tra_checkpoint_metadata
 
 
 class SemanticVaeDirectC2SpeakerTrainer(SemanticVaeDirectC2CtcWarmupTrainer):
+    def _checkpoint_metadata(self):
+        contract = getattr(self, "wavlm_tra_contract", None)
+        if self.accelerator.unwrap_model(self.model).repa_lambda > 0 and contract is None:
+            raise RuntimeError("WavLM TRA checkpoint must include its training objective contract")
+        return {"wavlm_tra_contract": contract} if contract is not None else {}
+
+    def _validate_checkpoint_metadata(self, checkpoint):
+        contract = getattr(self, "wavlm_tra_contract", None)
+        if contract is not None or "wavlm_tra_contract" in checkpoint:
+            validate_wavlm_tra_checkpoint_metadata(checkpoint, contract)
+
     def _forward_diagnostics(self, loss, loss_components) -> dict[str, float]:
         diagnostics = super()._forward_diagnostics(loss, loss_components)
         total = float(loss.detach())
@@ -20,6 +32,17 @@ class SemanticVaeDirectC2SpeakerTrainer(SemanticVaeDirectC2CtcWarmupTrainer):
         weighted_ctc = float(loss_components.get("ctc_loss", 0.0)) * self.current_ctc_lambda
         diagnostics["ctc_weighted_loss"] = weighted_ctc
         diagnostics["ctc_fraction_of_total"] = weighted_ctc / total if total > 0 else 0.0
+        model = self.accelerator.unwrap_model(self.model)
+        if model.repa_lambda > 0:
+            projector = model.transformer.repa_projector
+            diagnostics["repa_projector_weight_norm"] = math.sqrt(
+                sum(layer.weight.detach().float().square().sum().item() for layer in projector if hasattr(layer, "weight"))
+            )
+            # repa_loss already contains each sample's diffusion-time weight.
+            weighted_repa = float(loss_components.get("repa_loss", 0.0)) * model.repa_lambda
+            diagnostics["repa_lambda"] = model.repa_lambda
+            diagnostics["repa_weighted_loss"] = weighted_repa
+            diagnostics["repa_fraction_of_total"] = weighted_repa / total if total > 0 else 0.0
         return diagnostics
 
     def _clip_gradients(self) -> float | None:
@@ -32,6 +55,17 @@ class SemanticVaeDirectC2SpeakerTrainer(SemanticVaeDirectC2CtcWarmupTrainer):
             speaker_grad = projection.weight.grad.detach().float().norm().item()
             if self.is_main and self.logger == "tensorboard":
                 self.writer.add_scalar("speaker_proj_grad_norm", speaker_grad, self.completed_updates + 1)
+        model = self.accelerator.unwrap_model(self.model)
+        if model.repa_lambda > 0:
+            repa_squared_norm = sum(
+                layer.weight.grad.detach().float().square().sum().item()
+                for layer in model.transformer.repa_projector
+                if hasattr(layer, "weight") and layer.weight.grad is not None
+            )
+            if self.is_main and self.logger == "tensorboard":
+                self.writer.add_scalar(
+                    "repa_projector_grad_norm", math.sqrt(repa_squared_norm), self.completed_updates + 1
+                )
         norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
         if not torch.isfinite(norm):
             raise FloatingPointError(f"Non-finite pre-clipping gradient norm: {norm}")

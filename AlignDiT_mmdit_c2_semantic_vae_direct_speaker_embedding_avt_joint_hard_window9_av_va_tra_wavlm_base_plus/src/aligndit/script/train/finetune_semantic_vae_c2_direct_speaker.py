@@ -16,10 +16,12 @@ from aligndit.model.fixed_temporal_band_contract import (
     validate_fixed_band_training_config,
 )
 from aligndit.model.modules import PrecomputedAudioRepresentation
+from aligndit.model.repa import validate_repa_cache_metadata
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
 from aligndit.model.trainer_semantic_vae_fixed_band import SemanticVaeFixedBandTrainer
+from aligndit.model.wavlm_tra_contract import build_wavlm_tra_contract
 from f5_tts.model.utils import get_tokenizer
 
 
@@ -45,6 +47,26 @@ def main(model_cfg):
         expected_dim=speaker_dim,
         model_id=model_cfg.datasets.speaker_embedding_model_id,
         checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
+    )
+
+    repa_contract = build_wavlm_tra_contract(model_cfg)
+    repa_lambda = float(model_cfg.model.repa_lambda)
+    if repa_contract is None or repa_lambda <= 0:
+        raise ValueError("Select this snapshot's dedicated WavLM TRA configuration")
+    marker = "avt_joint_hard_window9_av_va_tra_wavlm_base_plus"
+    if any(marker not in str(value) for value in (model_cfg.model.name, model_cfg.ckpts.save_dir)):
+        raise ValueError("WavLM TRA requires its own model name and checkpoint directory")
+    if not temporal_band_enabled or model_arc.temporal_band_fixed_window_radius_frames != 4:
+        raise ValueError("WavLM TRA retains the strict nine-frame AV/VA window")
+    repa_metadata = validate_repa_cache_metadata(
+        model_cfg.datasets.repa_feature_cache_dir,
+        expected_manifest_sha256=model_cfg.datasets.expected_manifest_sha256,
+        expected_count=int(model_cfg.datasets.expected_record_count),
+        expected_dim=int(model_cfg.datasets.repa_feature_dim),
+        model_id=model_cfg.datasets.repa_model_id,
+        model_revision=model_cfg.datasets.repa_model_revision,
+        checkpoint_sha256=model_cfg.datasets.repa_checkpoint_sha256,
+        teacher_layer=int(model_cfg.datasets.repa_teacher_layer),
     )
 
     if float(model_cfg.optim.learning_rate) != 5e-5:
@@ -73,6 +95,9 @@ def main(model_cfg):
         vocab_char_map=vocab_char_map,
         audio_video_ratio=model_arc.audio_video_ratio,
         ctc_lambda=model_cfg.model.ctc_lambda,
+        repa_lambda=repa_lambda,
+        repa_schedule=model_cfg.model.repa_schedule,
+        repa_schedule_eps=float(model_cfg.model.repa_schedule_eps),
     )
 
     trainer_cls = SemanticVaeFixedBandTrainer if temporal_band_enabled else SemanticVaeDirectC2SpeakerTrainer
@@ -110,6 +135,7 @@ def main(model_cfg):
         ctc_warmup_start=model_cfg.model.ctc_warmup_start,
         ctc_warmup_end=model_cfg.model.ctc_warmup_end,
     )
+    trainer.wavlm_tra_contract = repa_contract
     trainer.run_until_update = int(model_cfg.optim.run_until_update)
     set_seed(int(model_cfg.seed) + trainer.accelerator.process_index)
     if trainer.is_main:
@@ -120,6 +146,8 @@ def main(model_cfg):
             "project_dir": str(Path.cwd()),
             "config": OmegaConf.to_container(model_cfg, resolve=True),
             "speaker_cache_metadata": speaker_metadata,
+            "repa_cache_metadata": repa_metadata,
+            "repa": repa_contract,
             "initialization": "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter",
             "speaker_condition": "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17",
             "seed": int(model_cfg.seed),
@@ -149,6 +177,12 @@ def main(model_cfg):
         speaker_embedding_dim=speaker_dim,
         speaker_embedding_model_id=model_cfg.datasets.speaker_embedding_model_id,
         speaker_embedding_checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
+        repa_feature_cache_dir=model_cfg.datasets.repa_feature_cache_dir,
+        repa_feature_dim=int(model_cfg.datasets.repa_feature_dim),
+        repa_model_id=model_cfg.datasets.repa_model_id,
+        repa_model_revision=model_cfg.datasets.repa_model_revision,
+        repa_checkpoint_sha256=model_cfg.datasets.repa_checkpoint_sha256,
+        repa_teacher_layer=int(model_cfg.datasets.repa_teacher_layer),
     )
     if trainer.is_main:
         print(
@@ -156,7 +190,9 @@ def main(model_cfg):
             f"records={len(train_dataset)}, CTC feasible={train_dataset.ctc_feasible_count}, "
             f"CTC zero_infinity-only={train_dataset.ctc_infeasible_count}; "
             f"ctc_lambda=0 through update {model_cfg.model.ctc_warmup_start}, "
-            f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}",
+            f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}; "
+            f"WavLM TRA lambda={repa_lambda}, schedule={model_cfg.model.repa_schedule}, "
+            "clean coefficient=t, noise coefficient=1-t",
             flush=True,
         )
     trainer.finetune(

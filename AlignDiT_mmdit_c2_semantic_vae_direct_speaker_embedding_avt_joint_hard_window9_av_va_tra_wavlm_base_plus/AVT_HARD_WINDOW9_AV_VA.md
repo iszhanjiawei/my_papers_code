@@ -1,3 +1,5 @@
+> Historical source experiment record copied for provenance. It does not report WavLM TRA training or evaluation. See [the active experiment](WAVLM_TRA_HARD_WINDOW9.md).
+
 # AVT joint attention with a strict nine-frame A↔V window
 
 This isolated snapshot copies

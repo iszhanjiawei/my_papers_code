@@ -537,6 +537,9 @@ class DiT_VT_MMDiT(DiT):
         temporal_band_fixed_sigma_seconds=0.100,
         temporal_band_bidirectional=False,
         temporal_band_fixed_window_radius_frames=None,
+        repa_layer=None,
+        repa_target_dim=None,
+        repa_projector_dim=None,
     ):
         if type(temporal_band_enabled) is not bool or type(temporal_band_bidirectional) is not bool:
             raise TypeError("temporal_band_enabled and temporal_band_bidirectional must be bools")
@@ -608,6 +611,23 @@ class DiT_VT_MMDiT(DiT):
                     f"n_text_layers <= speaker_condition_start_layer < depth, got "
                     f"{self.n_text_layers} <= {self.speaker_condition_start_layer} < {depth}"
                 )
+        self.repa_layer = repa_layer
+        self.repa_target_dim = repa_target_dim
+        if self.repa_layer is None:
+            if self.repa_target_dim is not None or repa_projector_dim is not None:
+                raise ValueError("repa_target_dim/repa_projector_dim require repa_layer")
+        else:
+            if type(self.repa_layer) is not int or not 0 <= self.repa_layer < self.n_mm_layers:
+                raise ValueError(
+                    "repa_layer must be a zero-based MM-DiT layer index in "
+                    f"[0, {self.n_mm_layers}), got {self.repa_layer!r}"
+                )
+            if type(self.repa_target_dim) is not int or self.repa_target_dim <= 0:
+                raise ValueError(f"repa_target_dim must be a positive integer, got {self.repa_target_dim!r}")
+            if repa_projector_dim is None:
+                repa_projector_dim = self.dim * 2
+            if type(repa_projector_dim) is not int or repa_projector_dim <= 0:
+                raise ValueError(f"repa_projector_dim must be a positive integer, got {repa_projector_dim!r}")
         try:
             ctc_layer_indices = tuple(layer_indices_ctc)
         except TypeError as error:
@@ -724,6 +744,20 @@ class DiT_VT_MMDiT(DiT):
             )
             if abs(self.temporal_band.audio_fps / self.temporal_band.video_fps - self.audio_video_ratio) > 1e-6:
                 raise ValueError("temporal-band audio/video frame-rate ratio must match audio_video_ratio")
+
+        # Build the auxiliary head last so a matched seed preserves all inherited
+        # weights, including the AVT attention streams. It is unused at inference.
+        self.repa_projector = (
+            nn.Sequential(
+                nn.Linear(self.dim, repa_projector_dim),
+                nn.SiLU(),
+                nn.Linear(repa_projector_dim, repa_projector_dim),
+                nn.SiLU(),
+                nn.Linear(repa_projector_dim, self.repa_target_dim),
+            )
+            if self.repa_layer is not None
+            else None
+        )
 
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
@@ -850,7 +884,12 @@ class DiT_VT_MMDiT(DiT):
         drop_speaker: bool | None = None,
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
+        return_repa: bool = False,
     ):
+        if return_repa and self.repa_projector is None:
+            raise RuntimeError("return_repa=True requires a configured REPA projector")
+        if return_repa and (cfg_infer or cache):
+            raise ValueError("REPA activations are training-only and cannot be requested with cfg_infer/cache")
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
         if generation_mask is None:
@@ -1013,6 +1052,7 @@ class DiT_VT_MMDiT(DiT):
             residual = x
 
         intermediates_ctc = {}
+        repa_projection = None
         for layer_i, block in enumerate(self.transformer_blocks):
             is_mm = isinstance(block, (MMDiTBlock_VT, MMDiTBlock_AVT))
             has_tail_text = isinstance(block, AudioTextDiTBlock)
@@ -1107,6 +1147,8 @@ class DiT_VT_MMDiT(DiT):
                 projector = self.projectors_ctc[self.layer_map_ctc[layer_i]]
                 z_tilde, z_lens = projector(x, lens)
                 intermediates_ctc[layer_i] = {"z_tilde": z_tilde, "z_lens": z_lens}
+            if return_repa and layer_i == self.repa_layer:
+                repa_projection = self.repa_projector(x)
 
         if self.long_skip_connection is not None:
             x = self.long_skip_connection(torch.cat((x, residual), dim=-1))
@@ -1114,4 +1156,8 @@ class DiT_VT_MMDiT(DiT):
         x = self.norm_out(x, t)
         output = self.proj_out(x)
 
+        if return_repa:
+            if repa_projection is None:
+                raise RuntimeError(f"failed to collect REPA activation from layer {self.repa_layer}")
+            return output, intermediates_ctc, repa_projection
         return output, intermediates_ctc

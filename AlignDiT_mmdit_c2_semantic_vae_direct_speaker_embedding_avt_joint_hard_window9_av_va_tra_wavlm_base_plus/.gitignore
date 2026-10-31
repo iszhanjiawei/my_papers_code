@@ -1,6 +1,6 @@
 # Customed
 .vscode/
-tests/
+# Keep experiment regression tests; Python caches remain ignored.
 runs/
 data/
 ckpts/
