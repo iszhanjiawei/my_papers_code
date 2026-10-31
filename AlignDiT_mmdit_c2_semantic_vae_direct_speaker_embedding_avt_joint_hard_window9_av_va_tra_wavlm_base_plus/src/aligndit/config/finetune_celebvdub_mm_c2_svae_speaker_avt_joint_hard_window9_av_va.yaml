@@ -1,0 +1,14 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va
+  - _self_
+
+# Keep the complete AVT recipe and replace the Gaussian A<->V prior with a
+# strict radius-four mask: nine keys at interior aligned 40-Hz positions.
+# The inherited sigma is retained for compatibility but unused in hard mode.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_avt_joint_hard_window9_av_va_ctc003_warmup10k30k
+  arch:
+    temporal_band_fixed_window_radius_frames: 4
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_hard_window9_av_va_ctc003_warmup10k30k_40hz_CelebVDub_char
