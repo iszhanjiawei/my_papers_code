@@ -32,7 +32,9 @@ from f5_tts.model.modules import DiTBlock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 SOURCE_ROOT = PROJECT_ROOT.parent / "AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint"
-CONFIG_NAME = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va"
+SOURCE_BAND_ROOT = PROJECT_ROOT.parent / "AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_av_va"
+CONFIG_NAME = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window13_av_va"
+SOURCE_BAND_CONFIG = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va"
 SOURCE_CONFIG = "finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup"
 BAND_ARCH = {
     "temporal_band_enabled": True,
@@ -40,7 +42,7 @@ BAND_ARCH = {
     "temporal_band_audio_fps": 40.0,
     "temporal_band_video_fps": 40.0,
     "temporal_band_fixed_offset_seconds": 0.0,
-    "temporal_band_fixed_sigma_seconds": 0.1,
+    "temporal_band_fixed_sigma_seconds": 0.15,
     "temporal_band_bidirectional": True,
 }
 
@@ -184,6 +186,22 @@ class FixedAVTAttentionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "temporal_band_bias"):
             self.block.joint_attn(*self.streams, temporal_band_bias=torch.zeros(2, 5, 7))
 
+    def test_window13_means_six_frame_sigma_with_soft_tails_and_transpose(self):
+        sigma_seconds = BAND_ARCH["temporal_band_fixed_sigma_seconds"]
+        self.assertEqual(sigma_seconds * 40.0, 6.0)
+        band = FixedTemporalBand(dim=32, audio_fps=40.0, video_fps=40.0,
+                                 offset_seconds=0.0, sigma_seconds=sigma_seconds)
+        streams = tuple(torch.randn(2, length, 32) for length in (17, 17, 4))
+        bias = band.bias(*band(streams[1], audio_len=17), video_len=17)
+        torch.testing.assert_close(bias[:, 8, [2, 14]], torch.full((2, 2), -0.5), atol=2e-7, rtol=0)
+        torch.testing.assert_close(bias[:, 8, 8], torch.zeros(2), atol=0, rtol=0)
+        self.assertTrue(torch.isfinite(bias[:, 8, [0, 1, 15, 16]]).all())
+        self.assertTrue((bias[:, 8, [0, 1, 15, 16]].exp() > 0).all())
+        self.assertTrue((bias[:, 8, [0, 1, 15, 16]] < -0.5).all())
+        _, observed, _ = captured_attention(self.block, streams, temporal_band_bias=bias)
+        torch.testing.assert_close(observed[:, :, :17, 17:34], bias[:, None].expand(-1, 4, -1, -1))
+        torch.testing.assert_close(observed[:, :, 17:34, :17], bias.transpose(-1, -2)[:, None].expand(-1, 4, -1, -1))
+
 
 class FixedAVTBackboneTests(unittest.TestCase):
     def setUp(self):
@@ -243,7 +261,8 @@ class FixedAVTBackboneTests(unittest.TestCase):
                 repetitions = 3 if flags == {"cfg_infer": True} else 2 if flags.get("cfg_infer") else 1
                 self.assertEqual(offset.shape, (2 * repetitions, 12))
                 torch.testing.assert_close(offset, torch.zeros_like(offset), atol=0, rtol=0)
-                torch.testing.assert_close(sigma, torch.full_like(sigma, 0.1), atol=0, rtol=0)
+                torch.testing.assert_close(sigma, torch.full_like(sigma, BAND_ARCH["temporal_band_fixed_sigma_seconds"]),
+                                           atol=0, rtol=0)
                 torch.testing.assert_close(model.last_temporal_band_valid_mask, inputs["mask"].repeat(repetitions, 1))
                 self.assertFalse(offset.requires_grad or sigma.requires_grad)
         # Even non-finite feature content cannot change a content-free prior.
@@ -327,13 +346,13 @@ class FixedAVTBackboneTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(TypeError):
                 DiT_VT_MMDiT(**{**BASE_ARCH, **BAND_ARCH, key: "false"})
 
-    def test_production_config_only_adds_band_and_keeps_twelve_plus_six(self):
+    def test_production_config_only_widens_sigma_and_keeps_twelve_plus_six(self):
         from hydra import compose, initialize_config_dir
         from omegaconf import OmegaConf
 
         def config_at(root, name):
             with initialize_config_dir(config_dir=str(root / "src/aligndit/config"), version_base=None):
-                return OmegaConf.to_container(compose(config_name=name), resolve=False)
+                return OmegaConf.to_container(compose(config_name=name), resolve=True)
 
         target = config_at(PROJECT_ROOT, CONFIG_NAME)
         base = config_at(PROJECT_ROOT, SOURCE_CONFIG)
@@ -344,6 +363,12 @@ class FixedAVTBackboneTests(unittest.TestCase):
         self.assertEqual(target, expected)
         if SOURCE_ROOT.is_dir():
             self.assertEqual(base, config_at(SOURCE_ROOT, SOURCE_CONFIG))
+        source_band = config_at(SOURCE_BAND_ROOT, SOURCE_BAND_CONFIG)
+        self.assertEqual(source_band["model"]["arch"]["temporal_band_fixed_sigma_seconds"], 0.1)
+        source_band["model"]["arch"]["temporal_band_fixed_sigma_seconds"] = 0.15
+        source_band["model"]["name"] = target["model"]["name"]
+        source_band["ckpts"]["save_dir"] = target["ckpts"]["save_dir"]
+        self.assertEqual(target, source_band)
         arch = target["model"]["arch"]
         self.assertEqual((arch["depth"], arch["n_mm_layers"], arch["n_text_layers"]), (18, 12, 12))
         self.assertEqual(arch["speaker_condition_start_layer"], 12)

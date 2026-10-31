@@ -1,3 +1,6 @@
+> Historical source experiment (sigma=100 ms). For this copy, use
+> [AVT_FIXED_BAND_WINDOW13_AV_VA.md](AVT_FIXED_BAND_WINDOW13_AV_VA.md).
+
 # AVT joint attention with fixed bidirectional audio/video bands
 
 This isolated source copy starts from

@@ -1,16 +1,16 @@
-# Current experiment
+# Current experiment: 13-frame Gaussian soft core
 
-This isolated copy adds the fixed bidirectional audio/video Gaussian attention
-prior to the existing audio/video/text joint-attention model. The prior uses
-zero offset and sigma = 0.100 seconds; text participates in the same joint
-softmax, with no temporal penalty on text edges. The 12 AVT blocks, 6 audio-only
-blocks and complete AVT training recipe are retained.
-See [AVT_FIXED_BAND_AV_VA.md](AVT_FIXED_BAND_AV_VA.md) for the current
-configuration, initialization, training, TensorBoard and inference commands.
+This independent copy of `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_av_va`
+changes only the effective Gaussian sigma from 0.100 to 0.150 seconds. At the
+unchanged 40-Hz feature rate, +/-1 sigma now spans +/-6 frames (13 samples)
+instead of +/-4 frames (9 samples). Gaussian tails remain; this is not a hard window.
 
-[AVT_JOINT_ATTENTION.md](AVT_JOINT_ATTENTION.md) and the inherited evaluation
-reports describe the source AVT experiment; their checkpoints and results do
-not belong to this new fixed-band run.
+The 12 AVT joint blocks, 6 audio-only blocks, model weights/layout, offset=0,
+AV/VA directions, data, S2c 70k EMA initialization and entire training recipe
+are unchanged. Experiment/checkpoint/log identities are isolated.
+See [AVT_FIXED_BAND_WINDOW13_AV_VA.md](AVT_FIXED_BAND_WINDOW13_AV_VA.md) for the
+current config, commands and checkpoint paths. Other inherited reports describe
+prior experiments and are not validation or evaluation results for this run.
 
 # AlignDiT
 

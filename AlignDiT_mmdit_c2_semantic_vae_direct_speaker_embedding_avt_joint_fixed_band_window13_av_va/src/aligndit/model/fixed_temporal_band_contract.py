@@ -18,7 +18,7 @@ FIXED_BAND_KEYS = (
     "temporal_band_video_fps", "temporal_band_fixed_offset_seconds",
     "temporal_band_fixed_sigma_seconds", "temporal_band_bidirectional",
 )
-EXPERIMENT_MARKER = "avt_joint_fixed_band_av_va"
+EXPERIMENT_MARKER = "avt_joint_fixed_band_window13_av_va"
 
 
 def _validate_arch(arch) -> bool:
