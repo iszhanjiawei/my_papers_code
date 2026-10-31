@@ -81,3 +81,16 @@ Verified on 2026-10-31 before the production launch:
 - New/supporting Python files pass Ruff and shell scripts pass syntax checks. Existing backbone/CFM/base trainer lint diagnostics are unchanged (no new diagnostics). Original hard9 source hashes remain unchanged for all 254 copied files.
 
 Runtime evidence: `logs/repa_cache_audit.json`, `logs/tra_recipe_validation.json`, `logs/smoke_checkpoint_audit.json`, `logs/smoke_train_3updates_20261031.log`, `logs/smoke_resume_3updates_20261031.log`, and `logs/test_*.log`. These artifacts are intentionally excluded from Git. No TRA quality metric has been measured yet.
+
+
+## Production launch receipt — 2026-10-31
+
+Checked at `2026-10-31T17:59:26.978365+08:00`. Started `Sat Oct 31 17:57:12 2026` (server timezone Asia/Shanghai), independent PID/SID `23586`, TTY `?`; four workers `23669, 23671, 23672, 23675` use physical GPUs 0–3. Implementation commit: `9f4762e522640460764a95577572982f1d3796e0`.
+
+At this check the live log reached update **95** and TensorBoard loss reached update **95**. All 26 scalar series are finite, projector gradients are nonzero, and the strict-window diagnostic remains 9. This is a timestamped launch receipt, not a future progress estimate; current state is in `logs/train_wavlm_tra_20261031.log`.
+
+Run name: `AlignDiT_MMDiT_c2_svae_speaker_avt_joint_hard_window9_av_va_tra_wavlm_base_plus_ctc003_warmup10k30k_semantic_vae_40hz_CelebVDub_char`.
+
+TensorBoard logdir: `/zjw524/projects/alignDiT_idea6/my_papers_code/AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_hard_window9_av_va_tra_wavlm_base_plus/runs/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_hard_window9_av_va_tra_wavlm_base_plus_ctc003_warmup10k30k_semantic_vae_40hz_CelebVDub_char`. Service PID **12138**, port **6031**, verified HTTP 200 and live loss/scalar data at [the current internal address](http://10.248.62.197:6031/). In the IDE bottom panel, open **Ports**, find **6031**, then click that row's **Forwarded Address**. The UI forwarding URL is not exposed to the available tools; no public forwarding URL is claimed here.
+
+The smoke run has its separate event directory ending `smoke3_20261031_semantic_vae_40hz_CelebVDub_char`, TensorBoard PID13714/port6032; production weights and events are separate. Runtime launch details are in `logs/formal_training_status.json`.
