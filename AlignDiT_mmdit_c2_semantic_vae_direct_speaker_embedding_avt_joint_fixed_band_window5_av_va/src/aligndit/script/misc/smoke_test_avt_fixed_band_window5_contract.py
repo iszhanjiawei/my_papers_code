@@ -1,4 +1,4 @@
-"""CPU checks for fixed-band experiment identity; no dataset or GPU is needed."""
+"""CPU checks for five-frame Gaussian fixed-band experiment identity; no dataset or GPU is needed."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class FixedBandContractTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.config = OmegaConf.create({
             "model": {
-                "name": "avt_joint_fixed_band_av_va_test",
+                "name": "avt_joint_fixed_band_window5_av_va_test",
                 "audio_representation": {"frame_rate": 40.0},
                 "arch": {
                     "depth": 18, "n_mm_layers": 12, "n_text_layers": 12,
@@ -36,17 +36,17 @@ class FixedBandContractTests(unittest.TestCase):
                     "temporal_band_enabled": True, "temporal_band_mode": "fixed",
                     "temporal_band_audio_fps": 40.0, "temporal_band_video_fps": 40.0,
                     "temporal_band_fixed_offset_seconds": 0.0,
-                    "temporal_band_fixed_sigma_seconds": 0.100,
+                    "temporal_band_fixed_sigma_seconds": 0.050,
                     "temporal_band_bidirectional": True,
                 },
             },
-            "ckpts": {"save_dir": str(self.root / "avt_joint_fixed_band_av_va_test")},
+            "ckpts": {"save_dir": str(self.root / "avt_joint_fixed_band_window5_av_va_test")},
         })
         self.save_dir = Path(self.config.ckpts.save_dir)
         self.save_dir.mkdir()
         self.checkpoint = self.save_dir / "model_150000.pt"
         self.sidecar = self.save_dir / "speaker_training_contract.json"
-        self.band = FixedTemporalBand(dim=64)
+        self.band = FixedTemporalBand(dim=64, sigma_seconds=0.050)
         self.contract = {
             "config": OmegaConf.to_container(self.config, resolve=True),
             "temporal_band": make_fixed_band_contract(self.config.model.arch, self.band),
@@ -73,6 +73,7 @@ class FixedBandContractTests(unittest.TestCase):
             ("temporal_band_audio_fps", 25.0), ("temporal_band_video_fps", 25.0),
             ("temporal_band_fixed_offset_seconds", float("nan")),
             ("temporal_band_fixed_sigma_seconds", 0.0),
+            ("temporal_band_fixed_sigma_seconds", 0.100),
             ("temporal_band_fixed_sigma_seconds", float("inf")),
         )
         for key, value in cases:
@@ -99,13 +100,22 @@ class FixedBandContractTests(unittest.TestCase):
             validate_fixed_band_contract(self.config, self.checkpoint)
 
     def test_inference_rejects_every_changed_band_parameter(self):
-        changed_values = (False, "adaptive", 25.0, 25.0, 0.025, 0.050, False)
+        changed_values = (False, "adaptive", 25.0, 25.0, 0.025, 0.100, False)
         for key, value in zip(FIXED_BAND_KEYS, changed_values):
             contract = copy.deepcopy(self.contract)
             contract["temporal_band"]["parameters"][key] = value
             self.write_contract(contract)
             with self.subTest(key=key), self.assertRaises(RuntimeError):
                 validate_fixed_band_contract(self.config, self.checkpoint)
+
+    def test_inference_rejects_matching_old_nine_frame_sidecar_and_nested_config(self):
+        contract = copy.deepcopy(self.contract)
+        contract["config"]["model"]["name"] = "avt_joint_fixed_band_av_va_test"
+        contract["config"]["model"]["arch"]["temporal_band_fixed_sigma_seconds"] = 0.100
+        contract["temporal_band"]["parameters"]["temporal_band_fixed_sigma_seconds"] = 0.100
+        self.write_contract(contract)
+        with self.assertRaisesRegex(RuntimeError, "temporal_band_fixed_sigma_seconds"):
+            validate_fixed_band_contract(self.config, self.checkpoint)
 
     def test_inference_rejects_legacy_av_only_and_nonzero_parameter_count(self):
         for alteration in ("legacy", "count", "bool_count"):
@@ -156,7 +166,7 @@ class FixedBandContractTests(unittest.TestCase):
     def test_composed_experiment_config_is_accepted(self):
         config_dir = Path(__file__).resolve().parents[2] / "config"
         with initialize_config_dir(version_base="1.3", config_dir=str(config_dir)):
-            config = compose(config_name="finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va")
+            config = compose(config_name="finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window5_av_va")
         config.ckpts.save_dir = str(self.save_dir)
         self.assertTrue(validate_fixed_band_training_config(config))
         self.assertTrue(config.model.arch.text_joint_attention)

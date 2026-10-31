@@ -1,4 +1,4 @@
-"""Data-free contracts for AVT joint attention with the fixed AV/VA prior.
+"""Data-free contracts for the five-frame Gaussian core in AVT joint attention.
 
 Run from this snapshot with PYTHONPATH=src; pass --cuda for BF16 backward.
 An independent dense softmax reference checks the complete [A,V,T] matrix.
@@ -32,15 +32,16 @@ from f5_tts.model.modules import DiTBlock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 SOURCE_ROOT = PROJECT_ROOT.parent / "AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint"
-CONFIG_NAME = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va"
-SOURCE_CONFIG = "finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup"
+SOFT_SOURCE_ROOT = PROJECT_ROOT.parent / "AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_av_va"
+CONFIG_NAME = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window5_av_va"
+SOURCE_CONFIG = "finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va"
 BAND_ARCH = {
     "temporal_band_enabled": True,
     "temporal_band_mode": "fixed",
     "temporal_band_audio_fps": 40.0,
     "temporal_band_video_fps": 40.0,
     "temporal_band_fixed_offset_seconds": 0.0,
-    "temporal_band_fixed_sigma_seconds": 0.1,
+    "temporal_band_fixed_sigma_seconds": 0.05,
     "temporal_band_bidirectional": True,
 }
 
@@ -112,6 +113,76 @@ class FixedAVTAttentionTests(unittest.TestCase):
         self.band = FixedTemporalBand(dim=32, audio_fps=40, video_fps=25,
                                       offset_seconds=0.05, sigma_seconds=0.08)
         self.bias = self.band.bias(*self.band(self.streams[1], audio_len=7), video_len=5)
+
+    def test_five_frame_gaussian_core_is_soft_and_four_times_original_penalty(self):
+        # One sigma is two aligned 40-Hz frames; it is not a support cutoff.
+        video = torch.randn(2, 17, 32)
+        bands = [FixedTemporalBand(dim=32, sigma_seconds=sigma) for sigma in (0.05, 0.1)]
+        narrow, original = [band.bias(*band(video, audio_len=17), video_len=17) for band in bands]
+        distance_frames = torch.arange(17)[None, :] - torch.arange(17)[:, None]
+        expected = -0.5 * (distance_frames.float() / 2).square()
+        torch.testing.assert_close(narrow, expected[None].expand(2, -1, -1), atol=4e-6, rtol=1e-6)
+        torch.testing.assert_close(narrow, 4 * original, atol=0, rtol=0)
+        self.assertTrue(torch.isfinite(narrow).all())
+        for center in range(2, 15):
+            core = torch.nonzero(narrow[0, center] >= -0.500002).flatten().tolist()
+            self.assertEqual(core, list(range(center - 2, center + 3)))
+        for displacement in (-3, -2, 0, 2, 3):
+            value = narrow[0, 8, 8 + displacement].item()
+            self.assertAlmostEqual(value, -0.5 * (displacement / 2) ** 2, places=5)
+            self.assertGreater(math.exp(value), 0)
+        # A real full-joint SDPA call keeps the finite outside-core AV/VA bias.
+        streams = tuple(torch.randn(2, length, 32) for length in (17, 17, 4))
+        actual, observed, calls = captured_attention(self.block, streams, temporal_band_bias=narrow)
+        reference, prior = dense_reference(self.block, streams, (None, None, None), narrow)
+        torch.testing.assert_close(observed, prior, atol=0, rtol=0)
+        self.assertEqual([(q, k) for q, k, _ in calls], [(17, 38), (17, 38), (4, 38)])
+        self.assertAlmostEqual(observed[0, 0, 8, 17 + 11].item(), -1.125, places=5)
+        self.assertAlmostEqual(observed[0, 0, 17 + 11, 8].item(), -1.125, places=5)
+        for output, expected_output in zip(actual, reference):
+            torch.testing.assert_close(output, expected_output, atol=3e-7, rtol=4e-6)
+
+    def test_long_sequence_geometry_stays_finite_without_bf16_distance_rounding(self):
+        length = 3073
+        band = FixedTemporalBand(dim=32, sigma_seconds=0.05)
+        video = torch.zeros(1, length, 32)
+        bias = band.bias(*band(video, audio_len=length), video_len=length)
+        self.assertEqual(bias.dtype, torch.float32)
+        self.assertTrue(torch.isfinite(bias).all())
+        torch.testing.assert_close(bias.diagonal(dim1=-2, dim2=-1), torch.zeros(1, length), atol=0, rtol=0)
+        for displacement in (2, 3, -2, -3):
+            values = bias.diagonal(offset=displacement, dim1=-2, dim2=-1)
+            expected = torch.full_like(values, -0.5 * (displacement / 2) ** 2)
+            torch.testing.assert_close(values, expected, atol=0.0003, rtol=0)
+
+    def _all_conditioning_masked_backward(self, device):
+        block = self.block.to(device)
+        streams = tuple(stream.to(device).detach().requires_grad_() for stream in self.streams)
+        # Real CFG branches retain nonempty audio even when all conditions drop.
+        masks = (self.masks[0].to(device),) + tuple(
+            torch.zeros(stream.shape[:2], dtype=torch.bool, device=device) for stream in streams[1:])
+        with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
+            outputs = block.joint_attn(*streams, mask=masks[0], v_mask=masks[1], text_mask=masks[2],
+                                       temporal_band_bias=self.bias.to(device))
+            loss = sum(output.float().square().mean() for output in outputs)
+        self.assertTrue(all(torch.isfinite(output).all() for output in outputs))
+        self.assertEqual(torch.count_nonzero(outputs[1]).item(), 0)
+        self.assertEqual(torch.count_nonzero(outputs[2]).item(), 0)
+        self.assertGreater(loss.item(), 0)
+        loss.backward()
+        for stream in streams:
+            self.assertTrue(torch.isfinite(stream.grad).all())
+        for name, parameter in block.named_parameters():
+            if parameter.grad is not None:
+                self.assertTrue(torch.isfinite(parameter.grad).all(), name)
+
+    def test_all_conditioning_masked_has_finite_cpu_backward(self):
+        self._all_conditioning_masked_backward(torch.device("cpu"))
+
+    @unittest.skipUnless(RUN_CUDA, "pass --cuda for optional masked-conditioning CUDA BF16 regression")
+    def test_all_conditioning_masked_has_finite_cuda_bfloat16_backward(self):
+        self.assertTrue(torch.cuda.is_available(), "--cuda requested but CUDA is unavailable")
+        self._all_conditioning_masked_backward(torch.device("cuda"))
 
     def test_dense_softmax_reference_unequal_lengths_padding_train_eval(self):
         # Physical geometry is calculated independently of FixedTemporalBand.
@@ -191,7 +262,8 @@ class FixedAVTBackboneTests(unittest.TestCase):
 
     def test_enabled_geometry_adds_no_parameters_state_or_rng(self):
         models, rng = [], []
-        for config in ({}, {"temporal_band_enabled": False}, BAND_ARCH):
+        for config in ({}, {"temporal_band_enabled": False}, BAND_ARCH,
+                       {**BAND_ARCH, "temporal_band_fixed_sigma_seconds": 0.1}):
             torch.manual_seed(83)
             models.append(DiT_VT_MMDiT(**{**BASE_ARCH, **config}))
             rng.append(torch.get_rng_state().clone())
@@ -243,7 +315,7 @@ class FixedAVTBackboneTests(unittest.TestCase):
                 repetitions = 3 if flags == {"cfg_infer": True} else 2 if flags.get("cfg_infer") else 1
                 self.assertEqual(offset.shape, (2 * repetitions, 12))
                 torch.testing.assert_close(offset, torch.zeros_like(offset), atol=0, rtol=0)
-                torch.testing.assert_close(sigma, torch.full_like(sigma, 0.1), atol=0, rtol=0)
+                torch.testing.assert_close(sigma, torch.full_like(sigma, 0.05), atol=0, rtol=0)
                 torch.testing.assert_close(model.last_temporal_band_valid_mask, inputs["mask"].repeat(repetitions, 1))
                 self.assertFalse(offset.requires_grad or sigma.requires_grad)
         # Even non-finite feature content cannot change a content-free prior.
@@ -327,7 +399,7 @@ class FixedAVTBackboneTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(TypeError):
                 DiT_VT_MMDiT(**{**BASE_ARCH, **BAND_ARCH, key: "false"})
 
-    def test_production_config_only_adds_band_and_keeps_twelve_plus_six(self):
+    def test_production_config_only_narrows_sigma_and_keeps_twelve_plus_six(self):
         from hydra import compose, initialize_config_dir
         from omegaconf import OmegaConf
 
@@ -336,19 +408,21 @@ class FixedAVTBackboneTests(unittest.TestCase):
                 return OmegaConf.to_container(compose(config_name=name), resolve=False)
 
         target = config_at(PROJECT_ROOT, CONFIG_NAME)
-        base = config_at(PROJECT_ROOT, SOURCE_CONFIG)
+        base = config_at(SOFT_SOURCE_ROOT, SOURCE_CONFIG)
         expected = copy.deepcopy(base)
         expected["model"]["name"] = target["model"]["name"]
         expected["ckpts"]["save_dir"] = target["ckpts"]["save_dir"]
-        expected["model"]["arch"].update(BAND_ARCH)
+        expected["model"]["arch"]["temporal_band_fixed_sigma_seconds"] = 0.05
         self.assertEqual(target, expected)
-        if SOURCE_ROOT.is_dir():
-            self.assertEqual(base, config_at(SOURCE_ROOT, SOURCE_CONFIG))
+        self.assertEqual(base["model"]["arch"]["temporal_band_fixed_sigma_seconds"], 0.1)
+        self.assertNotEqual(target["model"]["name"], base["model"]["name"])
+        self.assertNotEqual(target["ckpts"]["save_dir"], base["ckpts"]["save_dir"])
         arch = target["model"]["arch"]
         self.assertEqual((arch["depth"], arch["n_mm_layers"], arch["n_text_layers"]), (18, 12, 12))
         self.assertEqual(arch["speaker_condition_start_layer"], 12)
         self.assertEqual(arch["layer_indices_ctc"], [6, 12])
         self.assertEqual(target["optim"]["run_until_update"], 200000)
+        self.assertEqual(target["optim"]["epochs"], 200)
         model = make_model(depth=18, n_mm_layers=12, n_text_layers=12,
                            layer_indices_ctc=[6, 12], speaker_condition_start_layer=12)
         self.assertEqual(sum(isinstance(block, MMDiTBlock_AVT) for block in model.transformer_blocks), 12)

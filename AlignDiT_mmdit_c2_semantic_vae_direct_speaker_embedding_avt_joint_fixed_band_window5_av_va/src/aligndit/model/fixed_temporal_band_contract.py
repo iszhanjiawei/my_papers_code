@@ -18,7 +18,7 @@ FIXED_BAND_KEYS = (
     "temporal_band_video_fps", "temporal_band_fixed_offset_seconds",
     "temporal_band_fixed_sigma_seconds", "temporal_band_bidirectional",
 )
-EXPERIMENT_MARKER = "avt_joint_fixed_band_av_va"
+EXPERIMENT_MARKER = "avt_joint_fixed_band_window5_av_va"
 
 
 def _validate_arch(arch) -> bool:
@@ -62,6 +62,8 @@ def validate_fixed_band_training_config(config) -> bool:
         "temporal_band_audio_fps", "temporal_band_video_fps"
     )):
         raise ValueError("Temporal-band rates must match the already-interpolated 40-Hz cache")
+    if float(arch.temporal_band_fixed_sigma_seconds) != 0.050:
+        raise ValueError("The five-frame soft-band experiment requires sigma=0.050 seconds (two frames)")
     if any(EXPERIMENT_MARKER not in value for value in (run_name, str(save_dir))):
         raise ValueError(f"{EXPERIMENT_MARKER} runs require dedicated model.name and ckpts.save_dir")
     if not (save_dir / "speaker_training_contract.json").is_file() and any(save_dir.glob("*.pt")):

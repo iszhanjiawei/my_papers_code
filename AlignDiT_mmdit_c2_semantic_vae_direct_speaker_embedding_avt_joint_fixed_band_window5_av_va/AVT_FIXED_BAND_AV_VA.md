@@ -1,3 +1,6 @@
+> Historical source-experiment record. For the current five-frame Gaussian soft-band run,
+> see [AVT_FIXED_BAND_WINDOW5_AV_VA.md](AVT_FIXED_BAND_WINDOW5_AV_VA.md).
+
 # AVT joint attention with fixed bidirectional audio/video bands
 
 This isolated source copy starts from

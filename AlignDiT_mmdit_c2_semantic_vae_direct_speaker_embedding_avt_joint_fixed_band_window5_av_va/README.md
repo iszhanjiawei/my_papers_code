@@ -1,16 +1,13 @@
 # Current experiment
 
-This isolated copy adds the fixed bidirectional audio/video Gaussian attention
-prior to the existing audio/video/text joint-attention model. The prior uses
-zero offset and sigma = 0.100 seconds; text participates in the same joint
-softmax, with no temporal penalty on text edges. The 12 AVT blocks, 6 audio-only
-blocks and complete AVT training recipe are retained.
-See [AVT_FIXED_BAND_AV_VA.md](AVT_FIXED_BAND_AV_VA.md) for the current
-configuration, initialization, training, TensorBoard and inference commands.
+This independent copy narrows the AVT fixed Gaussian AV/VA prior from sigma
+0.100 seconds to **0.050 seconds** at 40 Hz: a nominal five-frame core
+(center +/- two frames). The prior retains Gaussian tails beyond that core.
+The 12 AVT blocks, 6 audio-only blocks and original 200k training recipe are
+preserved. See [AVT_FIXED_BAND_WINDOW5_AV_VA.md](AVT_FIXED_BAND_WINDOW5_AV_VA.md)
+for configuration, initialization, validation, training and TensorBoard.
 
-[AVT_JOINT_ATTENTION.md](AVT_JOINT_ATTENTION.md) and the inherited evaluation
-reports describe the source AVT experiment; their checkpoints and results do
-not belong to this new fixed-band run.
+Other inherited experiment and evaluation reports describe historical runs.
 
 # AlignDiT
 

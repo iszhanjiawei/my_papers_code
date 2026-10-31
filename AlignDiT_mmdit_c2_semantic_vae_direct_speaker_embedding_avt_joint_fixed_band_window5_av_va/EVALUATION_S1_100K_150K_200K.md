@@ -1,3 +1,6 @@
+> Historical source-experiment record. For the current five-frame Gaussian soft-band run,
+> see [AVT_FIXED_BAND_WINDOW5_AV_VA.md](AVT_FIXED_BAND_WINDOW5_AV_VA.md).
+
 # AVT Joint：100k / 150k / 200k CelebV-Dub Setting 1 评测
 
 评测日期：2026-10-19。目标项目为 `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint`，即 speaker-only 源项目的 12 层 AVT joint + 6 层 audio-only 副本。

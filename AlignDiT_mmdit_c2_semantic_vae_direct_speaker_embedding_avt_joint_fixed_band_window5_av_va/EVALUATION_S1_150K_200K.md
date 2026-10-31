@@ -1,3 +1,6 @@
+> Historical source-experiment record. For the current five-frame Gaussian soft-band run,
+> see [AVT_FIXED_BAND_WINDOW5_AV_VA.md](AVT_FIXED_BAND_WINDOW5_AV_VA.md).
+
 # AVT joint + fixed AV/VA band: 150k / 200k evaluation
 
 Evaluate the numbered 150,000 and 200,000 checkpoints of this snapshot, using

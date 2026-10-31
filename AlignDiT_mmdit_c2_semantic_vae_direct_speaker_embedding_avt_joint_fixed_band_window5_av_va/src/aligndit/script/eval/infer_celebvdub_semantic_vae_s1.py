@@ -429,7 +429,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=Path(__file__).parents[2]
-        / "config/finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va.yaml",
+        / "config/finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window5_av_va.yaml",
     )
     parser.add_argument(
         "--cache-root",

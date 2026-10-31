@@ -1,3 +1,6 @@
+> Historical source-experiment record. For the current five-frame Gaussian soft-band run,
+> see [AVT_FIXED_BAND_WINDOW5_AV_VA.md](AVT_FIXED_BAND_WINDOW5_AV_VA.md).
+
 # Semantic-VAE speaker C2 with audio/video/text joint attention
 
 This independent copy of `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding`
