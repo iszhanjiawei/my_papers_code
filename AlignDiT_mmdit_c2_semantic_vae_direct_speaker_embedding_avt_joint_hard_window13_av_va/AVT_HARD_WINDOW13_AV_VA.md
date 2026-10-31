@@ -129,6 +129,9 @@ The inference Python default config also selects hard13. Keep the matching
 `speaker_training_contract.json` beside weights. Evaluation protocol retains
 213 CelebV-Dub S1 clips, EMA, seed 0, CFG text/video 5/2 and 32 NFE.
 
+The 150k evaluation protocol and audited results are recorded in
+[EVALUATION_HARD_WINDOW13_S1_150K.md](EVALUATION_HARD_WINDOW13_S1_150K.md).
+
 ```bash
 PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u src/aligndit/script/misc/smoke_test_avt_hard_window13_av_va.py --cuda
 PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u src/aligndit/script/misc/smoke_test_avt_hard_window13_contract.py
