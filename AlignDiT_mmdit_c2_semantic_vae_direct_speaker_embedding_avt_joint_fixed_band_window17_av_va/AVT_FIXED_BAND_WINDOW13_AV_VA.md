@@ -1,3 +1,6 @@
+> Historical source experiment (sigma=150 ms). For this copy, use
+> [AVT_FIXED_BAND_WINDOW17_AV_VA.md](AVT_FIXED_BAND_WINDOW17_AV_VA.md).
+
 # AVT fixed Gaussian band: 13-frame soft core
 
 This experiment is an independent source copy of

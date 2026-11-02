@@ -28,7 +28,7 @@ class FixedBandContractTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.config = OmegaConf.create({
             "model": {
-                "name": "avt_joint_fixed_band_window13_av_va_test",
+                "name": "avt_joint_fixed_band_window17_av_va_test",
                 "audio_representation": {"frame_rate": 40.0},
                 "arch": {
                     "depth": 18, "n_mm_layers": 12, "n_text_layers": 12,
@@ -36,11 +36,11 @@ class FixedBandContractTests(unittest.TestCase):
                     "temporal_band_enabled": True, "temporal_band_mode": "fixed",
                     "temporal_band_audio_fps": 40.0, "temporal_band_video_fps": 40.0,
                     "temporal_band_fixed_offset_seconds": 0.0,
-                    "temporal_band_fixed_sigma_seconds": 0.150,
+                    "temporal_band_fixed_sigma_seconds": 0.200,
                     "temporal_band_bidirectional": True,
                 },
             },
-            "ckpts": {"save_dir": str(self.root / "avt_joint_fixed_band_window13_av_va_test")},
+            "ckpts": {"save_dir": str(self.root / "avt_joint_fixed_band_window17_av_va_test")},
         })
         self.save_dir = Path(self.config.ckpts.save_dir)
         self.save_dir.mkdir()
@@ -99,7 +99,7 @@ class FixedBandContractTests(unittest.TestCase):
             validate_fixed_band_contract(self.config, self.checkpoint)
 
     def test_inference_rejects_every_changed_band_parameter(self):
-        changed_values = (False, "adaptive", 25.0, 25.0, 0.025, 0.100, False)
+        changed_values = (False, "adaptive", 25.0, 25.0, 0.025, 0.150, False)
         for key, value in zip(FIXED_BAND_KEYS, changed_values):
             contract = copy.deepcopy(self.contract)
             contract["temporal_band"]["parameters"][key] = value
@@ -134,7 +134,7 @@ class FixedBandContractTests(unittest.TestCase):
             elif field == "topology":
                 contract["temporal_band"]["text_joint_attention"] = False
             else:
-                contract["config"]["model"]["arch"]["temporal_band_fixed_sigma_seconds"] = 0.2
+                contract["config"]["model"]["arch"]["temporal_band_fixed_sigma_seconds"] = 0.15
             self.write_contract(contract)
             with self.subTest(field=field), self.assertRaises(RuntimeError):
                 validate_fixed_band_contract(self.config, self.checkpoint)
@@ -156,7 +156,7 @@ class FixedBandContractTests(unittest.TestCase):
     def test_composed_experiment_config_is_accepted(self):
         config_dir = Path(__file__).resolve().parents[2] / "config"
         with initialize_config_dir(version_base="1.3", config_dir=str(config_dir)):
-            config = compose(config_name="finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window13_av_va")
+            config = compose(config_name="finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window17_av_va")
         config.ckpts.save_dir = str(self.save_dir)
         self.assertTrue(validate_fixed_band_training_config(config))
         self.assertTrue(config.model.arch.text_joint_attention)

@@ -1,16 +1,16 @@
-# Current experiment: 13-frame Gaussian soft core
+# Current experiment: 17-frame Gaussian soft core
 
-This independent copy of `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_av_va`
-changes only the effective Gaussian sigma from 0.100 to 0.150 seconds. At the
-unchanged 40-Hz feature rate, +/-1 sigma now spans +/-6 frames (13 samples)
-instead of +/-4 frames (9 samples). Gaussian tails remain; this is not a hard window.
+This independent copy of `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_window13_av_va`
+changes only the effective Gaussian sigma from 0.150 to 0.200 seconds. At the
+unchanged 40-Hz feature rate, +/-1 sigma spans +/-8 frames (17 samples),
+compared with +/-6 frames (13 samples). Gaussian tails are retained.
 
-The 12 AVT joint blocks, 6 audio-only blocks, model weights/layout, offset=0,
-AV/VA directions, data, S2c 70k EMA initialization and entire training recipe
+The 12 AVT joint blocks, 6 audio-only blocks, parameter count, offset=0,
+AV/VA directions, data, S2c 70k EMA initialization and full training recipe
 are unchanged. Experiment/checkpoint/log identities are isolated.
-See [AVT_FIXED_BAND_WINDOW13_AV_VA.md](AVT_FIXED_BAND_WINDOW13_AV_VA.md) for the
-current config, commands and checkpoint paths. Other inherited reports describe
-prior experiments and are not validation or evaluation results for this run.
+See [AVT_FIXED_BAND_WINDOW17_AV_VA.md](AVT_FIXED_BAND_WINDOW17_AV_VA.md) for the
+current configuration, commands and output paths. Inherited reports describe
+previous experiments and are not results of this window17 run.
 
 # AlignDiT
 
