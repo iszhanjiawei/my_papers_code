@@ -8,7 +8,9 @@ import sys
 import time
 from pathlib import Path
 
-from aligndit.script.eval.grid_s1_common import metric_summary, publish, read, sha
+from aligndit.script.eval.grid_s1_common import (
+    TEXT_CONDITIONING, metric_summary, publish, read, sha, validate_text_conditioning,
+)
 
 
 def workers(a, stage):
@@ -21,8 +23,11 @@ def workers(a, stage):
             if stage == 'infer':
                 command = [sys.executable, '-u', '-m', f'aligndit.script.eval.infer_grid_{a.setting}',
                            '--checkpoint', str(a.checkpoint), '--step', str(a.step)]
+                if a.setting == 's2':
+                    command += ['--text-conditioning', a.text_conditioning]
             else:
-                command = [sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1', '--setting', a.setting, '--task', stage]
+                command = [sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1', '--setting', a.setting, '--task', stage,
+                           '--text-conditioning', a.text_conditioning]
                 summary_path = a.output_dir/f'{stage}_shard{shard}_summary.json'
                 results_path = a.output_dir/f'{stage}_shard{shard}.jsonl'
                 if summary_path.exists() and results_path.exists():
@@ -75,6 +80,7 @@ def main():
     data = Path(prefix+'/zjw524/projects/data')
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--setting', choices=['s1','s2'], default='s1')
+    p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING, default='reference-target')
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--checkpoint', type=Path, default=data/'ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k_40hz_char/model_100000.pt')
     p.add_argument('--step', type=int, default=100000)
@@ -83,6 +89,7 @@ def main():
     p.add_argument('--limit', type=int)
     p.add_argument('--start-stage', choices=['infer', 'sim', 'wer', 'emosim', 'avsync', 'merge'], default='infer')
     a = p.parse_args()
+    validate_text_conditioning(a.setting, a.text_conditioning, a.output_dir, require_contract=a.start_stage != 'infer')
     if a.workers_per_gpu < 1 or (a.limit and a.limit < len(a.gpus.split(','))*a.workers_per_gpu):
         raise ValueError('Too few clips for worker count')
     a.output_dir.mkdir(parents=True, exist_ok=True)
@@ -98,10 +105,12 @@ def main():
                 workers(a, stage)
             if stage == 'audit':
                 subprocess.run([sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1',
-                                '--task', 'audit', '--setting', a.setting, '--output-dir', str(a.output_dir)], check=True)
+                                '--task', 'audit', '--setting', a.setting, '--text-conditioning', a.text_conditioning,
+                                '--output-dir', str(a.output_dir)], check=True)
             if stage in ('infer', 'merge'):
                 command = [sys.executable, '-u', '-m', 'aligndit.script.eval.eval_grid_s1', '--task', 'verify' if stage=='infer' else 'merge',
-                           '--setting', a.setting, '--output-dir', str(a.output_dir), '--nshard', str(len(a.gpus.split(','))*a.workers_per_gpu)]
+                           '--setting', a.setting, '--text-conditioning', a.text_conditioning,
+                           '--output-dir', str(a.output_dir), '--nshard', str(len(a.gpus.split(','))*a.workers_per_gpu)]
                 if a.limit:
                     command += ['--limit', str(a.limit)]
                 subprocess.run(command, check=True)

@@ -8,7 +8,10 @@ import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from aligndit.script.eval.grid_s1_common import identity, load_rows, output_record, publish, read, sha, ensure_contract
+from aligndit.script.eval.grid_s1_common import (
+    TEXT_CONDITIONING, identity, load_rows, output_record, publish, read, sha, ensure_contract,
+    validate_text_conditioning,
+)
 from aligndit.script.eval.grid_s2_common import PROTOCOL, load_pairs, SELECTION
 from aligndit.script.eval.infer_celebvdub_grid_reference import make_sampling_inputs, reference_target_text
 from aligndit.script.eval.infer_celebvdub_semantic_vae_s1 import (
@@ -19,7 +22,18 @@ from aligndit.script.misc.prepare_grid import artifact_path, validate_receipt
 from aligndit.model.grid_dataset import NORMALIZATION_SHA256, VOCAB_SHA256
 
 
+def sampling_inputs(reference, video, reference_text, target_text, mean, std, mode='reference-target'):
+    """Change only model text; preserve the historical S2 prompt and time grid."""
+    validate_text_conditioning('s2', mode)
+    combined_text = reference_target_text(reference_text, target_text)
+    inputs = make_sampling_inputs(reference, video, combined_text, mean, std)
+    model_text = target_text if mode == 'target-only' else combined_text
+    return model_text, inputs
+
+
 def run(a):
+    mode = getattr(a, 'text_conditioning', 'reference-target')
+    validate_text_conditioning('s2', mode, a.output_dir)
     rows, done = load_rows(a.cache_root)
     pairs, references = load_pairs(a.cache_root, a.output_dir, rows)
     if a.limit is not None:
@@ -44,6 +58,9 @@ def run(a):
                 'generation': {'seed': 0, 'nfe': 32, 'ode': 'euler', 'epss': True, 'sway': -1, 'cfg_text': 5, 'cfg_video': 2, 'batch_size': 1},
                 'reference': 'same-speaker different-text validation clip canonical audio; latent and CAM++ both from this independent reference',
                 'output': 'only target continuation; prompt removed; exact original duration; 16k mono PCM16'}
+    if mode == 'target-only':
+        contract.update(text_conditioning=mode, model_text='supplied target GT dialogue only',
+                        reference_transcript_used_for_generation=False)
     protocol_path = a.output_dir / 'protocol.json'
     ensure_contract(protocol_path, contract)
     device = torch.device('cuda:0')
@@ -74,9 +91,8 @@ def run(a):
             video = np.load(artifact_path(a.cache_root, row, 'video'))
             speaker = torch.from_numpy(np.load(artifact_path(a.cache_root, ref, 'speaker'))).to(device)
             frames = row['latent_frames']
-            text = reference_target_text(ref['text'], row['text'])
-            cond, combined_video, prompt_frames, target_frames, duration = make_sampling_inputs(
-                latent, video, text, mean, std)
+            text, (cond, combined_video, prompt_frames, target_frames, duration) = sampling_inputs(
+                latent, video, ref['text'], row['text'], mean, std, mode)
             if frames != target_frames or row['original_num_samples'] != row['source_video_frames']*640:
                 raise RuntimeError('Target duration differs from video timebase')
             generated, _ = model.sample(cond=torch.from_numpy(cond)[None].to(device),
@@ -91,9 +107,12 @@ def run(a):
             if waveform.shape != (1, frames*400) or not torch.isfinite(waveform).all():
                 raise RuntimeError('Invalid decoded waveform')
             atomic_save_waveform(out, waveform[:, :row['original_num_samples']])
-            publish(receipt, {'id': identity(row), 'relative_path': row['audio_relative_path'], 'sha256': sha(out),
+            record = {'id': identity(row), 'relative_path': row['audio_relative_path'], 'sha256': sha(out),
                               'samples': row['original_num_samples'], 'reference_id': identity(ref), 'prompt_frames': prompt_frames,
-                              'target_frames': target_frames, 'sampler_frames': duration, 'protocol_sha256': sha(protocol_path)})
+                              'target_frames': target_frames, 'sampler_frames': duration, 'protocol_sha256': sha(protocol_path)}
+            if mode == 'target-only':
+                record.update(text_conditioning=mode, model_text=text)
+            publish(receipt, record)
     publish(a.output_dir / f'shard{a.shard}_complete.json', {'count': len(rows[a.shard::a.nshard]), 'shard': a.shard, 'nshard': a.nshard})
 
 
@@ -103,6 +122,8 @@ def args():
     p.add_argument('--checkpoint', type=Path, required=True)
     p.add_argument('--step', type=int, default=100000)
     p.add_argument('--output-dir', type=Path, required=True)
+    p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING, default='reference-target',
+                   help='target-only changes only model text; retains independent reference latent/CAM++ and the original prompt+target time grid')
     p.add_argument('--cache-root', type=Path, default=base/'data/GRID_svae1000k_sample_seed666_fp32')
     p.add_argument('--config', type=Path, default=Path(__file__).parents[2]/'config/finetune_grid.yaml')
     p.add_argument('--semantic-vae-repo', type=Path, default=base/'alignDiT_idea6/papers_codes/Semantic-VAE')

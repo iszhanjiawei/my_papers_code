@@ -10,6 +10,7 @@ import wave
 from pathlib import Path
 
 PROTOCOL = 'grid_val_setting1_same_clip_prompt_v1'
+TEXT_CONDITIONING = ('reference-target', 'target-only')
 DIGITS = dict(zip('0123456789', 'zero one two three four five six seven eight nine'.split()))
 
 
@@ -55,6 +56,26 @@ def ensure_contract(path, contract):
             with path.open('rb') as handle:
                 os.fsync(handle.fileno())
         fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def validate_text_conditioning(setting, mode, root=None, *, require_contract=False):
+    """Reject mode changes on resume, including when inference is skipped.
+
+    Historical S2 protocols have no text_conditioning key and mean
+    reference-target. Keep those protocol bytes and receipts compatible.
+    """
+    if mode not in TEXT_CONDITIONING:
+        raise ValueError(f'Unknown text conditioning: {mode}')
+    if setting == 's1' and mode != 'reference-target':
+        raise ValueError('--text-conditioning target-only requires --setting s2')
+    if root is not None:
+        path = Path(root) / 'protocol.json'
+        if require_contract or path.exists():
+            contract = read(path)
+            if contract.get('text_conditioning', 'reference-target') != mode:
+                raise RuntimeError('Output directory text conditioning differs from requested mode')
+            if mode == 'target-only' and contract.get('reference_transcript_used_for_generation') is not False:
+                raise RuntimeError('Target-only protocol must exclude the reference transcript from model text')
 
 
 def load_rows(cache):
@@ -109,6 +130,12 @@ def output_record(root, row, protocol=PROTOCOL):
             raise RuntimeError(f'Incorrect WAV format/duration: {path}')
     if contract.get('protocol') != protocol:
         raise RuntimeError('Wrong evaluation protocol')
+    mode = contract.get('text_conditioning', 'reference-target')
+    validate_text_conditioning('s1' if protocol == PROTOCOL else 's2', mode)
+    if mode == 'target-only':
+        if (contract.get('reference_transcript_used_for_generation') is not False
+                or receipt.get('text_conditioning') != mode or receipt.get('model_text') != row['text']):
+            raise RuntimeError(f'Target-only model text differs from target transcript or protocol: {path}')
     return receipt
 
 

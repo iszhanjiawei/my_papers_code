@@ -7,7 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from aligndit.script.eval.grid_s1_common import (
-    PROTOCOL, identity, metric_summary, normalize_text, output_record, publish, read, sha, verify_outputs,
+    PROTOCOL, TEXT_CONDITIONING, identity, metric_summary, normalize_text, output_record, publish, read, sha,
+    validate_text_conditioning, verify_outputs,
 )
 from aligndit.script.eval.eval_celebvdub_grid_reference import word_edit_counts
 
@@ -25,7 +26,8 @@ def audit_assets(a):
                project/'src/f5_tts/eval/utils_eval.py', Path(__file__).with_name('utils.py'),
                project/'src/aligndit/script/misc/extract_avhubert.py']
     if a.setting == 's2':
-        sources += [Path(__file__).with_name('grid_s2_common.py'), Path(__file__).with_name('infer_grid_s2.py')]
+        sources += [Path(__file__).with_name(name) for name in (
+            'grid_s2_common.py', 'infer_grid_s2.py', 'run_grid_s1.py', 'infer_celebvdub_grid_reference.py')]
     assets = [{'path': str(path), 'size_bytes': path.stat().st_size, 'sha256': sha(path)} for path in files]
     versions = {}
     for package in ('torch', 'torchaudio', 'numpy', 'faster-whisper', 'ctranslate2', 'funasr', 'jiwer'):
@@ -215,6 +217,10 @@ def merge(a, rows):
                              'avsync': 'mean frame cosine of joint AV-HuBERT features: same mouth video + generated vs canonical GT audio'}}
     if a.setting == 's2':
         report['text_source'] = 'supplied_target_GT_dialogue; no VSR'
+        contract = read(a.output_dir/'protocol.json')
+        report['text_conditioning'] = contract.get('text_conditioning', 'reference-target')
+        report['model_text'] = contract.get('model_text', 'reference transcript + two spaces + supplied target GT dialogue')
+        report['reference_transcript_used_for_generation'] = contract.get('reference_transcript_used_for_generation', True)
         report['references']['sim'] = 'same-speaker different-text reference audio used by generation'
         report['reference_pairs_sha256'] = sha(a.output_dir/'reference_pairs.json')
     if (a.output_dir/'metric_assets.json').exists():
@@ -250,6 +256,8 @@ def merge(a, rows):
 
 
 def run(a):
+    validate_text_conditioning(a.setting, getattr(a, 'text_conditioning', 'reference-target'), a.output_dir,
+                               require_contract=a.task != 'audit')
     if a.task == 'audit':
         audit_assets(a)
         return
@@ -312,6 +320,7 @@ def args():
     pretrain = Path(prefix+'/zjw524/alignDiT_pretrain_models')
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--setting', choices=['s1', 's2'], default='s1')
+    p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING, default='reference-target')
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--cache-root', type=Path, default=data/'GRID_svae1000k_sample_seed666_fp32')
     p.add_argument('--task', choices=['audit', 'verify', 'merge', 'sim', 'wer', 'emosim', 'avsync'], required=True)
