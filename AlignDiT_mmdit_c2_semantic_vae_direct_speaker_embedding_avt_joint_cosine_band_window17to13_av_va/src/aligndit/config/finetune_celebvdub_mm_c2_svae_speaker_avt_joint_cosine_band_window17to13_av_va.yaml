@@ -1,0 +1,22 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window17_av_va
+  - _self_
+
+# The model's static sigma is the final inference width. Training schedules only
+# AV/VA Gaussian sigma by absolute optimizer update, independently of flow time.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_avt_joint_cosine_band_window17to13_av_va_ctc003_warmup10k30k
+  arch:
+    temporal_band_fixed_sigma_seconds: 0.150
+
+temporal_band_curriculum:
+  start_sigma_seconds: 0.200
+  end_sigma_seconds: 0.150
+  start_update: 10000
+  end_update: 50000
+
+optim:
+  run_until_update: 150000
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_cosine_band_window17to13_av_va_ctc003_warmup10k30k_40hz_CelebVDub_char
