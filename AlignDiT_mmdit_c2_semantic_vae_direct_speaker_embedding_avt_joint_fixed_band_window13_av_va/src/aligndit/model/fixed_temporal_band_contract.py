@@ -53,7 +53,11 @@ def validate_fixed_band_training_config(config) -> bool:
         if any("fixed_band" in value for value in (run_name, str(save_dir))):
             raise ValueError("Fixed-band run names and checkpoint paths require an enabled fixed AV+VA bias")
         return False
-    for key, expected in (("depth", 18), ("n_mm_layers", 12), ("n_text_layers", 12),
+    from_text_audio = config.ckpts.get("initialization_mode", "s2c") == "libritts_text_audio"
+    joint_layers = arch.get("n_mm_layers") if from_text_audio else 12
+    if from_text_audio and joint_layers not in (6, 8, 12):
+        raise ValueError("LibriTTS transfer supports the declared 6/8/12 joint-layer experiments")
+    for key, expected in (("depth", 18), ("n_mm_layers", joint_layers), ("n_text_layers", joint_layers),
                           ("audio_video_ratio", 1)):
         if arch.get(key) != expected:
             raise ValueError(f"The fixed AVT experiment retains {key}={expected}")
@@ -81,7 +85,7 @@ def make_fixed_band_contract(arch, band) -> dict:
         "mode": "fixed",
         "formula": "B_av[i,j] = -(t_video[j] - t_audio[i] - offset)**2 / (2*sigma**2); B_va = B_av.T",
         "predictor_input": "none; fixed constants independent of content, CFG branch and diffusion time",
-        "sharing": "shared over all samples, heads and first 12 AVT MM blocks",
+        "sharing": f"shared over all samples, heads and first {arch.n_mm_layers} AVT MM blocks",
         "scope": "AV and VA logits only (transposed prior); AA/VV/AT/VT/TA/TV/TT biases remain zero; "
                  "shared joint softmax over all audio/video/text keys retained",
         "text_joint_attention": True,
@@ -128,3 +132,11 @@ def validate_fixed_band_contract(config, checkpoint_path: Path) -> None:
     for key in FIXED_BAND_KEYS:
         if recorded_arch.get(key) != arch.get(key):
             raise RuntimeError(f"Fixed-band training config and sidecar disagree: {key}")
+    if contract.get("config", {}).get("ckpts", {}).get("initialization_mode") == "libritts_text_audio":
+        # Several topology/position choices leave tensor shapes unchanged.
+        # New AT-transfer runs must preserve these at inference as well.
+        for key in ("depth", "n_mm_layers", "n_text_layers", "pe_attn_head",
+                    "text_audio_only", "text_mask_padding", "layer_indices_ctc",
+                    "speaker_condition_start_layer"):
+            if recorded_arch.get(key) != arch.get(key):
+                raise RuntimeError(f"AT-initialized inference/training configuration mismatch: {key}")

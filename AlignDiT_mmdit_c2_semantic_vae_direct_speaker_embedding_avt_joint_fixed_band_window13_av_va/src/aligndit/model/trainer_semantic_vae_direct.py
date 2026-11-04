@@ -1,4 +1,4 @@
-"""Original C2 trainer with strict S2c EMA loading and no altered optimization policy."""
+"""C2 training with audited S2c or LibriTTS EMA initialization."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from aligndit.model.trainer_vt import Trainer_VT
 
 
 class SemanticVaeDirectC2Trainer(Trainer_VT):
-    """Preserve C2 training while enforcing the one permitted parent migration."""
+    """Preserve C2 optimization while validating the selected parent migration."""
 
     def __init__(
         self,
@@ -28,8 +28,16 @@ class SemanticVaeDirectC2Trainer(Trainer_VT):
         expected_parent_size: int,
         expected_parent_contract_sha256: str,
         expected_parent_update: int = 70_000,
+        initialization_mode: str = "s2c",
+        text_audio_contract: dict | None = None,
+        allow_layer_repartition: bool = False,
         **kwargs,
     ):
+        if initialization_mode not in {"s2c", "libritts_text_audio"}:
+            raise ValueError(f"Unknown initialization mode: {initialization_mode}")
+        self.initialization_mode = initialization_mode
+        self.text_audio_contract = text_audio_contract
+        self.allow_layer_repartition = allow_layer_repartition
         self.parent_contract_path = parent_contract_path
         self.expected_parent_sha256 = expected_parent_sha256
         self.expected_parent_size = expected_parent_size
@@ -38,9 +46,13 @@ class SemanticVaeDirectC2Trainer(Trainer_VT):
         super().__init__(*args, **kwargs)
 
     def load_pretrained(self, pretrained_path):
-        """Load exactly the compatible S2c EMA tensors into online and EMA models."""
+        """Initialize online and EMA models using the selected explicit migration."""
+
+        if self.initialization_mode == "libritts_text_audio":
+            return self._load_text_audio_pretrained(pretrained_path)
 
         self.accelerator.wait_for_everyone()
+
         if self.is_main:
             validate_parent_artifacts(
                 pretrained_path,
@@ -102,4 +114,54 @@ class SemanticVaeDirectC2Trainer(Trainer_VT):
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        self.accelerator.wait_for_everyone()
+
+    def _load_text_audio_pretrained(self, pretrained_path):
+        from aligndit.model.text_audio_checkpoint import load_text_audio_pretrained
+
+        if self.text_audio_contract is None:
+            raise ValueError("LibriTTS initialization requires the downstream representation contract")
+
+        def collective_error(error):
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                errors = [None] * torch.distributed.get_world_size()
+                torch.distributed.all_gather_object(errors, error)
+            else:
+                errors = [error]
+            if any(errors):
+                raise RuntimeError("LibriTTS initialization failed: " + "; ".join(item for item in errors if item))
+
+        online = self.accelerator.unwrap_model(self.model)
+        error, report = None, None
+        try:
+            report = load_text_audio_pretrained(
+                online, pretrained_path, self.text_audio_contract,
+                allow_layer_repartition=self.allow_layer_repartition,
+            )
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        collective_error(error)
+        error = None
+        if self.is_main:
+            try:
+                self.ema_model.ema_model.load_state_dict(online.state_dict(), strict=True)
+                self.ema_model.initted.fill_(True)
+                self.ema_model.step.zero_()
+                destination = Path(self.checkpoint_path)
+                destination.mkdir(parents=True, exist_ok=True)
+                temporary = destination / "parent_migration.json.tmp"
+                temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+                os.replace(temporary, destination / "parent_migration.json")
+                print(
+                    "LibriTTS EMA transfer passed: "
+                    f"source_update={report['source_update']}, "
+                    f"joint_layers={report['source_joint_layers']}->{report['target_joint_layers']}, "
+                    f"loaded={report['loaded_tensors']}, "
+                    f"discarded_stream_tensors={len(report['discarded_stream_tensors'])}; "
+                    f"full report={destination / 'parent_migration.json'}",
+                    flush=True,
+                )
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+        collective_error(error)
         self.accelerator.wait_for_everyone()

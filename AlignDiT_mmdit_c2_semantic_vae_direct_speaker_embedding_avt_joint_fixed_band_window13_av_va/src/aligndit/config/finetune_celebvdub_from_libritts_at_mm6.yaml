@@ -1,0 +1,12 @@
+defaults:
+  - finetune_celebvdub_from_libritts_at
+  - _self_
+
+model:
+  name: AlignDiT_libritts_at12_a6_to_mm6_a12_avt_joint_fixed_band_window13_av_va
+  arch:
+    n_mm_layers: 6
+    n_text_layers: 6
+
+ckpts:
+  allow_layer_repartition: true

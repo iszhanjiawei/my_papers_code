@@ -1,0 +1,23 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window13_av_va
+  - _self_
+
+# This is downstream initialization, not a continuation of LibriTTS optimizer state.
+# Set LIBRITTS_PRETRAINED_PATH to a completed, verified AT checkpoint.
+datasets:
+  vocab_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/LibriTTS_text_audio_svae1000k_seed666_fp32/vocab.txt
+  codec_sha256: 7c455aa8ab3f7d576b4834f8342558894aafaa61a371b84a9bfa4d10a100e516
+
+model:
+  name: AlignDiT_libritts_at12_a6_to_avt_joint_fixed_band_window13_av_va
+  arch:
+    text_audio_only: false
+    text_mask_padding: true
+    pe_attn_head: 1
+    speaker_condition_start_layer: 12
+
+ckpts:
+  initialization_mode: libritts_text_audio
+  pretrained_path: ${oc.env:LIBRITTS_PRETRAINED_PATH,''}
+  allow_layer_repartition: false
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}

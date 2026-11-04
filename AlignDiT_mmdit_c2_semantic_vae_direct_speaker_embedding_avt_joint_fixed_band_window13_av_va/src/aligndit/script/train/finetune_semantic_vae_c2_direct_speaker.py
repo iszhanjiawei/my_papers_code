@@ -1,6 +1,7 @@
 """Train isolated Semantic-VAE Direct-C2 with frozen CAM++ speaker conditions."""
 
 import json
+import hashlib
 import math
 import os
 from importlib.resources import files
@@ -29,6 +30,15 @@ os.chdir(str(files("aligndit").joinpath("../..")))
 @hydra.main(version_base="1.3", config_path=str(files("aligndit").joinpath("config")), config_name=None)
 def main(model_cfg):
     set_seed(int(model_cfg.seed))
+    initialization_mode = str(model_cfg.ckpts.get("initialization_mode", "s2c"))
+    if initialization_mode not in {"s2c", "libritts_text_audio"}:
+        raise ValueError(f"Unknown initialization mode: {initialization_mode}")
+    if initialization_mode == "libritts_text_audio":
+        if not str(model_cfg.ckpts.pretrained_path) or not Path(model_cfg.ckpts.pretrained_path).is_file():
+            raise FileNotFoundError("Set LIBRITTS_PRETRAINED_PATH to the completed LibriTTS checkpoint")
+        # The trained checkpoint independently pins this digest at load time.
+        vocab_file = Path(model_cfg.datasets.vocab_path)
+        model_cfg.datasets.expected_vocab_sha256 = hashlib.sha256(vocab_file.read_bytes()).hexdigest()
     model_cls = hydra.utils.get_class(f"aligndit.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
     audio_cfg = model_cfg.model.audio_representation
@@ -106,6 +116,17 @@ def main(model_cfg):
         expected_parent_size=model_cfg.ckpts.expected_parent_size,
         expected_parent_contract_sha256=model_cfg.ckpts.expected_parent_contract_sha256,
         expected_parent_update=model_cfg.ckpts.expected_parent_update,
+        initialization_mode=initialization_mode,
+        allow_layer_repartition=bool(model_cfg.ckpts.get("allow_layer_repartition", False)),
+        text_audio_contract={
+            "model": OmegaConf.to_container(model_cfg.model, resolve=True),
+            "data": {
+                "normalization_sha256": model_cfg.datasets.expected_normalization_sha256,
+                "vocab_sha256": model_cfg.datasets.expected_vocab_sha256,
+                "codec_sha256": model_cfg.datasets.get("codec_sha256", ""),
+                "speaker_checkpoint_sha256": model_cfg.datasets.speaker_embedding_checkpoint_sha256,
+            },
+        } if initialization_mode == "libritts_text_audio" else None,
         ctc_target_lambda=model_cfg.model.ctc_lambda,
         ctc_warmup_start=model_cfg.model.ctc_warmup_start,
         ctc_warmup_end=model_cfg.model.ctc_warmup_end,
@@ -120,8 +141,16 @@ def main(model_cfg):
             "project_dir": str(Path.cwd()),
             "config": OmegaConf.to_container(model_cfg, resolve=True),
             "speaker_cache_metadata": speaker_metadata,
-            "initialization": "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter",
-            "speaker_condition": "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17",
+            "initialization": (
+                "LibriTTS text/audio EMA parent; new optimizer/update counter"
+                if initialization_mode == "libritts_text_audio"
+                else "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter"
+            ),
+            "speaker_condition": (
+                "L2 CAM++ -> pretrained bias-free Linear(192,768), blocks 12..17"
+                if initialization_mode == "libritts_text_audio"
+                else "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17"
+            ),
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
