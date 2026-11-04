@@ -1,0 +1,98 @@
+hydra:
+  run:
+    dir: ${ckpts.save_dir}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
+
+seed: 666
+runtime:
+  mixed_precision: bf16
+  expected_world_size: 8
+
+datasets:
+  name: LibriTTS_clean_100_360
+  cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/LibriTTS_text_audio_svae1000k_seed666_fp32
+  require_complete: true
+  batch_size_per_gpu: 2400
+  max_samples: 16
+  num_workers: 4
+
+optim:
+  max_updates: 50000
+  # Optional smoke-test boundary; use a separate save_dir. LR horizon stays fixed.
+  stop_after_updates: null
+  learning_rate: 5.0e-5
+  num_warmup_updates: 5000
+  grad_accumulation_steps: 1
+  max_grad_norm: 1.0
+  betas: [0.9, 0.99]
+  weight_decay: 0.01
+
+model:
+  name: AlignDiT_LibriTTS_text_audio_12AT6A_svae_speaker
+  tokenizer: char
+  backbone: DiT_VT_MMDiT
+  arch:
+    dim: 768
+    depth: 18
+    heads: 12
+    ff_mult: 2
+    text_dim: 512
+    text_mask_padding: true
+    qk_norm: rms_norm
+    conv_layers: 4
+    pe_attn_head: 1
+    attn_mask_enabled: true
+    checkpoint_activations: true
+    use_conformer: true
+    layer_indices_ctc: [6, 12]
+    ctc_sampling_ratios: [1, 1]
+    n_mm_layers: 12
+    n_text_layers: 12
+    prompt_isolated_ca: false
+    audio_video_ratio: 1
+    video_dim: 1024
+    video_rope_scaled: false
+    text_joint_attention: true
+    text_audio_only: true
+    speaker_dim: 192
+    speaker_condition_start_layer: 12
+    temporal_band_enabled: false
+  audio_representation:
+    name: semantic_vae_40hz
+    channels: 64
+    frame_rate: 40
+    sample_rate: 16000
+    hop_length: 400
+  # First establish text-conditioned flow learning; optionally add warmed CTC.
+  ctc_lambda: 0.0
+  ctc_warmup_start: 10000
+  ctc_warmup_end: 30000
+  audio_drop_prob: 0.3
+  cond_drop_prob: 0.2
+  text_drop_prob: 0.0
+  frac_lengths_mask: [0.7, 1.0]
+
+ema:
+  beta: 0.999
+
+validation:
+  every_updates: 1000
+  seed: 20261104
+  # 0 evaluates the complete held-out split, without repetitions.
+  max_batches: 0
+
+logging:
+  every_updates: 10
+
+ckpts:
+  resume: null
+  pretrained_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/model_70000.pt
+  expected_parent_sha256: 02e35cf3e0de2a10573fb6efd8e5b7cdf0c59a18ea07807f34e5c7bf9c1395c4
+  expected_parent_size: 2762690094
+  expected_parent_update: 70000
+  parent_contract_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech/training_contract.json
+  expected_parent_contract_sha256: 3d6fcf6649511a0f21546ca995ed047dfcca5ff58e9c2d3196d7c67b24e7633d
+  save_per_updates: 1000
+  keep_last_n_checkpoints: 3
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}

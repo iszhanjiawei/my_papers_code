@@ -1,0 +1,22 @@
+defaults:
+  - pretrain_libritts_text_audio
+  - _self_
+
+# Measured on A40: include AdamW, rank-zero EMA and DDP when sizing memory.
+# 2699 train batches -> 338 updates/epoch on 8 ranks. 7767 updates match
+# approximately 22.98 epochs (the 2400-frame/16-sample baseline's 50000 updates).
+# Exposure matching does not imply identical optimization with a larger batch.
+datasets:
+  batch_size_per_gpu: 19200
+  max_samples: 64
+model:
+  arch:
+    checkpoint_activations: false
+optim:
+  max_updates: 7767
+  num_warmup_updates: 777
+  grad_accumulation_steps: 1
+validation:
+  every_updates: 155
+ckpts:
+  save_per_updates: 155

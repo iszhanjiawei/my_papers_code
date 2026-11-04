@@ -1,0 +1,12 @@
+defaults:
+  - pretrain_libritts_text_audio
+  - _self_
+
+# 8 x 24 GiB RTX 3090: halve the padded-frame microbatch budget and
+# accumulate twice. The nominal effective frame budget remains 19,200/update.
+# Oversized utterances remain explicit singleton batches, never discarded.
+datasets:
+  batch_size_per_gpu: 1200
+
+optim:
+  grad_accumulation_steps: 2
