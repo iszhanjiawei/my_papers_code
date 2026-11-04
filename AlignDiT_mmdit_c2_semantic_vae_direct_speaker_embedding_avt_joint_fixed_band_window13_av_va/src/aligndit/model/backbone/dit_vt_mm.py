@@ -376,6 +376,34 @@ class MMDiTBlock_AVT(DiTBlock):
     _qkv = MMDiTBlock_VT._qkv
     _apply_rope = MMDiTBlock_VT._apply_rope
 
+    def forward_text_audio(self, x, text, t, mask, text_mask, rope):
+        """Joint A/T attention with no video tokens or visual computation.
+
+        Audio retains its configured RoPE heads. Text retains its ordinal
+        embedding, as in AVT. Padding remains masked in training and inference.
+        """
+        norm_x, x_gate, x_shift, x_scale, x_ff_gate = self.attn_norm(x, emb=t)
+        norm_text, t_gate, t_shift, t_scale, t_ff_gate = self.t_attn_norm(text, emb=t)
+        q_a, k_a, v_a = self._qkv(self.attn, norm_x)
+        q_t, k_t, v_t = self._qkv(self.t_attn, norm_text)
+        q_a, k_a = self._apply_rope(q_a, k_a, rope)
+        query, key, value = [torch.cat(streams, dim=2) for streams in
+                             ((q_a, q_t), (k_a, k_t), (v_a, v_t))]
+        valid = torch.cat((mask, text_mask), dim=1)[:, None, None, :]
+        attended = F.scaled_dot_product_attention(
+            query, key, value, attn_mask=valid, dropout_p=0.0, is_causal=False,
+        ).transpose(1, 2).flatten(2)
+        a_out, t_out = attended.split((x.shape[1], text.shape[1]), dim=1)
+        a_out = self.attn.to_out[1](self.attn.to_out[0](a_out))
+        t_out = self.t_attn.to_out[1](self.t_attn.to_out[0](t_out))
+        x = x + x_gate[:, None] * a_out
+        text = text + t_gate[:, None] * t_out
+        x = x + x_ff_gate[:, None] * self.ff(self.ff_norm(x) * (1 + x_scale[:, None]) + x_shift[:, None])
+        text = text + t_ff_gate[:, None] * self.t_ff(
+            self.t_ff_norm(text) * (1 + t_scale[:, None]) + t_shift[:, None],
+        )
+        return x.masked_fill(~mask[..., None], 0.0), text.masked_fill(~text_mask[..., None], 0.0)
+
     def joint_attn(
         self, norm_x, norm_v, norm_text, mask=None, v_mask=None,
         rope=None, v_rope=None, text_mask=None, temporal_band_bias=None,
@@ -517,7 +545,12 @@ class DiT_VT_MMDiT(DiT):
         temporal_band_fixed_offset_seconds=0.0,
         temporal_band_fixed_sigma_seconds=0.100,
         temporal_band_bidirectional=False,
+        text_audio_only=False,
     ):
+        if type(text_audio_only) is not bool:
+            raise TypeError("text_audio_only must be bool")
+        if text_audio_only and not text_joint_attention:
+            raise ValueError("text_audio_only requires text_joint_attention=True")
         if type(temporal_band_enabled) is not bool or type(temporal_band_bidirectional) is not bool:
             raise TypeError("temporal_band_enabled and temporal_band_bidirectional must be bools")
         if temporal_band_mode != "fixed":
@@ -558,6 +591,7 @@ class DiT_VT_MMDiT(DiT):
         self.n_mm_layers = n_mm_layers
         self.n_text_layers = n_mm_layers if n_text_layers is None else n_text_layers
         self.text_joint_attention = bool(text_joint_attention)
+        self.text_audio_only = text_audio_only
         if self.text_joint_attention and (
             self.n_mm_layers == 0 or self.n_text_layers != self.n_mm_layers or prompt_isolated_ca
         ):
@@ -702,6 +736,91 @@ class DiT_VT_MMDiT(DiT):
             if abs(self.temporal_band.audio_fps / self.temporal_band.video_fps - self.audio_video_ratio) > 1e-6:
                 raise ValueError("temporal-band audio/video frame-rate ratio must match audio_video_ratio")
 
+        if self.text_audio_only:
+            # Runtime policy only: all AVT state-dict keys and shapes survive.
+            self.text_embed.mask_padding = True
+            for block in self.transformer_blocks:
+                block.attn.processor.attn_mask_enabled = True
+            self.video_embed.requires_grad_(False)
+            for block in self.transformer_blocks[: self.n_mm_layers]:
+                for name, parameter in block.named_parameters():
+                    if name.startswith("v_"):
+                        parameter.requires_grad_(False)
+
+    def _forward_text_audio(
+        self, x, cond, text, time, *, mask, text_mask, generation_mask,
+        drop_audio_cond, drop_text, speaker_embedding, drop_speaker, cache, compute_ctc,
+    ):
+        _validate_generation_mask(x, generation_mask)
+        if generation_mask.device != x.device:
+            raise ValueError("generation_mask must be on the latent device")
+        batch, length = x.shape[:2]
+        if cond.shape != x.shape:
+            raise ValueError("Text/audio conditioning must match the noisy latent shape")
+        if mask is None:
+            mask = torch.ones((batch, length), device=x.device, dtype=torch.bool)
+        if mask.dtype != torch.bool or mask.shape != (batch, length) or mask.device != x.device:
+            raise ValueError("Audio mask must be bool [batch, audio frames] on the latent device")
+        if not mask.any(dim=1).all():
+            raise ValueError("Every sample must contain valid audio frames")
+        if text_mask is None:
+            text_mask = text != -1
+        if text.ndim != 2 or text.shape[0] != batch or text_mask.shape != text.shape:
+            raise ValueError("Text and text_mask must have matching [batch, tokens] shapes")
+        if text_mask.dtype != torch.bool or text_mask.device != x.device or not text_mask.any(dim=1).all():
+            raise ValueError("Every sample requires a nonempty boolean text mask on the latent device")
+        if time.ndim == 0:
+            time = time.repeat(batch)
+        t = self.time_embed(time)
+        speaker_delta = self.get_speaker_delta(
+            speaker_embedding, t,
+            drop_speaker=drop_audio_cond if drop_speaker is None else drop_speaker,
+        )
+        text = text.masked_fill(~text_mask, -1)
+        text_embed = self.text_embed(text, text.shape[1], drop_text=drop_text, audio_mask=mask)
+        if self.normalize_text_context:
+            text_embed, text_mask = self._stabilize_text_context(text_embed, text_mask)
+        text_embed = self.text_joint_proj(text_embed).masked_fill(~text_mask[..., None], 0.0)
+
+        # Mask before and between input convolutions: padded latent values must
+        # never leak into a real frame through convolution or attention.
+        x = x.masked_fill(~mask[..., None], 0.0)
+        cond = torch.zeros_like(cond) if drop_audio_cond else cond.masked_fill(~mask[..., None], 0.0)
+        x = self.input_embed.proj(torch.cat((x, cond), dim=-1)).masked_fill(~mask[..., None], 0.0)
+        positional = x.transpose(1, 2)
+        for layer in self.input_embed.conv_pos_embed.conv1d:
+            positional = layer(positional).masked_fill(~mask[:, None], 0.0)
+        x = (x + positional.transpose(1, 2)).masked_fill(~mask[..., None], 0.0)
+        residual = x if self.long_skip_connection is not None else None
+        rope = self.rotary_embed.forward_from_seq_len(length)
+        lens = mask.sum(dim=1)
+        intermediates_ctc = {}
+        for index, block in enumerate(self.transformer_blocks):
+            block_t = t + speaker_delta if (
+                speaker_delta is not None and index >= self.speaker_condition_start_layer
+            ) else t
+            if index < self.n_mm_layers:
+                args = (x, text_embed, block_t, mask, text_mask, rope)
+                if self.checkpoint_activations and self.training:
+                    x, text_embed = torch.utils.checkpoint.checkpoint(
+                        block.forward_text_audio, *args, use_reentrant=False,
+                    )
+                else:
+                    x, text_embed = block.forward_text_audio(*args)
+            else:
+                if self.checkpoint_activations and self.training:
+                    x = torch.utils.checkpoint.checkpoint(block, x, block_t, mask, rope, use_reentrant=False)
+                else:
+                    x = block(x, block_t, mask=mask, rope=rope)
+                x = x.masked_fill(~mask[..., None], 0.0)
+            if compute_ctc and not cache and index in self.layer_map_ctc:
+                z_tilde, z_lens = self.projectors_ctc[self.layer_map_ctc[index]](x, lens)
+                intermediates_ctc[index] = {"z_tilde": z_tilde, "z_lens": z_lens}
+        if residual is not None:
+            x = self.long_skip_connection(torch.cat((x, residual), dim=-1))
+        output = self.proj_out(self.norm_out(x, t)).masked_fill(~mask[..., None], 0.0)
+        return output, intermediates_ctc
+
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
             if speaker_embedding is not None:
@@ -827,7 +946,19 @@ class DiT_VT_MMDiT(DiT):
         drop_speaker: bool | None = None,
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
+        compute_ctc: bool = True,
     ):
+        if self.text_audio_only:
+            if video is not None:
+                raise ValueError("text_audio_only expects video=None; visual features are not used")
+            if cfg_infer:
+                raise ValueError("Use CFMTextAudio.sample for CFG without AVT packed branches")
+            return self._forward_text_audio(
+                x, cond, text, time, mask=mask, text_mask=text_mask,
+                generation_mask=generation_mask, drop_audio_cond=drop_audio_cond,
+                drop_text=drop_text, speaker_embedding=speaker_embedding,
+                drop_speaker=drop_speaker, cache=cache, compute_ctc=compute_ctc,
+            )
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
         if generation_mask is None:
