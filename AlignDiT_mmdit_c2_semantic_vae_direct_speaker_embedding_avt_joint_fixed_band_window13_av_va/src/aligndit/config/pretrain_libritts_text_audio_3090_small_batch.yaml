@@ -1,0 +1,19 @@
+defaults:
+  - pretrain_libritts_text_audio
+  - _self_
+
+# Explicitly preserve the initial 2,400-frame, single-update batch plan.
+# This differs from the other 3090 preset (1,200 frames with accumulation 2).
+# A separate model name keeps its checkpoints apart from the A40 large-batch run.
+datasets:
+  batch_size_per_gpu: 2400
+  max_samples: 16
+model:
+  name: AlignDiT_LibriTTS_text_audio_12AT6A_svae_speaker_3090_smallbatch_50k
+  arch:
+    checkpoint_activations: true
+optim:
+  max_updates: 50000
+  learning_rate: 5.0e-5
+  num_warmup_updates: 5000
+  grad_accumulation_steps: 1
