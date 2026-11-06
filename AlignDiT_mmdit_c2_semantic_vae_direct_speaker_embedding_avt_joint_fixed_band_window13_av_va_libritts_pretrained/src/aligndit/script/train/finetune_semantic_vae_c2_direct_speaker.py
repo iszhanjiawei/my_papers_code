@@ -106,6 +106,7 @@ def main(model_cfg):
         expected_parent_size=model_cfg.ckpts.expected_parent_size,
         expected_parent_contract_sha256=model_cfg.ckpts.expected_parent_contract_sha256,
         expected_parent_update=model_cfg.ckpts.expected_parent_update,
+        initialization_mode=model_cfg.ckpts.get("initialization_mode", "s2c"),
         ctc_target_lambda=model_cfg.model.ctc_lambda,
         ctc_warmup_start=model_cfg.model.ctc_warmup_start,
         ctc_warmup_end=model_cfg.model.ctc_warmup_end,
@@ -113,6 +114,7 @@ def main(model_cfg):
     trainer.run_until_update = int(model_cfg.optim.run_until_update)
     set_seed(int(model_cfg.seed) + trainer.accelerator.process_index)
     if trainer.is_main:
+        libritts_parent = model_cfg.ckpts.get("initialization_mode", "s2c") == "libritts_text_audio"
         save_dir = Path(model_cfg.ckpts.save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
         contract = {
@@ -120,8 +122,15 @@ def main(model_cfg):
             "project_dir": str(Path.cwd()),
             "config": OmegaConf.to_container(model_cfg, resolve=True),
             "speaker_cache_metadata": speaker_metadata,
-            "initialization": "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter",
-            "speaker_condition": "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17",
+            "initialization": (
+                "complete LibriTTS text/audio/speaker 50k EMA; vocabulary rows mapped to unchanged CelebVDub IDs; "
+                "new optimizer/update counter; carry parent EMA step"
+                if libritts_parent else "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter"
+            ),
+            "speaker_condition": (
+                "L2 CAM++ -> LibriTTS-pretrained bias-free Linear(192,768), blocks 12..17"
+                if libritts_parent else "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17"
+            ),
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }

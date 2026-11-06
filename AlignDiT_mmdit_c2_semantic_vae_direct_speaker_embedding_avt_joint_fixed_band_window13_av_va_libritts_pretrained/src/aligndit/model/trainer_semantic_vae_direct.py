@@ -1,4 +1,4 @@
-"""Original C2 trainer with strict S2c EMA loading and no altered optimization policy."""
+"""Original C2 training with explicit, audited parent EMA initialization."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from aligndit.model.trainer_vt import Trainer_VT
 
 
 class SemanticVaeDirectC2Trainer(Trainer_VT):
-    """Preserve C2 training while enforcing the one permitted parent migration."""
+    """Preserve C2 training while validating the selected parent migration."""
 
     def __init__(
         self,
@@ -28,8 +28,13 @@ class SemanticVaeDirectC2Trainer(Trainer_VT):
         expected_parent_size: int,
         expected_parent_contract_sha256: str,
         expected_parent_update: int = 70_000,
+        initialization_mode: str = "s2c",
         **kwargs,
     ):
+        if initialization_mode not in {"s2c", "libritts_text_audio"}:
+            raise ValueError(f"Unsupported parent initialization mode: {initialization_mode}")
+        self.initialization_mode = initialization_mode
+        self.parent_model_cfg = kwargs.get("model_cfg_dict")
         self.parent_contract_path = parent_contract_path
         self.expected_parent_sha256 = expected_parent_sha256
         self.expected_parent_size = expected_parent_size
@@ -38,9 +43,13 @@ class SemanticVaeDirectC2Trainer(Trainer_VT):
         super().__init__(*args, **kwargs)
 
     def load_pretrained(self, pretrained_path):
-        """Load exactly the compatible S2c EMA tensors into online and EMA models."""
+        """Initialize online and EMA weights from the explicitly selected parent."""
+
+        if self.initialization_mode == "libritts_text_audio":
+            return self._load_libritts_pretrained(pretrained_path)
 
         self.accelerator.wait_for_everyone()
+
         if self.is_main:
             validate_parent_artifacts(
                 pretrained_path,
@@ -99,6 +108,72 @@ class SemanticVaeDirectC2Trainer(Trainer_VT):
             )
 
         del source_state
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        self.accelerator.wait_for_everyone()
+
+    def _load_libritts_pretrained(self, pretrained_path):
+        """Initialize all streams without restoring optimizer or training updates."""
+        from aligndit.model.libritts_pretrained_migration import (
+            load_libritts_ema_into_model,
+            validate_libritts_checkpoint_artifact,
+        )
+
+        def collective_error(error):
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                errors = [None] * torch.distributed.get_world_size()
+                torch.distributed.all_gather_object(errors, error)
+            else:
+                errors = [error]
+            if any(errors):
+                raise RuntimeError("LibriTTS initialization failed: " + "; ".join(item for item in errors if item))
+
+        error = None
+        if self.is_main:
+            try:
+                validate_libritts_checkpoint_artifact(pretrained_path, self.parent_model_cfg)
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+        collective_error(error)
+
+        online_model = self.accelerator.unwrap_model(self.model)
+        error, report = None, None
+        try:
+            report = load_libritts_ema_into_model(
+                online_model, pretrained_path, self.parent_model_cfg, verify_checkpoint_hash=False,
+            )
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        collective_error(error)
+
+        error = None
+        if self.is_main:
+            try:
+                self.ema_model.ema_model.load_state_dict(online_model.state_dict(), strict=True)
+                self.ema_model.initted.fill_(True)
+                # The original fixed-13 loader carries its parent's EMA step.
+                # Only the optimizer/global counter starts a fresh downstream run.
+                self.ema_model.step.fill_(report["parent_ema_step"])
+                destination = Path(self.checkpoint_path)
+                destination.mkdir(parents=True, exist_ok=True)
+                temporary = destination / "parent_migration.json.tmp"
+                with temporary.open("w", encoding="utf-8") as file:
+                    json.dump(report, file, ensure_ascii=False, indent=2, sort_keys=True)
+                    file.write("\n")
+                    file.flush()
+                    os.fsync(file.fileno())
+                os.replace(temporary, destination / "parent_migration.json")
+                print(
+                    "Strict LibriTTS EMA migration passed: "
+                    f"source_update={report['parent_update']}, loaded={report['loaded_key_count']}, "
+                    f"vocabulary_remapped={len(report['row_remappings'])}, "
+                    f"EMA step={report['parent_ema_step']}; fresh downstream optimizer/update counter",
+                    flush=True,
+                )
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+        collective_error(error)
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

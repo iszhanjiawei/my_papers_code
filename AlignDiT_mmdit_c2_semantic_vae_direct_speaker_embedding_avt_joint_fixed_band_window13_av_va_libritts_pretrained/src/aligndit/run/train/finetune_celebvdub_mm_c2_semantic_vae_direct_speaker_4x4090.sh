@@ -17,17 +17,13 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-parent_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech"
+parent_dir="${ROOT_PREFIX}/zjw524/projects/alignDiT_idea6/libriSpeech_LibriTTS_pretrained_models"
 if [[ ! -x "$python_bin" ]]; then
     echo "Missing AlignDiT Python interpreter: $python_bin" >&2
     exit 1
 fi
-if [[ ! -f "$parent_dir/model_70000.pt" || -L "$parent_dir/model_70000.pt" ]]; then
-    echo "Missing regular S2c 70k checkpoint: $parent_dir/model_70000.pt" >&2
-    exit 1
-fi
-if [[ ! -f "$parent_dir/training_contract.json" || -L "$parent_dir/training_contract.json" ]]; then
-    echo "Missing regular S2c training contract: $parent_dir/training_contract.json" >&2
+if [[ ! -f "$parent_dir/model_00050000.pt" || -L "$parent_dir/model_00050000.pt" ]]; then
+    echo "Missing regular LibriTTS 50k checkpoint: $parent_dir/model_00050000.pt" >&2
     exit 1
 fi
 if [[ "$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)" -lt 4 ]]; then
@@ -43,7 +39,7 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-echo "Launching isolated $project_root: AVT joint12 + fixed A<->V sigma=0.150s (13-frame soft core) + CAM++ tail6, LR=5e-5, CTC 0@10k -> 0.03@30k, stop at 200k" >&2
+echo "Launching isolated $project_root: AVT joint12 + fixed A<->V sigma=0.150s (13-frame soft core), LibriTTS 50k parent + CAM++ tail6, LR=5e-5, CTC 0@10k -> 0.03@30k, stop at 200k" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     OMP_NUM_THREADS=1 \
@@ -58,7 +54,7 @@ exec env \
         --num_machines 1 \
         --dynamo_backend no \
         --num_processes 4 \
-        --main_process_port "${TRAIN_PORT:-29638}" \
+        --main_process_port "${TRAIN_PORT:-29642}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
-        --config-name finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window13_av_va \
+        --config-name finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained \
         "$@"
