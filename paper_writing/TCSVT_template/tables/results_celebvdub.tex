@@ -1,0 +1,23 @@
+% Values transcribed programmatically from ../../../../实验结果.md.
+\begin{table*}[!t]
+\centering
+\caption{Dubbing results on CelebV-Dub. Setting 1 uses same-utterance reference speech ($n=213$); Setting 2 uses a different utterance from the same speaker ($n=115$). Bold indicates the best result within each setting. WER is reported as a percentage.}
+\label{tab:celebvdub}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+ & \multicolumn{4}{c}{Setting 1} & \multicolumn{4}{c}{Setting 2} \\
+\cmidrule(lr){2-5}\cmidrule(l){6-9}
+Method & SPKSIM $\uparrow$ & WER (\%) $\downarrow$ & EMOSIM $\uparrow$ & AVSync $\uparrow$ & SPKSIM $\uparrow$ & WER (\%) $\downarrow$ & EMOSIM $\uparrow$ & AVSync $\uparrow$ \\
+\midrule
+HPMDubbing~\cite{cong2023hpmdubbing} & 0.03159 & 94.74300 & 0.36929 & 0.17589 & 0.01926 & 96.33934 & 0.37384 & 0.09775 \\
+StyleDubber~\cite{cong2024styledubber} & 0.15389 & 6.51800 & 0.62960 & 0.28404 & 0.15215 & \textbf{3.54445} & 0.62092 & 0.23025 \\
+Speaker2Dubber~\cite{zhang2024speaker2dubber} & 0.13636 & 19.80700 & 0.56191 & 0.24827 & 0.12467 & 19.11679 & 0.56932 & 0.16961 \\
+ProDubber~\cite{zhang2025produbber} & 0.26955 & 6.39200 & 0.55802 & 0.15488 & 0.25038 & 3.71877 & 0.59113 & 0.13666 \\
+AlignDiT~\cite{choi2025aligndit} & 0.59430 & 7.02000 & \textbf{0.76760} & 0.49530 & 0.55403 & 7.03080 & 0.73472 & 0.45543 \\
+\midrule
+\textbf{Ours} & \textbf{0.66590} & \textbf{4.87800} & 0.76250 & \textbf{0.56936} & \textbf{0.64048} & 5.75247 & \textbf{0.74057} & \textbf{0.50976} \\
+\bottomrule
+\end{tabular}
+\end{table*}

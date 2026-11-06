@@ -1,0 +1,23 @@
+% Values transcribed programmatically from ../../../../实验结果.md.
+\begin{table*}[!t]
+\centering
+\caption{Dubbing results on GRID. Setting 1 uses same-utterance reference speech ($n=3,274$); Setting 2 uses a different utterance from the same speaker ($n=3,274$). Bold indicates the best result within each setting. WER is reported as a percentage.}
+\label{tab:grid}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+ & \multicolumn{4}{c}{Setting 1} & \multicolumn{4}{c}{Setting 2} \\
+\cmidrule(lr){2-5}\cmidrule(l){6-9}
+Method & SPKSIM $\uparrow$ & WER (\%) $\downarrow$ & EMOSIM $\uparrow$ & AVSync $\uparrow$ & SPKSIM $\uparrow$ & WER (\%) $\downarrow$ & EMOSIM $\uparrow$ & AVSync $\uparrow$ \\
+\midrule
+HPMDubbing~\cite{cong2023hpmdubbing} & 0.52886 & 18.20000 & 0.62856 & 0.68447 & 0.51435 & 18.29500 & 0.62570 & 0.68167 \\
+StyleDubber~\cite{cong2024styledubber} & 0.74505 & \textbf{12.07300} & 0.77539 & 0.12515 & 0.70476 & \textbf{11.74700} & 0.76905 & 0.12401 \\
+Speaker2Dubber~\cite{zhang2024speaker2dubber} & 0.71795 & 13.11000 & 0.77016 & 0.12549 & 0.67186 & 13.01000 & 0.76698 & 0.12494 \\
+ProDubber~\cite{zhang2025produbber} & 0.77473 & 12.60900 & 0.78537 & 0.14551 & \textbf{0.72084} & 13.44600 & 0.76697 & 0.14269 \\
+AlignDiT~\cite{choi2025aligndit} & 0.71965 & 20.10300 & 0.83572 & 0.76157 & 0.66618 & 17.05800 & 0.81782 & 0.74823 \\
+\midrule
+\textbf{Ours} & \textbf{0.81041} & 12.93500 & \textbf{0.87838} & \textbf{0.78267} & 0.68471 & 15.03767 & \textbf{0.84482} & \textbf{0.76594} \\
+\bottomrule
+\end{tabular}
+\end{table*}

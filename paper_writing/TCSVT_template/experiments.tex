@@ -1,0 +1,119 @@
+% !TeX root = manuscript.tex
+% Experiments draft, 2026-11-06.
+% Numerical source: ../../../实验结果.md (author-designated current results).
+% AUTHOR CONFIRMATION IN THIS CONVERSATION:
+% "这些数值已由当前模型重测，VTS 确实关闭 Text".
+% This supersedes the historical adaptive-band/REPA checkpoint assignments and
+% pseudo-transcript VTS configuration in the older benchmark reports.
+% Keep fresh run manifests/checkpoint IDs with the final submission artifacts.
+% Metric definitions, fixed evaluation lists, and baseline adaptations below
+% follow the local evaluation protocols. No new experiments were run to draft
+% this section. Ablations are intentionally left empty at the author's request.
+\section{Experiments}
+\label{sec:experiments}
+
+We evaluated the framework on CelebV-Dub and GRID under two reference-speech settings. We additionally examined cross-dataset reference transfer, video-to-speech generation without text conditioning, and visual forced alignment. These experiments assessed content accuracy, speaker similarity, emotional similarity, and audiovisual correspondence under different input conditions.
+
+\subsection{Experimental Setup}
+\label{sec:experimental_setup}
+
+\subsubsection{Datasets and reference protocols}
+
+CelebV-Dub~\cite{sungbin2025voicecraftdub} contains expressive speech from real-world videos, whereas GRID~\cite{cooke2006grid} provides controlled recordings of six-word sentences. We trained dataset-specific models using 79,613 preprocessed CelebV-Dub utterances and 29,531 GRID utterances. The retained GRID training and validation partitions contain the same 33 speakers but have disjoint utterances. The GRID evaluation therefore measures generalization to held-out utterances within this speaker set.
+
+Following reference-based dubbing evaluation~\cite{cong2024styledubber,zhang2024speaker2dubber}, we considered two settings. In \emph{Setting 1}, the original speech of the target clip served as the reference recording. In \emph{Setting 2}, the reference was a different utterance from the same speaker. Both settings supplied the target video and its ground-truth script. Setting 1 provides an oracle acoustic reference containing the target utterance, while Setting 2 separates reference content from target content.
+
+CelebV-Dub Setting 1 contained 213 target clips. Setting 2 used 115 targets with fixed, automatically selected cross-utterance reference pairs. Since these target sets differ, comparisons between their aggregate scores do not isolate the effect of reference selection. GRID used the same 3,274 held-out targets in both settings, with a fixed different-utterance reference assignment for Setting 2. Comparisons between methods within each table used the same target set and reference assignments.
+
+\subsubsection{Implementation and comparison methods}
+
+We optimized the generator using AdamW with a learning rate of $5\times10^{-5}$, 20,000 warmup updates, and gradient clipping at 1.0. Training used BF16 precision and a batch budget of 3,600 latent frames per GPU. The Semantic-VAE remained frozen, and its channel-wise normalization statistics were estimated from the LibriSpeech training split. We used exponential moving averaged weights with decay 0.999 for inference. Dubbing employed 32 Euler steps, sway coefficient $-1$, text/reference guidance strength 5, and visual guidance strength 2. The generation seed was fixed to 0, and the output duration followed the prescribed target-clip duration.
+
+The dubbing comparisons included HPMDubbing~\cite{cong2023hpmdubbing}, StyleDubber~\cite{cong2024styledubber}, Speaker2Dubber~\cite{zhang2024speaker2dubber}, ProDubber~\cite{zhang2025produbber}, and AlignDiT~\cite{choi2025aligndit}. AlignDiT was the principal comparison because it also learns internal alignment without external duration supervision. Baselines retained their respective acoustic and visual front ends. Generated target speech was evaluated with a common metric pipeline, after removing any reference prefix and converting outputs to 16-kHz mono audio.
+
+\subsubsection{Evaluation metrics}
+
+We reported four complementary dubbing metrics. \emph{Word error rate (WER)} measured content accuracy using Whisper large-v3~\cite{radford2023whisper} through faster-whisper, with English decoding and beam size 5. WER was computed as the total number of word substitutions, deletions, and insertions divided by the total number of reference words. We report percentages throughout. Text normalization was fixed within each dataset; GRID normalization preserved its spoken letter tokens.
+
+\emph{Speaker similarity (SPKSIM)} was the cosine similarity between generated and reference-speech embeddings from a WavLM-Large-based speaker verification model~\cite{chen2022wavlm}. The comparison recording was the actual reference supplied to the generator. \emph{Emotional similarity (EMOSIM)} compared emotion2vec+ Large classification-score vectors~\cite{ma2024emotion2vec} from generated and original target speech. This metric measures similarity of predicted emotion scores.
+
+\emph{Audiovisual synchronization (AVSync)} followed the AV-HuBERT-based evaluation used by AlignDiT~\cite{choi2025aligndit}. We extracted joint audiovisual features from the target mouth video paired with generated speech and with original target speech. We computed frame-wise cosine similarities, averaged within each utterance, and then averaged across utterances. SPKSIM and EMOSIM were also averaged across utterances. These similarity metrics are cosine scores, with larger values indicating greater agreement; they are not accuracy percentages. Visual alignment metrics are defined separately in Section~\ref{sec:vfa_experiment}.
+
+\input{tables/results_celebvdub}
+\input{tables/results_grid}
+
+\subsection{Comparison on Automatic Video Dubbing}
+\label{sec:dubbing_results}
+
+\subsubsection{CelebV-Dub}
+
+Our model achieved the highest AVSync and SPKSIM in both CelebV-Dub settings, as shown in Table~\ref{tab:celebvdub}. In Setting 1, AVSync increased from AlignDiT's 0.4953 to 0.5694, and SPKSIM increased from 0.5943 to 0.6659. WER decreased from 7.02\% to 4.88\%, a relative reduction of 30.51\%. The model attained the best reported values for these three metrics. EMOSIM was 0.7625, slightly below AlignDiT's 0.7676.
+
+The improvements over AlignDiT were retained with cross-utterance references in Setting 2. AVSync increased from 0.4554 to 0.5098, while SPKSIM increased from 0.5540 to 0.6405. WER decreased from 7.03\% to 5.75\%, corresponding to an 18.18\% relative reduction. Our model also achieved the highest EMOSIM of 0.7406. StyleDubber and ProDubber obtained lower WERs in this setting, at 3.54\% and 3.72\%, respectively. Thus, our strongest advantages on this evaluation were audiovisual correspondence and speaker similarity, alongside improved intelligibility relative to AlignDiT.
+
+\subsubsection{GRID}
+
+Table~\ref{tab:grid} shows that our model achieved the highest AVSync and EMOSIM in both GRID settings. Under Setting 1, it also obtained the highest SPKSIM of 0.8104. Compared with AlignDiT, WER decreased from 20.10\% to 12.94\%, a 35.66\% relative reduction. AVSync increased from 0.7616 to 0.7827. StyleDubber and ProDubber produced lower WERs, although their AVSync scores were substantially below those of the two implicitly aligned generators.
+
+Under Setting 2, our model achieved an AVSync score of 0.7659 and an EMOSIM score of 0.8448. Relative to AlignDiT, SPKSIM increased from 0.6662 to 0.6847, and WER decreased from 17.06\% to 15.04\%. This corresponds to an 11.84\% relative WER reduction. ProDubber and StyleDubber attained higher SPKSIM, and several baselines attained lower WER. Across the four dataset--setting combinations, our model consistently led in AVSync and improved both WER and SPKSIM over AlignDiT.
+
+\subsection{Zero-Shot Dubbing with Cross-Dataset References}
+\label{sec:zero_shot_experiment}
+
+We examined reference transfer by pairing the 213 CelebV-Dub target clips with fixed reference assignments from GRID. The target videos and scripts remained from CelebV-Dub. The CelebV-Dub-trained model was used without further training on the GRID references. Here, zero-shot evaluation refers specifically to using reference speech from another dataset. Each target received one predefined GRID recording, and all compared methods used the same assignments.
+
+\input{tables/results_zero_shot}
+
+Our model obtained the highest SPKSIM and AVSync and the lowest WER in this comparison (Table~\ref{tab:zero_shot}). Relative to AlignDiT, SPKSIM increased from 0.4014 to 0.4704, and AVSync increased from 0.4352 to 0.5104. WER decreased from 7.44\% to 5.59\%, a relative reduction of 24.86\%. EMOSIM was 0.5824, below AlignDiT's 0.5994. These results showed improved transfer of the supplied reference voice while maintaining target-script accuracy and audiovisual correspondence. The emotional-score comparison remained tied to the original CelebV-Dub speech, rather than to the external GRID reference.
+
+\subsection{Video-to-Speech Generation without Text Conditioning}
+\label{sec:vts_experiment}
+
+We next evaluated the model with its text conditioning disabled. The generator received the silent target video and reference speech, without either a supplied target script or a lip-reading transcript entering its text stream. We used the 213 CelebV-Dub Setting 1 targets and retained the same-utterance reference protocol. This experiment therefore assessed text-free conditioning under an oracle acoustic-reference setting. Baselines included AlignDiT~\cite{choi2025aligndit}, IntelligibleL2S~\cite{choi2023intelligible}, and LipVoicer~\cite{yemini2024lipvoicer}, using their respective inference interfaces. Reference speech was provided to methods supporting reference conditioning.
+
+\input{tables/results_vts}
+
+As shown in Table~\ref{tab:vts}, our model achieved the best values for all three reported metrics. WER was 31.75\%, compared with 32.72\% for AlignDiT, 41.34\% for IntelligibleL2S, and 40.33\% for LipVoicer. The reduction relative to AlignDiT was 0.97 percentage points. AVSync and SPKSIM increased from 0.4281 to 0.4730 and from 0.5535 to 0.6366, respectively. These observations support the model's use without textual conditioning while retaining visual and reference-speech inputs.
+
+\subsection{Visual Forced Alignment}
+\label{sec:vfa_experiment}
+
+We further examined whether synchronized speech generation could support word localization in silent video. Following the synthesis-based formulation of AlignDiT~\cite{choi2025aligndit}, we generated speech from the target video, transcript, and reference recording. We then applied the Montreal Forced Aligner (MFA)~\cite{mcauliffe2017mfa} to the generated waveform and the same transcript to obtain word boundaries. This downstream use of MFA is separate from generator training, which requires no forced-alignment preprocessing.
+
+The evaluation used CelebV-Dub Setting 2, comprising 115 clips, 1,726 words, and 13,283 video frames. Cross-utterance references followed the same-speaker pairing list. Reference boundaries were obtained automatically by applying MFA to the original target recordings. The target recordings and their boundaries were excluded from generation. Both original and generated speech used MFA 3.4.0 with the same English acoustic model, dictionary, and alignment settings.
+
+For $W$ word occurrences, we measured the mean absolute error of start and end times:
+\begin{equation}
+    \mathrm{MAE}=
+    \frac{1000}{2W}\sum_{k=1}^{W}
+    \left(|\widehat s_k-s_k|+|\widehat e_k-e_k|\right),
+    \label{eq:vfa_mae}
+\end{equation}
+where timestamps are in seconds and MAE is reported in milliseconds. We also computed frame-level alignment accuracy:
+\begin{equation}
+    \mathrm{ACC}=\frac{100}{F}
+    \sum_{j=1}^{F}\mathbf{1}[\widehat\ell_j=\ell_j],
+    \label{eq:vfa_accuracy}
+\end{equation}
+where $F$ is the total frame count. Labels identify word occurrences at 25-Hz frame centers, with a separate label for silence. Repeated words have distinct occurrence indices, and both metrics are aggregated over the complete evaluation set.
+
+We compared against AlignDiT, KWS-Net~\cite{momeni2020kwsnet}, Transpotter~\cite{prajwal2021transpotter}, and a visual CTC-based alignment baseline. KWS-Net and Transpotter were adapted to complete transcripts using fixed monotonic dynamic programming. The CTC baseline combined Auto-AVSR visual predictions~\cite{ma2023autoavsr} with CTC segmentation~\cite{kurzinger2020ctcsegmentation}. These adaptations are identified in Table~\ref{tab:vfa}.
+
+\input{tables/results_vfa}
+
+Our model obtained the lowest MAE of 52.40 ms and the highest ACC of 81.62\%. Compared with AlignDiT, MAE decreased by 13.33 ms, corresponding to a 20.27\% relative reduction. ACC increased by 6.47 percentage points. The improvement extended the model's applicability from speech generation to word-level temporal localization under this synthesis-based protocol. Since reference timestamps were produced by MFA, the results quantify agreement with automatic alignment annotations.
+
+\subsection{Ablation Studies}
+\label{sec:ablations}
+% Intentionally left blank. The author will add controlled ablation results.
+
+% Reproducibility notes for the next draft (not manuscript prose):
+% - Bind every author-confirmed rerun to its final checkpoint, manifest and
+%   actual text-input mode; do not substitute the older checkpoint paths.
+% - Current GRID data split is speaker-overlapping, not unseen-speaker testing.
+% - CelebV-Dub S1 and S2 have different target sets (213 versus 115).
+% - VTS text removal follows the author's explicit current-run confirmation.
+%   It is distinct from the older lip-reading-pseudo-transcript pipeline.
+% - VFA ACC is frame-label accuracy including silence, not a boundary tolerance
+%   success rate; MFA reference boundaries are automatic, not manual.
+% - No subjective study, significance test, or ablation result has been added.

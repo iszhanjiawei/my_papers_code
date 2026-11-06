@@ -1,0 +1,36 @@
+% !TeX program = pdflatex
+% Working manuscript for IEEE TCSVT; the original IEEE sample is retained.
+\documentclass[letterpaper,journal]{IEEEtran}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{cite}
+\usepackage{xurl}
+\usepackage[hidelinks]{hyperref}
+\hyphenation{audio-visual multi-modal}
+
+\begin{document}
+
+% Author-selected title and method name; the author list is pending.
+\title{JointDub: Locality-Aware Multimodal Diffusion Transformer for Synchronized Video Dubbing}
+\author{Author information to be added}
+\maketitle
+
+\input{abstract}
+
+\begin{IEEEkeywords}
+Video dubbing, multimodal diffusion transformer, audiovisual synchronization,
+implicit alignment.
+\end{IEEEkeywords}
+
+\input{introduction}
+\input{related_work}
+\input{method}
+\input{experiments}
+\input{conclusion}
+\input{acknowledgment}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

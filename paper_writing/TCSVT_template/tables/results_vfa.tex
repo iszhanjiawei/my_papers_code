@@ -1,0 +1,20 @@
+% Values transcribed programmatically from ../../../../实验结果.md.
+\begin{table}[!t]
+\centering
+\caption{Visual forced alignment on CelebV-Dub Setting 2: 115 clips, 1,726 words, and 13,283 video frames. DP denotes the fixed monotonic decoding adaptation for keyword models. Bold indicates the best result.}
+\label{tab:vfa}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Method & MAE (ms) $\downarrow$ & ACC (\%) $\uparrow$ \\
+\midrule
+KWS-Net + DP~\cite{momeni2020kwsnet} & 202.43375 & 41.27833 \\
+CTC-based (Auto-AVSR)~\cite{ma2023autoavsr,kurzinger2020ctcsegmentation} & 210.05901 & 27.14748 \\
+Transpotter + DP~\cite{prajwal2021transpotter} & 158.37679 & 53.54212 \\
+AlignDiT~\cite{choi2025aligndit} & 65.72662 & 75.15621 \\
+\midrule
+\textbf{Ours} & \textbf{52.40055} & \textbf{81.62313} \\
+\bottomrule
+\end{tabular}
+\end{table}

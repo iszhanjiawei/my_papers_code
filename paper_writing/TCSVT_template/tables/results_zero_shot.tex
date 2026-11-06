@@ -1,0 +1,19 @@
+% Values transcribed programmatically from ../../../../实验结果.md.
+\begin{table}[!t]
+\centering
+\caption{Zero-shot dubbing with CelebV-Dub target clips and fixed GRID reference assignments ($n=213$). Speaker similarity is measured against the paired GRID reference. Bold indicates the best result.}
+\label{tab:zero_shot}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Method & SPKSIM $\uparrow$ & WER (\%) $\downarrow$ & EMOSIM $\uparrow$ & AVSync $\uparrow$ \\
+\midrule
+StyleDubber~\cite{cong2024styledubber} & 0.11933 & 5.76114 & 0.57172 & 0.26269 \\
+ProDubber~\cite{zhang2025produbber} & 0.25574 & 7.19092 & 0.47929 & 0.13703 \\
+AlignDiT~\cite{choi2025aligndit} & 0.40142 & 7.44300 & \textbf{0.59942} & 0.43521 \\
+\midrule
+\textbf{Ours} & \textbf{0.47041} & \textbf{5.59300} & 0.58239 & \textbf{0.51039} \\
+\bottomrule
+\end{tabular}
+\end{table}

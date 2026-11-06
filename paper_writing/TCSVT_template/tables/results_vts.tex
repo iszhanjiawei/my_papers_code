@@ -1,0 +1,19 @@
+% Values transcribed programmatically from ../../../../实验结果.md.
+\begin{table}[!t]
+\centering
+\caption{Video-to-speech results on CelebV-Dub Setting 1 ($n=213$). Our model is evaluated with text conditioning disabled. Reference speech is supplied to methods that support it. Bold indicates the best result.}
+\label{tab:vts}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Method & WER (\%) $\downarrow$ & AVSync $\uparrow$ & SPKSIM $\uparrow$ \\
+\midrule
+IntelligibleL2S~\cite{choi2023intelligible} & 41.33726 & 0.36921 & 0.25028 \\
+LipVoicer~\cite{yemini2024lipvoicer} & 40.32801 & 0.26254 & 0.07871 \\
+AlignDiT~\cite{choi2025aligndit} & 32.71657 & 0.42813 & 0.55346 \\
+\midrule
+\textbf{Ours} & \textbf{31.74937} & \textbf{0.47296} & \textbf{0.63664} \\
+\bottomrule
+\end{tabular}
+\end{table}

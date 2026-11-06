@@ -1,0 +1,9 @@
+% !TeX root = manuscript.tex
+% Claims summarize the complete framework and the evaluations in Experiments.
+% No component-level causal claim is made before the ablations are available.
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented a flow matching framework for automatic video dubbing that learns implicit alignment without external forced-alignment preprocessing during training. The framework operates in a frozen Semantic-VAE latent space and uses MM-DiT to jointly refine separate audio, visual, and textual streams. A soft temporal window introduces a Gaussian bias in both audio-to-visual and visual-to-audio attention, favoring neighboring frames while preserving global contextual interactions.
+
+On CelebV-Dub and GRID, the framework achieved the highest AVSync scores among the evaluated dubbing systems under both reference-speech settings. It also consistently reduced WER and increased speaker similarity relative to AlignDiT. Experiments with GRID reference speech and CelebV-Dub target clips further supported its ability to transfer reference voices across datasets. Beyond dubbing, the framework supported video-to-speech generation with text conditioning disabled and word localization through synthesis-based visual forced alignment. These results demonstrate its applicability to speech generation and temporal localization under the evaluated reference protocols. The video-to-speech evaluation used same-utterance reference speech; extending this evaluation to cross-utterance references remains a direction for further study.

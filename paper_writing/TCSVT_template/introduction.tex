@@ -1,0 +1,35 @@
+% !TeX root = manuscript.tex
+% Introduction draft, 2026-11-06.
+% Evidence: ../../../实验结果.md; the selected AVT joint-attention implementation.
+% Terminology: automatic video dubbing; implicit alignment;
+% multimodal diffusion transformer (MM-DiT); soft temporal window;
+% audio--visual synchronization; video-to-speech synthesis; visual forced alignment.
+% The contribution concerns modality interaction and temporal conditioning;
+% neither implicit alignment nor MM-DiT itself is claimed as a first invention.
+\section{Introduction}
+\label{sec:introduction}
+
+\IEEEPARstart{A}{utomatic} video dubbing aims to generate speech that follows a target script, matches the visible speaker's lip movements, and preserves the voice characteristics of a reference recording. This capability supports film post-production, dialogue replacement, and audiovisual content creation. Unlike text-to-speech synthesis, dubbing must satisfy linguistic, visual, and speaker constraints simultaneously~\cite{chen2022v2c,cong2023hpmdubbing}. These constraints have different temporal structures: text specifies an ordered sequence of linguistic units, video provides densely sampled articulatory cues, and reference speech conveys voice characteristics together with its own linguistic content and timing. A successful model must associate the target script with the observed articulation while controlling the generated voice.
+
+A central difficulty is learning this association without externally supplied phoneme durations. Duration-based dubbing systems explicitly expand linguistic representations onto an acoustic timeline, and some obtain their training targets through forced alignment. For example, StyleDubber~\cite{cong2024styledubber} uses the Montreal Forced Aligner~\cite{mcauliffe2017mfa} to obtain phoneme-level timing information. Such preprocessing adds a separate estimation stage whose boundary errors can affect subsequent supervision. It also makes model preparation depend on the availability and suitability of an external aligner. Learning temporal correspondence within the generator therefore offers an appealing route to synchronized speech generation.
+
+AlignDiT~\cite{choi2025aligndit} makes an important step in this direction by learning implicit alignment through conditional flow matching and connectionist temporal classification (CTC). Its generator concatenates acoustic inputs and temporally resampled lip features, then retrieves linguistic information through cross-attention to text. This formulation removes the need for forced-alignment preprocessing during training. However, after this early fusion, acoustic and visual information is processed as a combined representation rather than as separately evolving modality streams. The architecture thus does not explicitly preserve a visual state that can be refined alongside the acoustic state throughout generation. Removing external duration supervision and choosing how modalities interact are consequently two distinct design problems.
+
+Recent dubbing models further emphasize the importance of organizing these interactions. CoSyncDiT~\cite{cong2026cosyncdit} separates acoustic-style modeling, visual refinement, and linguistic integration into a staged conditioning process, motivated in part by interference between reference-speech content and target conditions. UltraDub~\cite{cong2026ultradub} uses lip-guided queries to retrieve text and speaker-style information through separate attention branches, and introduces trajectory guidance during sampling. These approaches provide different mechanisms for controlling conditional information. They also motivate a further question: how can audio, video, and text be jointly refined while their different temporal relationships remain explicit?
+
+We address this question by distinguishing global multimodal interaction from local audio--visual correspondence. Global interaction allows linguistic context and evolving acoustic features to inform the interpretation of visual cues. Local correspondence reflects a different constraint: acoustic and visual frames share a physical timeline, whereas text tokens follow linguistic order without predefined timestamps. Applying the same temporal restriction to all modality pairs would disregard this difference. We therefore combine joint attention across the three modalities with a temporal prior applied specifically to audio--visual interactions.
+
+Our framework builds on the multimodal diffusion transformer (MM-DiT) design used in image and audio generation~\cite{esser2024scaling,cheng2025mmaudio,yun2026immersivetts}. It maintains separate audio, visual, and textual streams with modality-specific transformations, while joint attention allows all three streams to exchange information and update their representations. To encourage temporally consistent acoustic--visual correspondence, we introduce a soft temporal window as a fixed Gaussian bias in both audio-to-visual and visual-to-audio attention. The bias favors nearby frames without truncating more distant interactions; within-modality and text-related interactions retain global access. Audio-only refinement blocks then map the jointly conditioned representations toward the target acoustic latents. The generator is trained with flow matching and internal CTC supervision, requiring transcripts and synchronized audiovisual recordings but no externally computed phoneme durations.
+
+We evaluate the framework on CelebV-Dub~\cite{sungbin2025voicecraftdub} and GRID~\cite{cooke2006grid}, and investigate its application to video-to-speech synthesis and visual forced alignment. Our main contributions are as follows:
+\begin{itemize}
+    \item We develop an MM-DiT-based dubbing framework that jointly updates separate audio, visual, and textual streams. This design enables modality-specific refinement and bidirectional information exchange while retaining implicit alignment without forced-alignment preprocessing during training.
+    \item We introduce a soft temporal window for audio--visual attention. By applying a Gaussian temporal bias selectively to the two audio--visual attention directions, the model combines local temporal conditioning with global contextual interaction.
+    \item We extend the framework to video-to-speech synthesis and visual forced alignment, examining its applicability to speech generation and temporal localization beyond script-conditioned dubbing.
+    \item Experiments on two public datasets show the highest audio--visual synchronization scores among the evaluated publicly available dubbing systems under both reference-speech settings. The framework also consistently achieves lower word error rates and higher speaker similarity than AlignDiT across these settings.
+\end{itemize}
+
+% Before submission, associate each extension result with the final checkpoint
+% and document any lip-reading or timestamp-extraction stages in Experiments.
+% Current summary tables do not contain direct CoSyncDiT/UltraDub comparisons
+% or controlled ablations proving the effect of each individual component.

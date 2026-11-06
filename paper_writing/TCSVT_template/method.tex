@@ -1,0 +1,227 @@
+% !TeX root = manuscript.tex
+% Method draft, 2026-11-06. Audited against the selected window13 AV/VA snapshot.
+% IMPORTANT: the active Semantic-VAE encodes waveforms, not mel spectrograms.
+% Some inherited names (mel_dim, mel_spec_module, num_mels) refer to latents.
+% Notation: t = flow time; tau = physical frame time; k = optimizer update;
+% Z = normalized acoustic latent; Z^raw = codec latent; M = generation mask;
+% H_A/H_V/H_T = audio/video/text states; B = temporal logit bias.
+\section{Proposed Method}
+\label{sec:method}
+
+Given a target video, a target script, and a reference recording with its transcript, our framework generates speech with the requested content, visual timing, and speaker characteristics. We first formulate conditional flow matching, then describe the frozen acoustic codec, the three-stream generator, and its audio--visual temporal prior. Throughout this section, $t$ denotes generative flow time, whereas $\tau$ denotes physical time within an utterance.
+
+\subsection{Flow Matching Preliminaries}
+\label{sec:flow_preliminaries}
+
+Flow matching~\cite{lipman2023flowmatching} learns a vector field that transports samples from a simple prior distribution to a data distribution. Let $Z_1\in\mathbb{R}^{T\times d_z}$ denote a clean acoustic representation and $\mathcal{C}$ the conditioning information. We draw $Z_0\sim\mathcal{N}(0,I)$ independently of $Z_1$ and construct a straight interpolation path:
+\begin{equation}
+    Z_t=(1-t)Z_0+tZ_1,\qquad t\sim\mathcal{U}(0,1).
+    \label{eq:flow_path}
+\end{equation}
+The corresponding conditional velocity is constant along this path,
+\begin{equation}
+    U=\frac{\mathrm{d}Z_t}{\mathrm{d}t}=Z_1-Z_0.
+    \label{eq:flow_target}
+\end{equation}
+A neural vector field $v_\theta$ is trained to predict this velocity from the interpolated state, flow time, and conditions:
+\begin{equation}
+    \mathcal{L}_{\mathrm{CFM}}
+    =\mathbb{E}_{Z_1,Z_0,t,\mathcal{C}}
+    \left[\frac{\|v_\theta(Z_t,t\mid\mathcal{C})-U\|_F^2}{Td_z}\right].
+    \label{eq:cfm_prelim}
+\end{equation}
+At inference, generation starts from Gaussian noise and follows the learned ordinary differential equation (ODE):
+\begin{equation}
+    \frac{\mathrm{d}Z(t)}{\mathrm{d}t}
+    =v_\theta(Z(t),t\mid\mathcal{C}),
+    \qquad Z(0)\sim\mathcal{N}(0,I).
+    \label{eq:flow_ode}
+\end{equation}
+The terminal state $Z(1)$ is the generated acoustic representation. In our framework, this representation is a standardized Semantic-VAE latent, and the training loss is restricted to the acoustic region selected for generation, as specified in Section~\ref{sec:mmdit_dubbing}.
+
+\subsection{Audio Compression with a Pretrained Semantic-VAE}
+\label{sec:audio_compression}
+
+Mel-domain generators such as AlignDiT~\cite{choi2025aligndit} operate on densely sampled acoustic features. We instead adopt a pretrained Semantic-VAE~\cite{niu2025semanticvae} to represent speech using a shorter sequence of continuous latent vectors. The adopted codec directly encodes the waveform and reconstructs it with a waveform decoder. Its semantic regularization is learned during codec pretraining; the codec remains frozen during dubbing training.
+
+Let $w\in\mathbb{R}^{N}$ be a mono waveform sampled at 16 kHz. After right-padding $w$ to a multiple of 400 samples, the encoder produces a factorized Gaussian posterior with $T=\lceil N/400\rceil$ latent frames:
+\begin{equation}
+    q_\phi(Z^{\mathrm{raw}}\mid w)
+    =\prod_{i=1}^{T}\mathcal{N}\!\left(
+    Z_i^{\mathrm{raw}};\mu_i,\operatorname{diag}(\sigma_i^2)\right).
+    \label{eq:vae_posterior}
+\end{equation}
+Here $\mu_i,\sigma_i\in\mathbb{R}^{64}$ are rows of the encoder outputs $\mu_\phi(w)$ and $\sigma_\phi(w)$, respectively. We obtain the acoustic target through reparameterization,
+\begin{equation}
+    Z^{\mathrm{raw}}=\mu_\phi(w)+\sigma_\phi(w)\odot\epsilon,
+    \qquad \epsilon\sim\mathcal{N}(0,I).
+    \label{eq:vae_sample}
+\end{equation}
+A single posterior sample is drawn and cached for each utterance, so its target representation remains fixed throughout generator training. The resulting representation has 64 channels at 40 Hz. Compared with the 80-channel, 100-Hz mel representation of the AlignDiT baseline, it uses 40\% as many acoustic time steps for a given duration.
+
+To obtain a consistent scale for flow matching, we standardize each latent channel using fixed statistics from the LibriSpeech training split:
+\begin{equation}
+    (Z_1)_{i,c}=\frac{Z^{\mathrm{raw}}_{i,c}-m_c}{s_c},
+    \qquad c=1,\ldots,64,
+    \label{eq:latent_normalization}
+\end{equation}
+where $m,s\in\mathbb{R}^{64}$ are the channel-wise population mean and standard deviation. Reference speech uses the same encoder and normalization. After generation, the target latent sequence is de-standardized and decoded as
+\begin{equation}
+    \widehat w=\operatorname{Crop}_{N}
+    \left[D_\psi\!\left(\widehat Z_1\odot s+m\right)\right],
+    \label{eq:vae_decode}
+\end{equation}
+where $D_\psi$ is the pretrained BigVGAN-based waveform decoder and $\operatorname{Crop}_{N}$ removes the right-padding region. Neither the encoder nor the decoder is updated by the dubbing objectives.
+
+\subsection{Dubbing with a Multimodal Diffusion Transformer}
+\label{sec:mmdit_dubbing}
+
+Our generator maintains separate audio, visual, and textual states, following the MM-DiT principle of modality-specific processing with joint attention~\cite{esser2024scaling,cheng2025mmaudio}. It contains 12 multimodal blocks followed by six audio-only refinement blocks. The shared hidden dimension is $d=768$, with 12 attention heads and feed-forward expansion ratio 2.
+
+\subsubsection{Input representations and conditioning}
+
+Let $M_i\in\{0,1\}$ indicate whether acoustic frame $i$ belongs to the region to be generated. The acoustic context is $C_A=(1-M)\odot Z_1$, with zeros in the generation region. The initial audio state is formed from the noisy latent and this fixed context:
+\begin{equation}
+    \begin{aligned}
+        P_A&=\operatorname{Linear}_A([Z_t,C_A]_{\mathrm{ch}}),\\
+        H_A^0&=P_A+\operatorname{CPE}_A(P_A),
+    \end{aligned}
+    \label{eq:audio_input}
+\end{equation}
+where $[\cdot,\cdot]_{\mathrm{ch}}$ denotes channel concatenation and CPE is a convolutional positional embedding.
+
+We extract 1024-dimensional visual features from mouth-region video using a pretrained AV-HuBERT encoder~\cite{shi2022avhubert}. The features are linearly resampled from 25 Hz to the 40-Hz latent timeline. To complement the acoustic context, visual features in the reference region are replaced by a fixed null vector; features in the generation region are retained. A linear projection, two Conformer blocks, and a convolutional positional embedding map these features to $H_V^0\in\mathbb{R}^{T\times d}$. The text front end maps the character sequence to 512-dimensional embeddings, adds positional information for character order, and applies four ConvNeXt blocks. A final projection produces $H_T^0\in\mathbb{R}^{L\times d}$, where $L$ is the number of text tokens. Text retains its own sequence length without expansion by phoneme durations.
+
+\subsubsection{Joint refinement of three modality streams}
+
+For modality $m\in\{A,V,T\}$, each block has independent attention projections, adaptive layer normalization (AdaLN), and a feed-forward network. Let $e(t)$ denote the flow-time embedding. Before attention, the modality state is modulated as
+\begin{equation}
+    U_m=(1+\gamma_{m,a}(e(t)))\odot\operatorname{LN}(H_m)
+    +\beta_{m,a}(e(t)).
+    \label{eq:mm_adaln}
+\end{equation}
+Independent affine projections produce $Q_m$, $K_m$, and $V_m$ from $U_m$. We apply RMS normalization to queries and keys within each head. Audio and video use matching frame positions for rotary positional encoding in the first attention head; the remaining heads use no rotary transform. Text uses the ordinal positional information from its front end and is not assigned frame timestamps.
+
+For each head, the transformed queries, keys, and values are concatenated along the sequence dimension in audio--video--text order. Joint attention is then
+\begin{equation}
+    O=\operatorname{softmax}\!\left(
+    \frac{QK^{\mathsf T}}{\sqrt{d_h}}+B+P\right)V,
+    \qquad d_h=64,
+    \label{eq:joint_attention}
+\end{equation}
+where $B$ is the temporal bias defined in Section~\ref{sec:temporal_window}. The additive mask $P$ is zero for accessible keys and $-\infty$ for masked keys. Each query is normalized over the concatenated keys from all three modalities. The output is split into $O_A$, $O_V$, and $O_T$, then passed through independent output projections and gated residual updates:
+\begin{equation}
+    \begin{aligned}
+        H'_m&=H_m+g_{m,a}\odot\operatorname{Linear}_{O,m}(O_m),\\
+        H_m^+&=H'_m+g_{m,f}\odot\operatorname{FFN}_m
+        \bigl(\operatorname{AdaLN}_{m,f}(H'_m,e(t))\bigr).
+    \end{aligned}
+    \label{eq:mm_residual}
+\end{equation}
+The shifts, scales, and gates are predicted from $e(t)$ separately for each modality and block. Consequently, visual and text states evolve with the audio state across the multimodal stack. Text-padding keys are masked in every joint-attention block, and their output states are zeroed. Audio and video padding masks are used for batched inference; during training, valid-frame selection is applied to the losses rather than to these attention keys.
+
+\subsubsection{Speaker-conditioned acoustic refinement}
+
+After the multimodal stack, six audio-only blocks refine the acoustic state carrying the fused conditions. A frozen CAM++ speaker encoder~\cite{wang2023campplus} provides a 192-dimensional reference vector, which is $\ell_2$-normalized and projected to the hidden dimension:
+\begin{equation}
+    s_R=\frac{E_{\mathrm{spk}}(R)}{\|E_{\mathrm{spk}}(R)\|_2},
+    \qquad e_R(t)=e(t)+W_s s_R.
+    \label{eq:speaker_condition}
+\end{equation}
+Only the six refinement blocks use $e_R(t)$ for their AdaLN modulation. The projection $W_s$ has no bias and is initialized to zero. During training, the speaker vector is extracted from the complete training utterance before span masking; at inference it is extracted from the reference recording. The final audio state is normalized with flow-time conditioning and projected to the latent velocity:
+\begin{equation}
+    v_\theta(Z_t,t\mid\mathcal{C})=
+    \operatorname{Linear}_{64}
+    \bigl(\operatorname{AdaLN}_{\mathrm{out}}(H_A^{18},e(t))\bigr).
+    \label{eq:velocity_output}
+\end{equation}
+The reference latent remains an acoustic condition in addition to the speaker vector.
+
+\subsubsection{Training objectives and inference}
+
+Training selects a continuous generation span covering a uniformly sampled proportion between 70\% and 100\% of each valid utterance. Flow matching is evaluated only on this span. Let $\Omega$ collect the selected valid frame indices across a minibatch, and let $\widehat U=v_\theta(Z_t,t\mid\mathcal{C})$. The masked objective is
+\begin{equation}
+    \mathcal{L}_{\mathrm{FM}}=
+    \mathbb{E}\left[
+    \frac{1}{d_z|\Omega|}
+    \sum_{(b,i)\in\Omega}
+    \|\widehat U_{b,i}-U_{b,i}\|_2^2\right].
+    \label{eq:masked_flow_loss}
+\end{equation}
+Here $b$ indexes utterances, and $U$ is the velocity target in~\eqref{eq:flow_target}. The noisy state follows~\eqref{eq:flow_path} across the entire sequence; clean reference information is supplied through the separate context $C_A$.
+
+Following the implicit-alignment setting of AlignDiT~\cite{choi2025aligndit}, we attach CTC heads to the audio states after the seventh and thirteenth blocks. Each head contains two stride-one temporal convolutions with GroupNorm and Mish activation, followed by a pointwise classifier, preserving the 40-Hz sequence length. Let $P^\ell$ denote the output probabilities of the head at block $\ell$. CTC~\cite{graves2006ctc} supervises the complete valid acoustic sequence against the complete character transcript without predefined character or phoneme boundaries. The two head losses are averaged:
+\begin{equation}
+    \begin{aligned}
+        \mathcal{L}_{\mathrm{CTC}}&=
+        \frac{1}{2}\sum_{\ell\in\{7,13\}}
+        \operatorname{CTC}(P^{\ell},Y),\\
+        \mathcal{L}&=\mathcal{L}_{\mathrm{FM}}+
+        \lambda(k)\mathcal{L}_{\mathrm{CTC}}.
+    \end{aligned}
+    \label{eq:training_objective}
+\end{equation}
+Each CTC loss is normalized by transcript length before averaging over the minibatch. Infeasible CTC paths contribute zero CTC loss while retaining their flow-matching loss. For optimizer update $k$, we use
+\begin{equation}
+    \lambda(k)=0.03\,\operatorname{clip}
+    \left(\frac{k-10{,}000}{20{,}000},0,1\right).
+    \label{eq:ctc_schedule}
+\end{equation}
+This objective requires transcripts and synchronized audiovisual examples, without externally computed phoneme-duration labels.
+
+Condition dropout supports multimodal classifier-free guidance during sampling. Acoustic-context dropout also removes the speaker vector. A separate batch-level draw drops all conditions, text alone, or video alone, each with probability 0.2, and retains them otherwise; an independent acoustic-context dropout is applied with probability 0.3. Let $v_{\mathrm{full}}$ retain all conditions, $v_{\neg V}$ retain text, reference latents, and speaker identity, and $v_{\varnothing}$ remove all conditions. The guided vector field is
+\begin{equation}
+    \begin{aligned}
+        v_{\mathrm{cfg}}={}&v_{\mathrm{full}}
+        +g_V(v_{\mathrm{full}}-v_{\neg V})\\
+        &+g_T(v_{\neg V}-v_{\varnothing}).
+    \end{aligned}
+    \label{eq:multimodal_cfg}
+\end{equation}
+The latter difference jointly restores textual and reference-speech conditions. We use $g_T=5$ and $g_V=2$ and integrate the guided field with 32 Euler steps on the grid $t_j=1-\cos(\pi j/64)$, $j=0,\ldots,32$, corresponding to sway sampling~\cite{chen2025f5tts} with coefficient $-1$.
+
+At inference, the reference latent is placed before the target region, the reference and target transcripts are concatenated, and the reference portion of the visual input is filled with null features. The generated segment uses a prescribed duration; evaluation uses the recorded target duration. Here the processed acoustic length $T$ includes both the reference prefix and the target region. The acoustic context remains fixed as a separate input during ODE integration. After integration, the reference prefix is discarded, and only the generated target latents are de-standardized and decoded using~\eqref{eq:vae_decode}.
+
+\subsection{Soft Temporal Window for Audio--Visual Attention}
+\label{sec:temporal_window}
+
+Joint attention supports global exchange but does not impose an explicit temporal-locality prior on audio--visual attention. We introduce a Gaussian temporal prior specifically for the two audio--visual attention directions. This prior complements content-based matching while preserving global linguistic context and within-modality interactions.
+
+Let $\tau_i^A=i/f_A$ and $\tau_j^V=j/f_V$ be the timestamps of audio and visual frames. In the adopted representation, $f_A=f_V=40$ Hz. The audio-to-visual logit bias is
+\begin{equation}
+    (B_{AV})_{ij}=
+    -\frac{(\tau_j^V-\tau_i^A-\delta)^2}{2\sigma_w^2},
+    \label{eq:gaussian_window}
+\end{equation}
+where $\delta$ specifies a fixed temporal offset and $\sigma_w$ controls the width in seconds. We use $\delta=0$ and $\sigma_w=0.150$ s. The reverse-direction bias is $B_{VA}=B_{AV}^{\mathsf T}$, yielding the block-structured bias in~\eqref{eq:joint_attention}:
+\begin{equation}
+    B=\begin{bmatrix}
+        0 & B_{AV} & 0\\
+        B_{AV}^{\mathsf T} & 0 & 0\\
+        0 & 0 & 0
+    \end{bmatrix}_{[A,V,T]}.
+    \label{eq:temporal_bias_matrix}
+\end{equation}
+Thus, only cross-modal audio--visual logits receive a temporal penalty. Audio--audio, video--video, and all text-related interactions retain their global attention domains. The same prior is used in all 12 multimodal blocks and all attention heads, with fixed width and offset throughout training and sampling.
+
+The additive bias has a direct multiplicative interpretation. For an audio query and a visual key, their unnormalized attention score becomes
+\begin{equation}
+    \widetilde a_{ij}=
+    \exp\!\left(\frac{q_i^{\mathsf T}k_j}{\sqrt{d_h}}\right)
+    \exp\!\left[-\frac{(\tau_j^V-\tau_i^A)^2}{2\sigma_w^2}\right].
+    \label{eq:window_interpretation}
+\end{equation}
+Normalization still includes all audio, visual, and text keys. Nearby audio--visual pairs receive a stronger prior weight, while more distant pairs remain accessible through their content scores. At 40 Hz, $\sigma_w=0.150$ s equals six frame intervals; the nominal one-standard-deviation neighborhood therefore covers 13 positions, from $i-6$ to $i+6$. This neighborhood is a soft core rather than a truncation boundary: no attention connections are explicitly removed outside it. The mechanism adds no trainable parameters or auxiliary loss. It encodes local audiovisual timing within the joint generator while leaving text-to-frame correspondence to implicit alignment.
+
+% Implementation evidence (all paths below relative to the selected snapshot):
+% src/aligndit/model/cfm_vt.py: train path 302--400; CFG and ODE 159--247.
+% src/aligndit/model/backbone/dit_vt_mm.py: embeddings 50--115;
+% AVT attention 379--475; speaker 705--723; stack and CTC 993--1092.
+% src/aligndit/model/fixed_temporal_band.py: Gaussian bias 65--85.
+% src/aligndit/model/semantic_vae_dataset.py: statistics 198--224, scaling 388.
+% src/aligndit/script/eval/infer_celebvdub_semantic_vae_s1.py: target decode 350--363.
+% Active config: finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window13_av_va.yaml.
+% Cache extraction contract: fixed posterior sample, base seed 666; log variance
+% clamped to [-12,12]; official Semantic-VAE semantic_vae_1000k frozen EMA.
+% Keep the ultimate experiment/checkpoint mapping in the Experiments section;
+% the architectural specification here describes the user-selected snapshot.
