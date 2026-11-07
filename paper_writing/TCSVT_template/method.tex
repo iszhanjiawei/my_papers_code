@@ -3,7 +3,7 @@
 % IMPORTANT: the active Semantic-VAE encodes waveforms, not mel spectrograms.
 % Some inherited names (mel_dim, mel_spec_module, num_mels) refer to latents.
 % Notation: t = flow time; tau = physical frame time; k = optimizer update;
-% Z = normalized acoustic latent; Z^raw = codec latent; M = generation mask;
+% Z = normalized acoustic latent; M = generation mask;
 % H_A/H_V/H_T = audio/video/text states; B = temporal logit bias.
 \section{Proposed Method}
 \label{sec:method}
@@ -14,39 +14,7 @@ Given a target video, a target script, and a reference recording with its transc
 
 In the following subsections, we write $Z_t=\mathbf{z}_t\in\mathbb{R}^{T\times d_z}$ and $\mathcal{C}=\mathbf{c}$. Here $T$ and $d_z$ are the latent sequence length and channel dimension, respectively.
 
-\subsection{Audio Compression with a Pretrained Semantic-VAE}
-\label{sec:audio_compression}
-
-Mel-domain generators such as AlignDiT~\cite{choi2025aligndit} operate on densely sampled acoustic features. We instead adopt a pretrained Semantic-VAE~\cite{niu2025semanticvae} to represent speech using a shorter sequence of continuous latent vectors. The adopted codec directly encodes the waveform and reconstructs it with a waveform decoder. Its semantic regularization is learned during codec pretraining; the codec remains frozen during dubbing training.
-
-Let $w\in\mathbb{R}^{N}$ be a mono waveform sampled at 16 kHz. After right-padding $w$ to a multiple of 400 samples, the encoder produces a factorized Gaussian posterior with $T=\lceil N/400\rceil$ latent frames:
-\begin{equation}
-    q_\phi(Z^{\mathrm{raw}}\mid w)
-    =\prod_{i=1}^{T}\mathcal{N}\!\left(
-    Z_i^{\mathrm{raw}};\mu_i,\operatorname{diag}(\sigma_i^2)\right).
-    \label{eq:vae_posterior}
-\end{equation}
-Here $\mu_i,\sigma_i\in\mathbb{R}^{64}$ are rows of the encoder outputs $\mu_\phi(w)$ and $\sigma_\phi(w)$, respectively. We obtain the acoustic target through reparameterization,
-\begin{equation}
-    Z^{\mathrm{raw}}=\mu_\phi(w)+\sigma_\phi(w)\odot\epsilon,
-    \qquad \epsilon\sim\mathcal{N}(0,I).
-    \label{eq:vae_sample}
-\end{equation}
-A single posterior sample is drawn and cached for each utterance, so its target representation remains fixed throughout generator training. The resulting representation has 64 channels at 40 Hz. Compared with the 80-channel, 100-Hz mel representation of the AlignDiT baseline, it uses 40\% as many acoustic time steps for a given duration.
-
-To obtain a consistent scale for flow matching, we standardize each latent channel using fixed statistics from the LibriSpeech training split:
-\begin{equation}
-    (Z_1)_{i,c}=\frac{Z^{\mathrm{raw}}_{i,c}-m_c}{s_c},
-    \qquad c=1,\ldots,64,
-    \label{eq:latent_normalization}
-\end{equation}
-where $m,s\in\mathbb{R}^{64}$ are the channel-wise population mean and standard deviation. Reference speech uses the same encoder and normalization. After generation, the target latent sequence is de-standardized and decoded as
-\begin{equation}
-    \widehat w=\operatorname{Crop}_{N}
-    \left[D_\psi\!\left(\widehat Z_1\odot s+m\right)\right],
-    \label{eq:vae_decode}
-\end{equation}
-where $D_\psi$ is the pretrained BigVGAN-based waveform decoder and $\operatorname{Crop}_{N}$ removes the right-padding region. Neither the encoder nor the decoder is updated by the dubbing objectives.
+\input{../local_files/audio_compression_revised}
 
 \subsection{Dubbing with a Multimodal Diffusion Transformer}
 \label{sec:mmdit_dubbing}
@@ -155,7 +123,7 @@ Condition dropout supports multimodal classifier-free guidance during sampling. 
 \end{equation}
 The latter difference jointly restores textual and reference-speech conditions. We use $g_T=5$ and $g_V=2$ and integrate the guided field with 32 Euler steps on the grid $t_j=1-\cos(\pi j/64)$, $j=0,\ldots,32$, corresponding to sway sampling~\cite{chen2025f5tts} with coefficient $-1$.
 
-At inference, the reference latent is placed before the target region, the reference and target transcripts are concatenated, and the reference portion of the visual input is filled with null features. The generated segment uses a prescribed duration; evaluation uses the recorded target duration. Here the processed acoustic length $T$ includes both the reference prefix and the target region. The acoustic context remains fixed as a separate input during ODE integration. After integration, the reference prefix is discarded, and only the generated target latents are de-standardized and decoded using~\eqref{eq:vae_decode}.
+At inference, the reference latent is placed before the target region, the reference and target transcripts are concatenated, and the reference portion of the visual input is filled with null features. The generated segment uses a prescribed duration; evaluation uses the recorded target duration. Here the processed acoustic length $T$ includes both the reference prefix and the target region. The acoustic context remains fixed as a separate input during ODE integration. After integration, the reference prefix is discarded, and only the generated target latents are de-standardized and decoded as described in Section~\ref{sec:audio_compression}.
 
 \subsection{Soft Temporal Window for Audio--Visual Attention}
 \label{sec:temporal_window}

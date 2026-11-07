@@ -1,0 +1,13 @@
+% !TeX root = ../TCSVT_template/manuscript.tex
+% Restored from the latest Audio Compression paragraph in ChatGPT conversation
+% 6aedd5a9-f970-83ee-99d7-04a32f2cd945 after the original download failed.
+% This is not a verified byte-for-byte copy of the sandbox attachment.
+% Citation keys follow the conversation and are supplied in
+% audio_compression_revised_references.bib.
+% Requires amsmath and amssymb in the parent document.
+
+\subsection{Audio Compression}
+\label{subsec:audio_compression}
+\label{sec:audio_compression}
+
+To reduce the computational cost of multimodal modeling, we generate speech in a compact latent space rather than directly predicting mel-spectrograms, following the efficiency motivation of latent-space audio generation~\cite{cheng2025mmaudio}. We employ a pretrained Semantic-VAE~\cite{niu2025semantic}, which combines acoustic reconstruction with semantic alignment during pretraining. Given a speech waveform $\mathbf{x}\in\mathbb{R}^{N}$ sampled at 16~kHz, the encoder produces a latent sequence $\tilde{\mathbf{z}}\in\mathbb{R}^{L_z\times d_z}$, where $L_z$ denotes the sequence length, $d_z=64$, and the latent frame rate is 40~Hz. The latents are normalized using fixed training-set statistics to obtain the flow matching target $\mathbf{z}_1$. At inference, the generated latents are denormalized and mapped directly to speech waveforms by the pretrained decoder. Both the encoder and decoder remain frozen throughout dubbing-model training.
