@@ -2,7 +2,7 @@
 
 论文主文档：`manuscript.tex`，依次载入 `abstract.tex`、`introduction.tex`、`related_work.tex`、`method.tex`、`experiments.tex`、`conclusion.tex`、`acknowledgment.tex`，使用 `references.bib` 管理参考文献。标题为 **JointDub: Locality-Aware Multimodal Diffusion Transformer for Synchronized Video Dubbing**，作者信息待补充。
 
-`method.tex` 按流匹配预备知识、Semantic-VAE 音频压缩、MM-DiT 配音模型、音画软时间窗口组织。Semantic-VAE 部分按当前实现描述波形编码与波形解码。
+`method.tex` 按流匹配预备知识、Semantic-VAE 音频压缩、MM-DiT 配音模型、音画软时间窗口组织。流匹配小节直接载入 `../local_files/flow_matching_preliminaries.tex`；`../local_files/flow_matching_references.bib` 的三篇配套文献已合并到 `references.bib`，统一通过主稿参考文献库编译。Lipman 等人的 Flow Matching 论文使用 `lipman2023flow` 引用键，避免重复列项。Semantic-VAE 部分按当前实现描述波形编码与波形解码。
 
 `experiments.tex` 包含两数据集 Setting 1/2、跨数据集参考音频、关闭 Text 的 Video-to-Speech 和 Visual Forced Alignment；五张结果表位于 `tables/results_*.tex`。数值来自项目根目录 `实验结果.md`。VTS 的 Text 关闭和当前模型重测依据作者在本次写作会话中的明确确认；旧 benchmark 文档中的历史模型/伪文本协议不代表此次结果。消融小节按要求留空。
 

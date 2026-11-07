@@ -1,0 +1,44 @@
+% !TeX root = ../TCSVT_template/manuscript.tex
+% Recovered from the visible English section in the ChatGPT conversation
+% "熟悉配音论文背景" (6aedd5a9-f970-83ee-99d7-04a32f2cd945).
+% The original sandbox download failed; this is a transcription of the
+% conversation text, not a verified byte-for-byte copy of the original file.
+% Include this section in a parent LaTeX document with amsmath and amssymb.
+
+\subsection{Preliminaries on Flow Matching}
+\label{sec:flow_preliminaries}
+
+We adopt conditional flow matching~\cite{lipman2023flow,tong2024improving} to model speech generation in a continuous latent space. Let $\mathbf{z}_1$ denote a target speech latent and $\mathbf{z}_0 \sim \mathcal{N}(\mathbf{0},\mathbf{I})$ an independently sampled noise tensor of the same shape. Given conditioning information $\mathbf{c}$, we construct an intermediate state by linear interpolation~\cite{liu2023flow}:
+\begin{equation}
+\mathbf{z}_t=(1-t)\mathbf{z}_0+t\mathbf{z}_1,
+\qquad t\sim\mathcal{U}(0,1).
+\label{eq:flow_path}
+\end{equation}
+Here, $t$ denotes the flow time rather than the physical time of the speech sequence. The target velocity along this interpolation path is $\mathbf{u}_t=\mathrm{d}\mathbf{z}_t/\mathrm{d}t=\mathbf{z}_1-\mathbf{z}_0$.
+
+We parameterize the conditional velocity field with a neural network $v_\theta(\mathbf{z}_t,t,\mathbf{c})$ and optimize it by regressing the target velocity:
+\begin{equation}
+\mathcal{L}_{\mathrm{CFM}}
+=
+\mathbb{E}_{t,\mathbf{z}_0,(\mathbf{z}_1,\mathbf{c})}
+\left[
+\left\|
+v_\theta(\mathbf{z}_t,t,\mathbf{c})
+-
+(\mathbf{z}_1-\mathbf{z}_0)
+\right\|_F^2
+\right],
+\label{eq:cfm_prelim}
+\end{equation}
+where $(\mathbf{z}_1,\mathbf{c})$ is sampled from the training data and $\|\cdot\|_F$ denotes the Frobenius norm. In our dubbing setting, $\mathbf{c}$ comprises video, text, and reference-speaker information, whose construction is described in subsequent subsections.
+
+At inference, we initialize $\hat{\mathbf{z}}_0$ with Gaussian noise and obtain the generated speech latent by numerically solving the ordinary differential equation
+\begin{equation}
+\frac{\mathrm{d}\hat{\mathbf{z}}_t}{\mathrm{d}t}
+=
+v_\theta(\hat{\mathbf{z}}_t,t,\mathbf{c}),
+\qquad
+\hat{\mathbf{z}}_0\sim\mathcal{N}(\mathbf{0},\mathbf{I}),
+\label{eq:flow_ode}
+\end{equation}
+from $t=0$ to $t=1$. The resulting $\hat{\mathbf{z}}_1$ is subsequently decoded into a speech waveform, as described in the next subsection.

@@ -10,34 +10,9 @@
 
 Given a target video, a target script, and a reference recording with its transcript, our framework generates speech with the requested content, visual timing, and speaker characteristics. We first formulate conditional flow matching, then describe the frozen acoustic codec, the three-stream generator, and its audio--visual temporal prior. Throughout this section, $t$ denotes generative flow time, whereas $\tau$ denotes physical time within an utterance.
 
-\subsection{Flow Matching Preliminaries}
-\label{sec:flow_preliminaries}
+\input{../local_files/flow_matching_preliminaries}
 
-Flow matching~\cite{lipman2023flowmatching} learns a vector field that transports samples from a simple prior distribution to a data distribution. Let $Z_1\in\mathbb{R}^{T\times d_z}$ denote a clean acoustic representation and $\mathcal{C}$ the conditioning information. We draw $Z_0\sim\mathcal{N}(0,I)$ independently of $Z_1$ and construct a straight interpolation path:
-\begin{equation}
-    Z_t=(1-t)Z_0+tZ_1,\qquad t\sim\mathcal{U}(0,1).
-    \label{eq:flow_path}
-\end{equation}
-The corresponding conditional velocity is constant along this path,
-\begin{equation}
-    U=\frac{\mathrm{d}Z_t}{\mathrm{d}t}=Z_1-Z_0.
-    \label{eq:flow_target}
-\end{equation}
-A neural vector field $v_\theta$ is trained to predict this velocity from the interpolated state, flow time, and conditions:
-\begin{equation}
-    \mathcal{L}_{\mathrm{CFM}}
-    =\mathbb{E}_{Z_1,Z_0,t,\mathcal{C}}
-    \left[\frac{\|v_\theta(Z_t,t\mid\mathcal{C})-U\|_F^2}{Td_z}\right].
-    \label{eq:cfm_prelim}
-\end{equation}
-At inference, generation starts from Gaussian noise and follows the learned ordinary differential equation (ODE):
-\begin{equation}
-    \frac{\mathrm{d}Z(t)}{\mathrm{d}t}
-    =v_\theta(Z(t),t\mid\mathcal{C}),
-    \qquad Z(0)\sim\mathcal{N}(0,I).
-    \label{eq:flow_ode}
-\end{equation}
-The terminal state $Z(1)$ is the generated acoustic representation. In our framework, this representation is a standardized Semantic-VAE latent, and the training loss is restricted to the acoustic region selected for generation, as specified in Section~\ref{sec:mmdit_dubbing}.
+In the following subsections, we write $Z_t=\mathbf{z}_t\in\mathbb{R}^{T\times d_z}$ and $\mathcal{C}=\mathbf{c}$. Here $T$ and $d_z$ are the latent sequence length and channel dimension, respectively.
 
 \subsection{Audio Compression with a Pretrained Semantic-VAE}
 \label{sec:audio_compression}
@@ -148,7 +123,7 @@ Training selects a continuous generation span covering a uniformly sampled propo
     \|\widehat U_{b,i}-U_{b,i}\|_2^2\right].
     \label{eq:masked_flow_loss}
 \end{equation}
-Here $b$ indexes utterances, and $U$ is the velocity target in~\eqref{eq:flow_target}. The noisy state follows~\eqref{eq:flow_path} across the entire sequence; clean reference information is supplied through the separate context $C_A$.
+Here $b$ indexes utterances, and $U=Z_1-Z_0$ is the velocity target defined in Section~\ref{sec:flow_preliminaries}. The noisy state follows~\eqref{eq:flow_path} across the entire sequence; clean reference information is supplied through the separate context $C_A$.
 
 Following the implicit-alignment setting of AlignDiT~\cite{choi2025aligndit}, we attach CTC heads to the audio states after the seventh and thirteenth blocks. Each head contains two stride-one temporal convolutions with GroupNorm and Mish activation, followed by a pointwise classifier, preserving the 40-Hz sequence length. Let $P^\ell$ denote the output probabilities of the head at block $\ell$. CTC~\cite{graves2006ctc} supervises the complete valid acoustic sequence against the complete character transcript without predefined character or phoneme boundaries. The two head losses are averaged:
 \begin{equation}
