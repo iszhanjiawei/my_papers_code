@@ -15,36 +15,7 @@ Given a target video, a target script, and a reference recording with its transc
 
 \input{../local_files/mmdit_backbone_revised}
 
-\subsection{Soft Temporal Window for Audio--Visual Attention}
-\label{sec:temporal_window}
-
-Joint attention supports global exchange but does not impose an explicit temporal-locality prior on audio--visual attention. We introduce a Gaussian temporal prior specifically for the two audio--visual attention directions. This prior complements content-based matching while preserving global linguistic context and within-modality interactions.
-
-Let $\tau_i^A=i/f_A$ and $\tau_j^V=j/f_V$ be the timestamps of audio and visual frames. In the adopted representation, $f_A=f_V=40$ Hz. The audio-to-visual logit bias is
-\begin{equation}
-    (B_{AV})_{ij}=
-    -\frac{(\tau_j^V-\tau_i^A-\delta)^2}{2\sigma_w^2},
-    \label{eq:gaussian_window}
-\end{equation}
-where $\delta$ specifies a fixed temporal offset and $\sigma_w$ controls the width in seconds. We use $\delta=0$ and $\sigma_w=0.150$ s. The reverse-direction bias is $B_{VA}=B_{AV}^{\mathsf T}$, yielding the block-structured bias in~\eqref{eq:joint_attention}:
-\begin{equation}
-    B=\begin{bmatrix}
-        0 & B_{AV} & 0\\
-        B_{AV}^{\mathsf T} & 0 & 0\\
-        0 & 0 & 0
-    \end{bmatrix}_{[A,V,T]}.
-    \label{eq:temporal_bias_matrix}
-\end{equation}
-Thus, only cross-modal audio--visual logits receive a temporal penalty. Audio--audio, video--video, and all text-related interactions retain their global attention domains. The same prior is used in all 12 multimodal blocks and all attention heads, with fixed width and offset throughout training and sampling.
-
-The additive bias has a direct multiplicative interpretation. For an audio query and a visual key, their unnormalized attention score becomes
-\begin{equation}
-    \widetilde a_{ij}=
-    \exp\!\left(\frac{q_i^{\mathsf T}k_j}{\sqrt{d_h}}\right)
-    \exp\!\left[-\frac{(\tau_j^V-\tau_i^A)^2}{2\sigma_w^2}\right].
-    \label{eq:window_interpretation}
-\end{equation}
-Normalization still includes all audio, visual, and text keys. Nearby audio--visual pairs receive a stronger prior weight, while more distant pairs remain accessible through their content scores. At 40 Hz, $\sigma_w=0.150$ s equals six frame intervals; the nominal one-standard-deviation neighborhood therefore covers 13 positions, from $i-6$ to $i+6$. This neighborhood is a soft core rather than a truncation boundary: no attention connections are explicitly removed outside it. The mechanism adds no trainable parameters or auxiliary loss. It encodes local audiovisual timing within the joint generator while leaving text-to-frame correspondence to implicit alignment.
+\input{../local_files/gaussian_windowed_attention}
 
 % Implementation evidence (all paths below relative to the selected snapshot):
 % src/aligndit/model/cfm_vt.py: train path 302--400; CFG and ODE 159--247.

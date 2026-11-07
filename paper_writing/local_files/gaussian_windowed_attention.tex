@@ -1,0 +1,71 @@
+% !TeX root = ../TCSVT_template/manuscript.tex
+% Restored from the fourth-section text in ChatGPT conversation
+% 6aedd5a9-f970-83ee-99d7-04a32f2cd945 after the original download failed.
+% Not a verified byte-for-byte copy of the sandbox attachment.
+% Requires amsmath and amssymb in the parent document.
+% Uses cheng2025mmaudio and tran2026precise from the previously uploaded
+% mmdit_backbone_revised_references.bib. The chat used tran2026flowley for
+% the same Tran et al. paper; the existing matching key is used here.
+
+\subsection{Gaussian-Windowed Audiovisual Attention}
+\label{subsec:gaussian_windowed_attention}
+\label{sec:temporal_window}
+
+Joint attention enables multimodal interaction, but content-based aggregation alone does not ensure precise audiovisual timing~\cite{cheng2025mmaudio}. Temporal constraints within attention have therefore been explored to encourage correspondence between nearby audiovisual positions~\cite{tran2026precise}. For video dubbing, we introduce a Gaussian soft window into the joint attention of Section~\ref{subsec:mmdit_backbone}. It favors temporally neighboring audio–video interactions while retaining global access to linguistic and acoustic context.
+
+\textit{Temporal locality prior.} The audio and visual streams share a temporal grid with frame rate \(f=40\) Hz. For zero-based audio and visual indices \(i\) and \(j\), let \(\tau_i^a=i/f\) and \(\tau_j^v=j/f\) denote their sequence-time coordinates. These coordinates are distinct from the flow time \(t\). We define an unnormalized Gaussian prior and its additive logit bias as
+
+\begin{equation}
+\begin{aligned}
+G_{ij}
+&=
+\exp\left[
+-\frac{(\tau_j^v-\tau_i^a)^2}
+{2\sigma_{\mathrm w}^{2}}
+\right],\\
+(\mathbf B_{av})_{ij}
+&=
+\log G_{ij}
+=
+-\frac{(\tau_j^v-\tau_i^a)^2}
+{2\sigma_{\mathrm w}^{2}},
+\end{aligned}
+\label{eq:gaussian_window}
+\end{equation}
+
+where \(\mathbf B_{av}\in\mathbb R^{L_z\times L_z}\) and \(\sigma_{\mathrm w}>0\) controls the temporal spread in seconds. The prior is centered at the matching timestamp, with zero offset, and attenuates more distant associations. Unlike a hard window, it imposes no explicit cutoff, allowing the learned content scores to retain access to more distant positions. Its width is fixed rather than predicted from input features.
+
+\textit{Bidirectional integration.} With queries and keys ordered as audio, video, and text, the bias in the joint attention equation~\eqref{eq:joint_attention} is
+
+\begin{equation}
+\mathbf B=
+\begin{bmatrix}
+\mathbf 0 & \mathbf B_{av} & \mathbf 0\\
+\mathbf B_{av}^{\top} & \mathbf 0 & \mathbf 0\\
+\mathbf 0 & \mathbf 0 & \mathbf 0
+\end{bmatrix}.
+\label{eq:temporal_bias_matrix}
+\end{equation}
+
+Here, the blocks have dimensions determined by the stream lengths \((L_z,L_z,L_y)\). Thus, the same temporal preference is imposed on audio-to-video and video-to-audio interactions. Within-modality and text-related logits receive no additional temporal penalty; the zero blocks do not prohibit attention. In particular, text is not assigned frame-level timestamps, and audio self-attention retains access to the reference-latent context.
+
+The bias is added before the shared softmax, rather than applied through separately normalized cross-attention branches. Let \(S_{pq}\) denote a content-based attention logit and \(\Pi_{pq}=\exp(B_{pq})\). Suppressing the pre-existing padding-mask handling, the attention weight is
+
+\begin{equation}
+A_{pq}
+=
+\frac{
+\exp(S_{pq})\Pi_{pq}
+}{
+\displaystyle
+\sum_{r=1}^{2L_z+L_y}
+\exp(S_{pr})\Pi_{pr}
+}.
+\label{eq:window_attention_weights}
+\end{equation}
+
+This formulation combines learned content compatibility with the temporal prior while preserving normalization across all modalities. Although text-related logits receive no temporal bias, their normalized weights can change through the shared denominator. The Gaussian factors are therefore priors on attention, not prescribed final attention weights.
+
+\textit{Window configuration.} We set \(\sigma_{\mathrm w}=0.150\) s, corresponding to six steps on the 40-Hz grid. Away from sequence boundaries, the interval \(|j-i|\leq6\) contains 13 positions and defines the nominal soft-window core; Gaussian tails outside this interval are not truncated.
+
+The same parameter-free prior is shared across heads, all \(N_J\) joint blocks, and flow times during both training and inference. It is computed from sequence coordinates independently of the complementary input mask, and is absent from the subsequent audio-only blocks. No new alignment loss or external phoneme-duration annotations are required. The mechanism introduces a soft temporal inductive bias rather than a sparse-attention approximation or a prescribed phoneme alignment.
