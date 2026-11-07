@@ -1,0 +1,146 @@
+% !TeX root = ../TCSVT_template/manuscript.tex
+% Restored from the latest revised third section in ChatGPT conversation
+% 6aedd5a9-f970-83ee-99d7-04a32f2cd945 after the original download failed.
+% Not a verified byte-for-byte copy of the sandbox attachment.
+% Equations and prose transcribed from the chat; citation keys reconstructed
+% to match mmdit_backbone_revised_references.bib.
+% Requires amsmath and amssymb in the parent document.
+
+\subsection{Multimodal Diffusion Transformer for Video Dubbing}
+\label{subsec:mmdit_backbone}
+\label{sec:mmdit_dubbing}
+
+Video dubbing requires the joint modeling of linguistic content, visual articulation, and speaker characteristics. These cues have different temporal structures: speech and lip motion are frame-based signals on a shared physical timeline, whereas the script is a discrete token sequence without prescribed frame-level durations. To accommodate this heterogeneity, we adopt a multimodal diffusion transformer (MM-DiT)~\cite{esser2024scaling} with separate audio, visual, and textual streams. Modality-specific transformations are combined with joint attention, allowing the three representations to interact and be updated together. The network follows a multi-stream-to-single-stream organization~\cite{cheng2025mmaudio,yun2026immersivetts}, comprising \(N_J\) joint blocks for multimodal interaction and \(N_A\) audio-only blocks for acoustic refinement.
+
+\subsubsection{Multimodal Representations}
+
+Let \(\mathbf{z}_t\in\mathbb{R}^{L_z\times d_z}\) denote the noisy speech latent defined in Section~\ref{sec:flow_preliminaries}. We use complementary temporal masking~\cite{choi2025aligndit} to construct the acoustic and visual conditions. A binary mask \(\mathbf{M}\in\{0,1\}^{L_z\times1}\) identifies the region to be generated, leaving the acoustic context \(\mathbf{z}_{\mathrm{ctx}}=(1-\mathbf{M})\odot\mathbf{z}_1\). Visual features are retained in the generation region and replaced with a null embedding at acoustic-context positions. At inference, the acoustic context is provided by the reference utterance, without requiring its corresponding video.
+
+Lip-motion features are extracted using a pretrained audiovisual speech encoder~\cite{shi2022avhubert} and linearly resampled from 25 Hz to the 40-Hz audio-latent grid. This operation matches physical-time resolutions without specifying text–speech correspondences. The input transcript \(\mathbf{y}\) is encoded at the character level by four ConvNeXt V2 blocks~\cite{woo2023convnext,chen2025f5tts}; its length \(L_y\) is preserved, without duration-based expansion. The three input streams are initialized as
+
+\begin{equation}
+\begin{aligned}
+\mathbf{H}_a^0
+&=
+\phi_a\!\left(
+[\mathbf{z}_t;\mathbf{z}_{\mathrm{ctx}}]_{\mathrm{ch}}
+\right),\\
+\mathbf{H}_v^0
+&=
+\phi_v(\widetilde{\mathbf{F}}_v),\\
+\mathbf{H}_y^0
+&=
+\phi_y(E_{\mathrm{txt}}(\mathbf{y})),
+\end{aligned}
+\label{eq:audio_input}
+\end{equation}
+
+where \([\cdot;\cdot]_{\mathrm{ch}}\) denotes channel-wise concatenation, \(\widetilde{\mathbf{F}}_v\) contains the resampled and complementarily masked visual features, and \(\phi_a\), \(\phi_v\), and \(\phi_y\) denote learned input mappings. The audio and visual mappings include temporal contextualization and convolutional positional embeddings. The resulting audio and visual streams have shape \(L_z\times d\), while the text stream has shape \(L_y\times d\).
+
+\subsubsection{Multimodal Joint Attention}
+
+Each joint block retains separate normalization, attention projections, and feed-forward networks for the three modalities. Adaptive layer normalization (AdaLN)~\cite{peebles2023dit}, conditioned on the flow-time embedding \(\mathbf{e}_t\), modulates each stream before attention. For modality \(m\in\{a,v,y\}\), the modulated representation is projected into queries \(\mathbf{Q}_m\), keys \(\mathbf{K}_m\), and values \(\mathbf{V}_m\) using modality-specific parameters. Queries and keys are RMS-normalized. Temporal rotary embeddings~\cite{su2024roformer} are applied to audio and visual queries and keys on their common time grid, while text retains its character-order encoding without physical-time rotations.
+
+Cross-modal interaction is performed by concatenating the projected sequences and computing joint attention~\cite{esser2024scaling}. For one attention head,
+
+\begin{equation}
+\begin{aligned}
+\mathbf{Q}
+&=
+[\mathbf{Q}_a;\mathbf{Q}_v;\mathbf{Q}_y]_{\mathrm{seq}},\\
+\mathbf{K}
+&=
+[\mathbf{K}_a;\mathbf{K}_v;\mathbf{K}_y]_{\mathrm{seq}},\\
+\mathbf{V}
+&=
+[\mathbf{V}_a;\mathbf{V}_v;\mathbf{V}_y]_{\mathrm{seq}},\\
+\mathbf{O}
+&=
+\operatorname{softmax}
+\left(
+\frac{\mathbf{Q}\mathbf{K}^{\top}}{\sqrt{d_h}}
++
+\mathbf{B}
+\right)\mathbf{V},
+\end{aligned}
+\label{eq:joint_attention}
+\end{equation}
+
+where \([\cdot;\cdot]_{\mathrm{seq}}\) denotes sequence-wise concatenation, \(d_h\) is the head dimension, and \(\mathbf{B}\) is the audiovisual temporal bias defined in the next subsection. Padding handling is omitted for clarity. For each query, a single softmax normalizes attention over keys from all three modalities, enabling within- and cross-modal interactions in the same operation.
+
+After combining attention heads, the output is split according to the original sequence lengths. The modality-specific outputs \(\mathbf{O}_a^\ell\), \(\mathbf{O}_v^\ell\), and \(\mathbf{O}_y^\ell\) update their respective streams through gated residual connections:
+
+\begin{equation}
+\begin{aligned}
+\widetilde{\mathbf{H}}_m^\ell
+&=
+\mathbf{H}_m^\ell
++
+\mathbf{g}_{m,\mathrm{att}}^\ell(\mathbf{e}_t)
+\odot
+\phi_{m,O}^\ell(\mathbf{O}_m^\ell),\\
+\mathbf{H}_m^{\ell+1}
+&=
+\widetilde{\mathbf{H}}_m^\ell
++
+\mathbf{g}_{m,\mathrm{ff}}^\ell(\mathbf{e}_t)
+\odot
+\operatorname{FFN}_m^\ell
+\left(
+\operatorname{AdaLN}_{m,\mathrm{ff}}^\ell
+(\widetilde{\mathbf{H}}_m^\ell;\mathbf{e}_t)
+\right),
+\end{aligned}
+\label{eq:mm_residual}
+\end{equation}
+
+where \(\phi_{m,O}^\ell\) is the output projection and the gates are generated from \(\mathbf{e}_t\). Thus, the three streams exchange information while retaining separate transformations. Although all three hidden streams evolve across network layers, only the audio latent is integrated by the flow solver.
+
+\subsubsection{Speaker-Conditioned Audio Refinement}
+
+The audio output of the joint stage is passed to \(N_A\) audio-only transformer blocks. These blocks refine the multimodally conditioned audio representation through self-attention and feed-forward transformations, without further text or video attention. To supplement the acoustic context with a global identity cue, a frozen speaker-verification encoder~\cite{wang2023campplus} extracts an embedding \(\mathbf{s}\in\mathbb{R}^{192}\) from the unmasked training utterance or the reference utterance at inference. We normalize and project this vector to obtain the refinement condition
+
+\begin{equation}
+\mathbf{e}_{t,s}
+=
+\mathbf{e}_t
++
+\mathbf{W}_s
+\frac{\mathbf{s}}{\|\mathbf{s}\|_2}.
+\label{eq:speaker_condition}
+\end{equation}
+
+This condition modulates only the audio-only blocks; the preceding joint blocks use \(\mathbf{e}_t\). The explicit speaker pathway complements the reference-latent context in the input representation. A final time-conditioned normalization and linear projection produce
+
+\begin{equation}
+v_\theta(\mathbf{z}_t,t,\mathbf{c})
+=
+\phi_{\mathrm{out}}
+\left(
+\operatorname{AdaLN}_{\mathrm{out}}
+(\mathbf{H}_a^{N_J+N_A};\mathbf{e}_t)
+\right),
+\label{eq:velocity_output}
+\end{equation}
+
+where \(\mathbf{c}\) collects the multimodal conditions. The predicted velocity has the same dimensions as \(\mathbf{z}_t\). We use \(N_J=12\) and \(N_A=6\), with hidden width \(d=768\), 12 attention heads, and a feed-forward expansion ratio of two.
+
+\subsubsection{Training Objective}
+
+The flow matching loss is evaluated only over the masked generation region. To encourage linguistic consistency, auxiliary connectionist temporal classification (CTC) heads~\cite{choi2025aligndit,graves2006ctc} predict the transcript from selected audio-stream hidden states. The overall objective is
+
+\begin{equation}
+\mathcal{L}
+=
+\mathcal{L}_{\mathrm{CFM}}^{\mathrm{masked}}
++
+\frac{\lambda_{\mathrm{CTC}}}{|\mathcal{I}|}
+\sum_{\ell\in\mathcal{I}}
+\operatorname{CTC}
+\left(
+P_\ell(\mathbf{H}_a^\ell),\mathbf{y}
+\right),
+\label{eq:training_objective}
+\end{equation}
+
+where \(\mathcal{I}\) indexes the supervised block outputs, \(P_\ell\) is a character-prediction head, and \(\lambda_{\mathrm{CTC}}\) balances the auxiliary objective. Training uses paired audiovisual data and transcripts, without externally supplied phoneme durations. The temporal locality of audiovisual interaction is addressed by the attention bias introduced next.

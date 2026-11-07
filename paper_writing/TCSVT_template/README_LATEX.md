@@ -6,6 +6,8 @@
 
 音频压缩小节直接载入 `../local_files/audio_compression_revised.tex`，使用波形编码与解码的精简叙述。`../local_files/audio_compression_revised_references.bib` 的文献已与主文献库去重合并：MMAudio 复用现有 CVPR 正式发表条目，Semantic-VAE 使用作者提供的 2025 年 v1 预印本及 `niu2025semantic` 引用键。
 
+第三小节直接载入 `../local_files/mmdit_backbone_revised.tex`，包含多模态表示、联合注意力、说话人条件音频细化和训练目标。`../local_files/mmdit_backbone_revised_references.bib` 中实际引用的文献按论文去重并入主文献库，新增 ConvNeXt V2 和 RoFormer；其余复用已有条目及引用键。配套文件中最后三篇可选参考文献保留供后续相关工作或第四小节使用。
+
 `experiments.tex` 包含两数据集 Setting 1/2、跨数据集参考音频、关闭 Text 的 Video-to-Speech 和 Visual Forced Alignment；五张结果表位于 `tables/results_*.tex`。数值来自项目根目录 `实验结果.md`。VTS 的 Text 关闭和当前模型重测依据作者在本次写作会话中的明确确认；旧 benchmark 文档中的历史模型/伪文本协议不代表此次结果。消融小节按要求留空。
 
 `conclusion.tex` 总结方法、主要实验结论和已验证的任务扩展。`acknowledgment.tex` 按作者选择采用通用致谢，感谢公开数据集、预训练模型、基线实现及评测工具的贡献者；具体资助与致谢信息待作者后续提供。致谢不编号，置于参考文献之前。
