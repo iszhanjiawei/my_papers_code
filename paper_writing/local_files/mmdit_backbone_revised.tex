@@ -70,9 +70,7 @@ where \([\cdot;\cdot]_{\mathrm{seq}}\) denotes sequence-wise concatenation, \(d_
 
 After combining attention heads, the output is split according to the original sequence lengths. The modality-specific outputs \(\mathbf{O}_a^\ell\), \(\mathbf{O}_v^\ell\), and \(\mathbf{O}_y^\ell\) update their respective streams through gated residual connections:
 
-% Use a local 9-point two-line display so the tag fits beside the last row.
-\begingroup
-\small
+% Keep the default 10-point math size and align the tag with the last row.
 \begin{equation}
 \begin{aligned}[b]
 \widetilde{\mathbf{H}}_m^\ell
@@ -87,7 +85,8 @@ After combining attention heads, the output is split according to the original s
 \widetilde{\mathbf{H}}_m^\ell
 +
 \mathbf{g}_{m,\mathrm{ff}}^\ell(\mathbf{e}_t)
-\odot
+\\
+&\quad\odot
 \operatorname{FFN}_m^\ell
 \left(
 \operatorname{AdaLN}_{m,\mathrm{ff}}^\ell
@@ -96,7 +95,6 @@ After combining attention heads, the output is split according to the original s
 \end{aligned}
 \label{eq:mm_residual}
 \end{equation}
-\endgroup
 
 where \(\phi_{m,O}^\ell\) is the output projection and the gates are generated from \(\mathbf{e}_t\). Thus, the three streams exchange information while retaining separate transformations. Although all three hidden streams evolve across network layers, only the audio latent is integrated by the flow solver.
 
