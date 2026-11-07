@@ -35,7 +35,7 @@ G_{ij}
 
 where \(\mathbf B_{av}\in\mathbb R^{L_z\times L_z}\) and \(\sigma_{\mathrm w}>0\) controls the temporal spread in seconds. The prior is centered at the matching timestamp, with zero offset, and attenuates more distant associations. Unlike a hard window, it imposes no explicit cutoff, allowing the learned content scores to retain access to more distant positions. Its width is fixed rather than predicted from input features.
 
-\textit{Bidirectional integration.} With queries and keys ordered as audio, video, and text, the bias in the joint attention equation~\eqref{eq:joint_attention} is
+\textit{Bidirectional integration.} With queries and keys ordered as audio, video, and text, the bias in the joint attention equation~\eqref{eq:mmdit_joint_attention} is
 
 \begin{equation}
 \mathbf B=

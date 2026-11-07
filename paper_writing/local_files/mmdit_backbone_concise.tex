@@ -1,0 +1,100 @@
+% !TeX root = ../TCSVT_template/manuscript.tex
+% Replacement for subsection C: two displayed equations only.
+% Requires amsmath and the bibliography keys from
+% mmdit_backbone_concise_references.bib.
+% Retains eq:mmdit_joint_attention for subsection D.
+% Removed formula labels: eq:mmdit_input_streams, eq:mmdit_stream_update,
+% eq:mmdit_speaker_condition, eq:mmdit_velocity_output.
+% The architecture and conditioning pathways are unchanged.
+
+\subsection{Multimodal Diffusion Transformer for Video Dubbing}
+\label{subsec:mmdit_backbone}
+\label{sec:mmdit_dubbing}
+
+Video dubbing requires coordinated modeling of linguistic content, visual
+articulation, and speaker characteristics. To accommodate their different
+representations and temporal structures, we adopt a multimodal diffusion
+transformer (MM-DiT)~\cite{esser2024scaling} with separate audio, visual,
+and textual streams. The backbone combines multimodal joint attention with
+subsequent audio-only refinement~\cite{cheng2025mmaudio,yun2026immersivetts},
+allowing cross-modal interaction while retaining modality-specific processing.
+
+\subsubsection{Multimodal Representations}
+\label{subsubsec:mmdit_inputs}
+The audio stream receives the channel-wise concatenation of the noisy latent
+$\mathbf{z}_t$ and the reference-latent context. During training,
+complementary temporal masking~\cite{choi2025aligndit} retains acoustic
+context outside the generation region and visual features within it; visual
+positions corresponding to the acoustic context are replaced with a null
+embedding. At inference, the reference utterance supplies the acoustic
+context without requiring its corresponding video.
+
+Lip-motion features from a pretrained audiovisual speech
+encoder~\cite{shi2022avhubert} are linearly resampled from 25~Hz to the
+40-Hz audio-latent grid. The transcript is encoded at the character level
+using four ConvNeXt V2 blocks~\cite{woo2023convnext,chen2025f5tts},
+without duration-based expansion. Learned input mappings project all three
+streams to a common hidden width, while the text retains its own sequence
+length $L_y$. The audio and visual pathways additionally incorporate temporal
+contextualization and convolutional positional embeddings.
+
+\subsubsection{Multimodal Joint Attention}
+\label{subsubsec:mmdit_joint}
+Each joint block uses modality-specific normalization, attention projections,
+and feed-forward networks. Flow-time-conditioned adaptive layer
+normalization~\cite{peebles2023dit} modulates the streams before attention.
+Their queries and keys are RMS-normalized, with temporal rotary
+embeddings~\cite{su2024roformer} applied to the audio and visual streams
+on the shared time grid. The queries, keys, and values from the three
+modalities are concatenated along the sequence dimension to form
+$\mathbf{Q}$, $\mathbf{K}$, and $\mathbf{V}$. Joint attention for one head
+is computed as
+\begin{equation}
+\mathbf{O}=\operatorname{softmax}\!\left(
+\frac{\mathbf{Q}\mathbf{K}^{\top}}{\sqrt{d_h}}+\mathbf{B}
+\right)\mathbf{V},
+\label{eq:mmdit_joint_attention}
+\end{equation}
+where $d_h$ is the head dimension and $\mathbf{B}$ is the audiovisual
+temporal bias defined in the next subsection; padding masks are omitted
+for clarity. A single softmax normalizes over keys from all modalities.
+The output is split back into the three streams, each of which is updated
+through its own output projection, gated residual connections, and
+feed-forward network. Thus, audio, visual, and textual hidden representations
+are jointly updated across layers, whereas only the audio latent is evolved
+by the flow solver.
+
+\subsubsection{Speaker-Conditioned Audio Refinement}
+\label{subsubsec:mmdit_refinement}
+After $N_J=12$ joint blocks, the audio representation passes through $N_A=6$ audio-only
+blocks with self-attention and feed-forward transformations. A frozen
+speaker-verification encoder~\cite{wang2023campplus} provides an
+explicit identity embedding, extracted from the complete training utterance
+before temporal masking or from the supplied reference utterance at
+inference. This embedding is $\ell_2$-normalized, projected, and added to
+the flow-time embedding to modulate the audio-only blocks. The preceding
+joint blocks remain conditioned on flow time alone. This identity cue
+supplements rather than replaces the reference-latent context. Finally, a
+time-conditioned normalization and linear projection predict the velocity
+field with the same shape as $\mathbf{z}_t$.
+
+\subsubsection{Training Objective}
+\label{subsubsec:mmdit_alignment}
+We evaluate the flow matching loss only over the masked generation region
+and apply auxiliary connectionist temporal classification (CTC)
+supervision~\cite{graves2006ctc,choi2025aligndit} to selected audio-stream
+hidden states. The overall objective is
+\begin{equation}
+\mathcal{L}=\mathcal{L}_{\mathrm{CFM}}^{\mathrm{masked}}
++\lambda_{\mathrm{CTC}}\mathcal{L}_{\mathrm{CTC}},
+\label{eq:mmdit_training_objective}
+\end{equation}
+where $\mathcal{L}_{\mathrm{CTC}}$ is averaged over the selected prediction
+heads and $\lambda_{\mathrm{CTC}}$ controls its contribution. Transcript
+supervision encourages linguistic consistency without externally supplied
+phoneme durations. The following subsection describes the temporal bias
+used to guide audiovisual interaction.
+
+% Retain the following details in Implementation Details, rather than
+% expanding the backbone discussion: hidden width 768, 12 attention heads,
+% FFN expansion ratio 2, and 192-dimensional speaker embeddings.

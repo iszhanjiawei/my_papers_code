@@ -6,7 +6,7 @@
 
 音频压缩小节直接载入 `../local_files/audio_compression_revised.tex`，使用波形编码与解码的精简叙述。`../local_files/audio_compression_revised_references.bib` 的文献已与主文献库去重合并：MMAudio 复用现有 CVPR 正式发表条目，Semantic-VAE 使用作者提供的 2025 年 v1 预印本及 `niu2025semantic` 引用键。
 
-第三小节直接载入 `../local_files/mmdit_backbone_revised.tex`，包含多模态表示、联合注意力、说话人条件音频细化和训练目标。`../local_files/mmdit_backbone_revised_references.bib` 中实际引用的文献按论文去重并入主文献库，新增 ConvNeXt V2 和 RoFormer；其余复用已有条目及引用键。
+第三小节直接载入 `../local_files/mmdit_backbone_concise.tex`，保留联合注意力和训练目标两条公式，以文字说明多模态表示、流间更新及说话人条件音频细化。配套的 `../local_files/mmdit_backbone_concise_references.bib` 与主文献库统一引用键并去重，实际引用的文献复用现有条目。隐藏维度、注意力头数、FFN 扩展比和说话人嵌入维度保留在 `experiments.tex` 的实现设置中。
 
 第四小节直接载入 `../local_files/gaussian_windowed_attention.tex`，包含高斯时间先验、双向偏置矩阵、共享 softmax 归一化及窗口配置。其使用的 `tran2026precise` 条目来自前述配套文献文件，已并入主文献库；MMAudio 复用现有条目。方法各小节通过标签交叉引用，公式保留 IEEEtran 默认 10 pt 字号。
 
