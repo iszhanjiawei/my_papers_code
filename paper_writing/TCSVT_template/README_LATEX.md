@@ -2,7 +2,7 @@
 
 论文主文档：`manuscript.tex`，依次载入 `abstract.tex`、`introduction.tex`、`related_work.tex`、`method.tex`、`experiments.tex`、`conclusion.tex`、`acknowledgment.tex`，使用 `references.bib` 管理参考文献。标题为 **JointDub: Locality-Aware Multimodal Diffusion Transformer for Synchronized Video Dubbing**，作者信息待补充。
 
-`method.tex` 组织为 A. Preliminaries、B. Multimodal Diffusion Transformer for Video Dubbing、C. Gaussian-Windowed Audiovisual Attention 和 D. Three-Stage Progressive Training。A 小节参考 MMAudio 的组织方式，将条件流匹配和音频压缩合并，以段内斜体标题区分两部分。流匹配正文载入 `../local_files/flow_matching_preliminaries.tex`；`../local_files/flow_matching_references.bib` 的三篇配套文献已合并到 `references.bib`，统一通过主稿参考文献库编译。Lipman 等人的 Flow Matching 论文使用 `lipman2023flow` 引用键，避免重复列项。
+`method.tex` 组织为 A. Preliminaries、B. Multimodal Diffusion Transformer for Video Dubbing、C. Gaussian-Windowed Audiovisual Attention 和 D. Acoustic-to-Linguistic-to-Visual Curriculum Learning。A 小节参考 MMAudio 的组织方式，将条件流匹配和音频压缩合并，以段内斜体标题区分两部分。流匹配正文载入 `../local_files/flow_matching_preliminaries.tex`；`../local_files/flow_matching_references.bib` 的三篇配套文献已合并到 `references.bib`，统一通过主稿参考文献库编译。Lipman 等人的 Flow Matching 论文使用 `lipman2023flow` 引用键，避免重复列项。
 
 A 小节中的音频压缩正文载入 `../local_files/audio_compression_revised.tex`，使用波形编码与解码的精简叙述。原流匹配与音频压缩小节的引用标签统一指向合并后的 A 小节。`../local_files/audio_compression_revised_references.bib` 的文献已与主文献库去重合并：MMAudio 复用现有 CVPR 正式发表条目，Semantic-VAE 使用作者提供的 2025 年 v1 预印本及 `niu2025semantic` 引用键。
 
@@ -10,7 +10,7 @@ B 小节直接载入 `../local_files/mmdit_backbone_concise.tex`，保留联合�
 
 C 小节直接载入 `../local_files/gaussian_windowed_attention.tex`，包含高斯时间先验、双向偏置矩阵、共享 softmax 归一化及窗口配置。其使用的 `tran2026precise` 条目来自前述配套文献文件，已并入主文献库；MMAudio 复用现有条目。方法各小节通过标签交叉引用，公式保留 IEEEtran 默认 10 pt 字号。
 
-D 小节直接载入 `../local_files/progressive_training.tex`，描述继承的 LibriSpeech 声学初始化 → LibriTTS 文本–音频适配 → 视听配音适配。正文区分第一阶段保留音频上下文的 masked infilling、第二阶段的音频/文本联合注意力及说话人条件、第三阶段的视觉交互与 CTC。第一阶段是已有权重来源，不宣称从零完成三次训练。新增 LibriSpeech、LibriTTS、HuBERT 和 CineDub 文献至主文献库，课程学习比较限定于 CineDub §3.3.1。
+D 小节直接载入 `../local_files/progressive_training.tex`，采用作者提供的 Acoustic-to-Linguistic-to-Visual Curriculum Learning（ALV-CL）新版正文，描述 LibriSpeech 声学先验 → LibriTTS 语言控制 → 视听配音适配。四条公式定义各阶段条件、共同的 masked flow matching、阶段迁移和最终 flow+CTC 目标，使用全文自动编号。第二阶段条件集合按实际实现补入说话人嵌入，与第三阶段保持一致；正文其余部分保留作者提供的论述。LibriSpeech、LibriTTS 引用使用主文献库中已有键；此前收录的 HuBERT、CineDub 条目保留在文献库中。
 
 D 小节实现依据：`../../AlignDiT_mmdit_c2_semantic_vae/src/aligndit/model/cfm_notext.py` 及 `config/pretrain_semantic_vae_warmstart_s2c.yaml` 对应第一阶段；`../../AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_window13_av_va/src/aligndit/config/pretrain_libritts_text_audio.yaml` 对应中间阶段；新增 `_libritts_pretrained` 后缀的最新实验目录内 `LIBRITTS_PRETRAINED_WINDOW13.md` 对应完整 EMA 迁移。中间阶段使用 `train-clean-100` 与 `train-clean-360`，训练 50k updates，不启用视觉、Gaussian bias 或 CTC；文本和说话人条件参数参与训练。子集名称继承自 LibriSpeech，不能将名称相加后声称实际使用 460 小时 LibriTTS；论文正文使用精确子集名，实际预处理后时长需以缓存清单汇总。
 
@@ -74,7 +74,7 @@ source /zjw524/texlive/env.sh
 
 ## 已完成验证
 
-1. 当前稿件（含三阶段训练方法、实验章节及五张结果表）完成多轮编译，生成 10 页 PDF；无未定义引用或内容越界警告。方法 D 在第 5 页，已检查渲染后的正文排版。
+1. 当前稿件（含三阶段训练方法、实验章节及五张结果表）完成多轮编译，生成 10 页 PDF；无未定义引用或内容越界警告。方法 D 位于第 5–6 页，已检查渲染后的正文及公式排版。
 2. 在空 HOME、仅含 `/usr/bin:/bin` 的 PATH 下强制复编译通过，验证不依赖 `/root` 初始化文件。
 3. XeLaTeX + fontspec + Latin Modern Roman 的 Unicode 文本/公式测试通过。
 4. 所有 28 个 TeX 格式文件成功重建；BibTeX/Biber、latexmk 和常用 IEEE 宏包已安装。
