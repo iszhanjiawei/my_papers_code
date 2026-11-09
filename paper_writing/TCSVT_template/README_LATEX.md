@@ -10,7 +10,7 @@ B 小节直接载入 `../local_files/mmdit_backbone_concise.tex`，保留联合�
 
 C 小节直接载入 `../local_files/gaussian_windowed_attention.tex`，包含高斯时间先验、双向偏置矩阵、共享 softmax 归一化及窗口配置。其使用的 `tran2026precise` 条目来自前述配套文献文件，已并入主文献库；MMAudio 复用现有条目。方法各小节通过标签交叉引用，公式保留 IEEEtran 默认 10 pt 字号。
 
-D 小节直接载入 `../local_files/progressive_training.tex`，采用 Acoustic-to-Linguistic-to-Visual Curriculum Learning（ALV-CL）正文。参考并引用 CineDub §3.3.1 的论证组织，按“语言与视觉约束的差异 → 条件递进 → 三阶段迁移 → 顺序安排的理由”展开，重点说明 LibriTTS 中间阶段如何让配音适配从已有文本–语音映射出发。训练目标始终是语音；保留条件集合一条公式，最终 masked flow+CTC 目标直接引用 B 小节公式。第二阶段包含说话人条件，关闭视觉与 CTC；第三阶段联合适配各生成器分支。顺序安排作为设计动机，不宣称已证实梯度冲突、遗忘或优于所有其他训练顺序。LibriSpeech、LibriTTS、CineDub 引用均复用主文献库已有键。
+D 小节直接载入 `../local_files/progressive_training.tex`，采用 Acoustic-to-Linguistic-to-Visual Curriculum Learning（ALV-CL）正文。按“语言与视觉约束的差异 → 条件递进 → 三阶段迁移 → 顺序安排的理由”展开，重点说明 LibriTTS 中间阶段如何让配音适配从已有文本–语音映射出发。训练目标始终是语音；保留条件集合一条公式，最终 masked flow+CTC 目标直接引用 B 小节公式。第二阶段包含说话人条件，关闭视觉与 CTC；第三阶段联合适配各生成器分支。顺序安排作为设计动机，不宣称已证实梯度冲突、遗忘或优于所有其他训练顺序。LibriSpeech、LibriTTS 引用复用主文献库已有键。ALV-CL 作为本文提出的训练策略陈述；此前参考其他论文仅用于写作组织，不作为方法来源归因。
 
 D 小节实现依据：`../../AlignDiT_mmdit_c2_semantic_vae/src/aligndit/model/cfm_notext.py` 及 `config/pretrain_semantic_vae_warmstart_s2c.yaml` 对应第一阶段；`../../AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_window13_av_va/src/aligndit/config/pretrain_libritts_text_audio.yaml` 对应中间阶段；新增 `_libritts_pretrained` 后缀的最新实验目录内 `LIBRITTS_PRETRAINED_WINDOW13.md` 对应完整 EMA 迁移。中间阶段使用 `train-clean-100` 与 `train-clean-360`，训练 50k updates，不启用视觉、Gaussian bias 或 CTC；文本和说话人条件参数参与训练。子集名称继承自 LibriSpeech，不能将名称相加后声称实际使用 460 小时 LibriTTS；论文正文使用精确子集名，实际预处理后时长需以缓存清单汇总。
 

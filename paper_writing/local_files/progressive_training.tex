@@ -1,5 +1,5 @@
 % !TeX root = ../TCSVT_template/manuscript.tex
-% ALV-CL rewrite informed by CineDub Sec. 3.3.1:
+% ALV-CL argument structure:
 % distinct constraints -> staged conditioning -> transfer -> ordering rationale.
 % Retain one conditioning equation and cite the existing backbone objective.
 % Stage II includes speaker conditioning; visual and CTC supervision are inactive.
@@ -12,7 +12,7 @@
 
 Linguistic and visual conditioning constrain speech generation in different ways: text specifies ordered content without frame-level timing, whereas lip motion provides temporal cues. An audio-only pretrained generator has a speech prior but lacks an explicit transcript-to-speech mapping. Direct dubbing adaptation therefore introduces linguistic control and audiovisual correspondence within the same optimization stage.
 
-We introduce Acoustic-to-Linguistic-to-Visual Curriculum Learning (ALV-CL), following the staged capability acquisition principle explored in CineDub~\cite{dai2026cinedub}. Let $\mathbf z_{\mathrm{ctx}}$, $\mathbf y$, $\mathbf v$, and $\mathbf s$ denote acoustic context, text tokens, lip-motion features, and the speaker embedding. The three stages progressively expand the conditioning sets:
+We introduce Acoustic-to-Linguistic-to-Visual Curriculum Learning (ALV-CL). Let $\mathbf z_{\mathrm{ctx}}$, $\mathbf y$, $\mathbf v$, and $\mathbf s$ denote acoustic context, text tokens, lip-motion features, and the speaker embedding. The three stages progressively expand the conditioning sets:
 \begin{equation}
 \begin{aligned}
 \mathbf c^{\mathrm A} &= (\mathbf z_{\mathrm{ctx}}),\\
