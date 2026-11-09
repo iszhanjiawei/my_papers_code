@@ -1,0 +1,90 @@
+% !TeX root = ../TCSVT_template/manuscript.tex
+% Author-requested method addition, 2026-11-09.
+% Terminology: three-stage progressive training; acoustic pretraining;
+% text--audio adaptation; audiovisual dubbing adaptation.
+% Stage 1 is inherited acoustic initialization, including prior codec adaptation;
+% these are capability stages, not a claim of three training runs from scratch.
+% Stage 2 source: the fixed_band_window13_av_va snapshot (without the
+% _libritts_pretrained suffix), config/pretrain_libritts_text_audio.yaml.
+% Stage 3 source: the author's latest _libritts_pretrained snapshot,
+% LIBRITTS_PRETRAINED_WINDOW13.md and the corresponding finetuning config.
+% The LibriTTS clean-100/clean-360 subset names do not imply 460 h of audio.
+
+\subsection{Three-Stage Progressive Training}
+\label{subsec:progressive_training}
+\label{sec:progressive_training}
+
+An acoustic generator pretrained without transcripts provides a speech
+generation prior but has not learned to follow a target script. Directly
+adapting such a generator to video dubbing requires learning both
+text--speech correspondence and audiovisual timing from the dubbing data.
+We introduce an intermediate text--audio adaptation stage to establish
+transcript-conditioned generation before adding visual constraints. The
+resulting curriculum progresses through acoustic pretraining, text--audio
+adaptation, and audiovisual dubbing adaptation. Its central design choice
+is to learn linguistic conditioning on paired speech and text before
+jointly optimizing all three modalities for dubbing.
+
+\textit{Stage 1: Acoustic pretraining.}
+We start from a speech generator pretrained on
+LibriSpeech~\cite{panayotov2015librispeech}, following the audio-pretraining
+principle of AlignDiT~\cite{choi2025aligndit}. The inherited checkpoint
+operates in the Semantic-VAE latent space described in
+Section~\ref{sec:preliminaries}. It learns masked acoustic infilling from
+retained audio context without text or video conditioning. Its pretraining
+combines masked flow matching with an auxiliary representation-alignment
+loss against frozen HuBERT features~\cite{hsu2021hubert}. This stage
+supplies the acoustic initialization for subsequent conditional learning;
+it does not provide a pretrained text--speech mapping.
+
+\textit{Stage 2: Text--audio adaptation.}
+We transfer the pretrained acoustic parameters into the audio pathway of
+the MM-DiT backbone and continue training on paired speech and transcripts
+from the \texttt{train-clean-100} and \texttt{train-clean-360} subsets of
+LibriTTS~\cite{zen2019libritts}. The first $N_J$ blocks perform joint
+attention over audio and text, followed by $N_A$ speaker-conditioned
+audio-only blocks. The visual stream is bypassed, and the Gaussian
+audiovisual bias is inactive. The model receives masked acoustic context,
+the utterance transcript, and the frozen speaker encoder's identity
+embedding. We optimize the active audio, text, and speaker-conditioning
+parameters using masked flow matching, with
+$\lambda_{\mathrm{CTC}}=0$ in~\eqref{eq:mmdit_training_objective}.
+Thus, transcript conditioning is learned through the generation objective
+without externally supplied phoneme durations. The Semantic-VAE and
+latent normalization remain fixed, preserving the acoustic representation
+across stages. We use the exponential moving averaged checkpoint after
+50,000 updates to initialize dubbing adaptation.
+
+\textit{Stage 3: Audiovisual dubbing adaptation.}
+We initialize the full generator from the text--audio checkpoint,
+retaining its learned acoustic, textual, and speaker-conditioning
+parameters. Text embeddings and CTC output rows are mapped by character
+identity when the vocabulary changes. Visual and CTC parameters are
+carried in the checkpoint but receive their task-specific training only
+in this stage. We activate three-stream joint attention and the
+Gaussian-windowed audiovisual bias of
+Section~\ref{subsec:gaussian_windowed_attention}, and train on synchronized
+video, speech, and transcripts with the complementary masking described
+in Section~\ref{subsubsec:mmdit_inputs}. The objective is
+\eqref{eq:mmdit_training_objective}, with the CTC weight gradually
+increased during dubbing adaptation. All generator pathways are jointly
+optimized; the pretrained acoustic and linguistic pathways remain
+trainable as visual conditioning is learned. The optimizer and learning-rate
+schedule restart at this transition, while the codec and external feature
+encoders remain frozen.
+
+This curriculum shares CineDub's principle of establishing a generative
+prior before introducing additional task requirements~\cite{dai2026cinedub}.
+CineDub's ambient-to-linguistic curriculum begins with video-conditioned
+environmental audio generation and then jointly trains audio, speech, and mixed soundtracks.
+Our progression instead concerns the conditioning of a speech generator:
+acoustic context is followed by linguistic and speaker conditioning, and
+then visual timing. The intermediate text--audio stage provides a learned
+text--speech mapping from which audiovisual adaptation can proceed,
+while temporal correspondence remains implicit within the generator.
+
+% Evidence boundary: the matched CelebV-Dub Setting 1 comparison of independent
+% 150k downstream runs supports higher SPKSIM/EMOSIM and lower WER, but AVSync
+% decreases. It does not isolate training order from additional data/compute.
+% Do not attribute existing GRID/VTS/VFA tables to the new initialization
+% without checkpoint-specific reruns. Keep quantitative comparisons in Experiments.

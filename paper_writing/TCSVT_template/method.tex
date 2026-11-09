@@ -1,13 +1,13 @@
 % !TeX root = manuscript.tex
-% Method assembled from author-provided revisions, 2026-11-07.
-% Implementation provenance: selected window13 AV/VA snapshot.
+% Method assembled from author-provided revisions and audited training code.
+% Latest training provenance: window13 AV/VA LibriTTS-pretrained snapshot.
 % IMPORTANT: the active Semantic-VAE encodes waveforms, not mel spectrograms.
 % Some inherited names (mel_dim, mel_spec_module, num_mels) refer to latents.
 % Notation: t = flow time; tau = physical frame time; B = temporal logit bias.
 \section{Proposed Method}
 \label{sec:method}
 
-Given a target video, a target script, and a reference recording with its transcript, our framework generates speech with the requested content, visual timing, and speaker characteristics. We first introduce conditional flow matching and the frozen acoustic codec as preliminaries. We then describe the three-stream generator and its audio--visual temporal prior. Throughout this section, $t$ denotes generative flow time, whereas $\tau$ denotes physical time within an utterance.
+Given a target video, a target script, and a reference recording with its transcript, our framework generates speech with the requested content, visual timing, and speaker characteristics. We first introduce conditional flow matching and the frozen acoustic codec as preliminaries. We then describe the three-stream generator and its audio--visual temporal prior, followed by a three-stage training curriculum that progressively introduces linguistic and visual conditioning. Throughout this section, $t$ denotes generative flow time, whereas $\tau$ denotes physical time within an utterance.
 
 \subsection{Preliminaries}
 \label{sec:preliminaries}
@@ -22,6 +22,8 @@ Given a target video, a target script, and a reference recording with its transc
 \input{../local_files/mmdit_backbone_concise}
 
 \input{../local_files/gaussian_windowed_attention}
+
+\input{../local_files/progressive_training}
 
 % Implementation evidence (all paths below relative to the selected snapshot):
 % src/aligndit/model/cfm_vt.py: train path 302--400; CFG and ODE 159--247.
