@@ -1,0 +1,14 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_av_va
+  - _self_
+
+# Widen only the fixed Gaussian A<->V prior: sigma=6 aligned 40-Hz frames.
+# The nominal 13-frame core is +/-1 sigma; Gaussian tails remain untruncated.
+# All other architecture, data, initialization and training settings are inherited.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_ctc003_warmup10k30k
+  arch:
+    temporal_band_fixed_sigma_seconds: 0.150
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_ctc003_warmup10k30k_40hz_CelebVDub_char
