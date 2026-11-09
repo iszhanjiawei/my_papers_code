@@ -7,7 +7,13 @@
 \section{Proposed Method}
 \label{sec:method}
 
-Given a target video, a target script, and a reference recording with its transcript, our framework generates speech with the requested content, visual timing, and speaker characteristics. We first formulate conditional flow matching, then describe the frozen acoustic codec, the three-stream generator, and its audio--visual temporal prior. Throughout this section, $t$ denotes generative flow time, whereas $\tau$ denotes physical time within an utterance.
+Given a target video, a target script, and a reference recording with its transcript, our framework generates speech with the requested content, visual timing, and speaker characteristics. We first introduce conditional flow matching and the frozen acoustic codec as preliminaries. We then describe the three-stream generator and its audio--visual temporal prior. Throughout this section, $t$ denotes generative flow time, whereas $\tau$ denotes physical time within an utterance.
+
+\subsection{Preliminaries}
+\label{sec:preliminaries}
+\label{sec:flow_preliminaries}
+\label{subsec:audio_compression}
+\label{sec:audio_compression}
 
 \input{../local_files/flow_matching_preliminaries}
 

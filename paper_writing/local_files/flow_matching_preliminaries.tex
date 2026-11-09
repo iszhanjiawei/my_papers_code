@@ -5,10 +5,7 @@
 % conversation text, not a verified byte-for-byte copy of the original file.
 % Include this section in a parent LaTeX document with amsmath and amssymb.
 
-\subsection{Preliminaries on Flow Matching}
-\label{sec:flow_preliminaries}
-
-We adopt conditional flow matching~\cite{lipman2023flow,tong2024improving} to model speech generation in a continuous latent space. Let $\mathbf{z}_1$ denote a target speech latent and $\mathbf{z}_0 \sim \mathcal{N}(\mathbf{0},\mathbf{I})$ an independently sampled noise tensor of the same shape. Given conditioning information $\mathbf{c}$, we construct an intermediate state by linear interpolation~\cite{liu2023flow}:
+\textit{Conditional flow matching.} We adopt conditional flow matching~\cite{lipman2023flow,tong2024improving} to model speech generation in a continuous latent space. Let $\mathbf{z}_1$ denote a target speech latent and $\mathbf{z}_0 \sim \mathcal{N}(\mathbf{0},\mathbf{I})$ an independently sampled noise tensor of the same shape. Given conditioning information $\mathbf{c}$, we construct an intermediate state by linear interpolation~\cite{liu2023flow}:
 \begin{equation}
 \mathbf{z}_t=(1-t)\mathbf{z}_0+t\mathbf{z}_1,
 \qquad t\sim\mathcal{U}(0,1).
@@ -41,4 +38,4 @@ v_\theta(\hat{\mathbf{z}}_t,t,\mathbf{c}),
 \hat{\mathbf{z}}_0\sim\mathcal{N}(\mathbf{0},\mathbf{I}),
 \label{eq:flow_ode}
 \end{equation}
-from $t=0$ to $t=1$. The resulting $\hat{\mathbf{z}}_1$ is subsequently decoded into a speech waveform, as described in the next subsection.
+from $t=0$ to $t=1$. The resulting $\hat{\mathbf{z}}_1$ is subsequently decoded into a speech waveform, as described below.
