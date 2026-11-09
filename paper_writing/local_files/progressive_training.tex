@@ -1,19 +1,15 @@
 % !TeX root = ../TCSVT_template/manuscript.tex
-% Author-provided replacement for method subsection D, 2026-11-09.
-% ALV-CL: Acoustic-to-Linguistic-to-Visual Curriculum Learning.
-% One implementation correction to the supplied conditioning sets:
-% Stage II already uses the reference-speaker embedding, so c^AL includes s.
-% Equation numbers follow the manuscript counter; do not hard-code tags.
+% Concise ALV-CL revision: retain only the conditioning progression.
+% Reuse the existing masked flow/CTC objective in the backbone subsection.
+% Stage II includes the speaker embedding, consistent with the active code.
 
 \subsection{Acoustic-to-Linguistic-to-Visual Curriculum Learning}
 \label{subsec:progressive_training}
 \label{sec:progressive_training}
 
-Video dubbing requires a speech generator to simultaneously preserve acoustic characteristics, follow a prescribed transcript, and synchronize articulation with visible lip motion. Although audio-only pretraining provides a useful speech prior, it does not explicitly establish a mapping from text to speech. Directly introducing linguistic and visual conditions in the final dubbing stage therefore requires the model to learn transcript-conditioned generation and visual temporal grounding within the same optimization phase. These two requirements impose different constraints: text specifies \emph{what} should be spoken, whereas video provides cues about \emph{when} it should be spoken.
+Audio-only pretraining supplies a speech prior but does not explicitly teach transcript-conditioned generation. Direct dubbing adaptation must therefore learn linguistic control and audiovisual timing together. We introduce Acoustic-to-Linguistic-to-Visual Curriculum Learning (ALV-CL) to establish text-conditioned generation before adding visual constraints.
 
-To address this, we introduce an \textbf{Acoustic-to-Linguistic-to-Visual Curriculum Learning (ALV-CL)} strategy that progressively increases the conditioning requirements while retaining speech as the generation target.
-
-Let $\mathbf z_1$ denote the clean speech latent and $\mathbf z_t$ its interpolated state at flow time $t$. We use $\mathbf z_{\mathrm{ctx}}$, $\mathbf y$, $\mathbf v$, and $\mathbf s$ to denote the acoustic context, text tokens, lip-motion features, and reference-speaker embedding, respectively. The conditioning sets of the three stages are defined as
+Let $\mathbf z_{\mathrm{ctx}}$, $\mathbf y$, $\mathbf v$, and $\mathbf s$ denote acoustic context, text tokens, lip-motion features, and the reference-speaker embedding, respectively. The conditioning sets progress as
 \begin{equation}
 \begin{aligned}
 \mathbf c^{\mathrm A} &= (\mathbf z_{\mathrm{ctx}}),\\
@@ -22,51 +18,12 @@ Let $\mathbf z_1$ denote the clean speech latent and $\mathbf z_t$ its interpola
 \end{aligned}
 \label{eq:alv_conditioning}
 \end{equation}
-where A, AL, and ALV represent acoustic pretraining, linguistic conditioning, and audiovisual dubbing adaptation, respectively. The speaker embedding is used in both the linguistic and audiovisual stages. For each stage $k\in\{\mathrm A,\mathrm{AL},\mathrm{ALV}\}$, the common masked conditional flow-matching objective is formulated as
-\begin{equation}
-\begin{aligned}
-&\mathcal L_{\mathrm{FM}}^{(k)}
-=\mathbb E_{\mathcal D_k,t,\mathbf z_0}\\
-&\quad\Bigl[
-\bigl\|
- v_{\theta_k}(\mathbf z_t,t;\mathbf c^k)
- -(\mathbf z_1-\mathbf z_0)
-\bigr\|_{\mathbf M}^{2}\Bigr],
-\end{aligned}
-\label{eq:alv_masked_flow}
-\end{equation}
-where $\mathcal D_k$ denotes the training distribution of stage $k$, and $\|\cdot\|_{\mathbf M}^{2}$ represents the mean squared error over the masked generation region. The generation target remains speech across all stages, while the conditioning requirements progressively change.
+while speech remains the generation target throughout training.
 
-Rather than learning all conditional relationships simultaneously, we optimize the model through three successive stages:
-\begin{equation}
-\begin{aligned}
-\underbrace{
-\min_{\theta_{\mathrm A}}\mathcal L_{\mathrm A}
-}_{\text{Stage I: Acoustic}}
-&\;\longrightarrow\;
-\underbrace{
-\min_{\theta_{\mathrm{AL}}}\mathcal L_{\mathrm{AL}}
-}_{\text{Stage II: Linguistic}}\\[4pt]
-&\;\longrightarrow\;
-\underbrace{
-\min_{\theta_{\mathrm{ALV}}}\mathcal L_{\mathrm{ALV}}
-}_{\text{Stage III: Visual}}.
-\end{aligned}
-\label{eq:alv_curriculum}
-\end{equation}
-Here, $\mathcal L_{\mathrm A}$, $\mathcal L_{\mathrm{AL}}$, and $\mathcal L_{\mathrm{ALV}}$ represent the complete training objectives of the respective stages, including auxiliary terms where applicable. At each transition, compatible parameters from the preceding checkpoint initialize the next-stage model, allowing previously acquired speech-generation knowledge to support the introduction of new conditioning inputs.
+\textbf{Stage I: Acoustic Prior Acquisition.} We begin with an audio-only generator pretrained on LibriSpeech~\cite{panayotov2015librispeech}. It reconstructs masked speech regions from retained acoustic context, establishing a speech-generation prior without transcript or visual conditioning.
 
-\textbf{Stage I: Acoustic Prior Acquisition.} We begin with an audio-only generator pretrained on LibriSpeech~\cite{panayotov2015librispeech}. The model learns to reconstruct masked speech regions from unmasked acoustic context without transcript or visual conditioning. This stage establishes a latent speech-generation prior, including acoustic and temporal characteristics of natural speech. However, the model is not explicitly optimized to produce speech corresponding to a prescribed transcript.
+\textbf{Stage II: Linguistic Grounding.} We initialize compatible acoustic parameters from Stage I and train on paired text and speech from LibriTTS~\cite{zen2019libritts}. Audio--text joint attention and speaker conditioning are optimized through masked flow matching, without visual input or CTC supervision. This intermediate stage establishes a text--speech mapping before audiovisual adaptation.
 
-\textbf{Stage II: Linguistic Grounding.} Starting from the acoustic checkpoint, we continue training on paired text and speech from LibriTTS~\cite{zen2019libritts}. By introducing transcript conditioning while withholding visual information, the generator learns to associate linguistic tokens with their acoustic realizations. This stage establishes transcript-conditioned speech generation before the additional requirement of audiovisual synchronization is introduced. Consequently, the subsequent dubbing stage can build on an existing linguistic generation capability instead of learning text-conditioned synthesis solely from audiovisual dubbing data.
+\textbf{Stage III: Audiovisual Dubbing Adaptation.} We transfer the text-conditioned checkpoint to the multimodal model and fine-tune on synchronized video, transcripts, and speech. Three-stream MM-DiT attention and the Gaussian audiovisual prior introduce visual timing constraints. Training follows the masked flow-matching and auxiliary CTC objective in~\eqref{eq:mmdit_training_objective}, without externally supplied phoneme durations.
 
-\textbf{Stage III: Audiovisual Dubbing Adaptation.} Finally, we initialize the multimodal dubbing model using the text-conditioned checkpoint and fine-tune it on paired video, transcript, and speech data. The MM-DiT backbone jointly updates audio, visual, and textual representations, while Gaussian-windowed audiovisual attention introduces a temporal locality prior for lip-synchronous interactions. The final stage is optimized with masked flow matching and auxiliary CTC supervision:
-\begin{equation}
-\mathcal L_{\mathrm{ALV}}
-=\mathcal L_{\mathrm{FM}}^{(\mathrm{ALV})}
-+\lambda_{\mathrm{CTC}}\mathcal L_{\mathrm{CTC}}.
-\label{eq:alv_final_objective}
-\end{equation}
-This enables the model to learn text--speech correspondence internally without externally supplied phoneme durations, while adapting generated speech to visual articulation.
-
-Through this curriculum, the model progressively acquires acoustic generation, linguistic control, and audiovisual synchronization capabilities. The intermediate linguistic stage bridges audio-only pretraining and multimodal dubbing adaptation, providing a text-conditioned initialization for the final task. Importantly, the strategy modifies the training schedule without introducing additional modules or computational stages during inference.
+The curriculum transfers compatible parameters between stages and adds no modules or computational stages at inference.

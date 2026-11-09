@@ -10,7 +10,7 @@ B 小节直接载入 `../local_files/mmdit_backbone_concise.tex`，保留联合�
 
 C 小节直接载入 `../local_files/gaussian_windowed_attention.tex`，包含高斯时间先验、双向偏置矩阵、共享 softmax 归一化及窗口配置。其使用的 `tran2026precise` 条目来自前述配套文献文件，已并入主文献库；MMAudio 复用现有条目。方法各小节通过标签交叉引用，公式保留 IEEEtran 默认 10 pt 字号。
 
-D 小节直接载入 `../local_files/progressive_training.tex`，采用作者提供的 Acoustic-to-Linguistic-to-Visual Curriculum Learning（ALV-CL）新版正文，描述 LibriSpeech 声学先验 → LibriTTS 语言控制 → 视听配音适配。四条公式定义各阶段条件、共同的 masked flow matching、阶段迁移和最终 flow+CTC 目标，使用全文自动编号。第二阶段条件集合按实际实现补入说话人嵌入，与第三阶段保持一致；正文其余部分保留作者提供的论述。LibriSpeech、LibriTTS 引用使用主文献库中已有键；此前收录的 HuBERT、CineDub 条目保留在文献库中。
+D 小节直接载入 `../local_files/progressive_training.tex`，采用精简后的 Acoustic-to-Linguistic-to-Visual Curriculum Learning（ALV-CL）正文，描述 LibriSpeech 声学先验 → LibriTTS 语言控制 → 视听配音适配。仅保留各阶段条件集合一条公式；共同流匹配推导和阶段优化示意式已删去，最终 masked flow+CTC 目标直接引用 B 小节公式，避免重复。第二阶段条件集合包含说话人嵌入，与实际实现一致。LibriSpeech、LibriTTS 引用使用主文献库中已有键；此前收录的 HuBERT、CineDub 条目保留在文献库中。
 
 D 小节实现依据：`../../AlignDiT_mmdit_c2_semantic_vae/src/aligndit/model/cfm_notext.py` 及 `config/pretrain_semantic_vae_warmstart_s2c.yaml` 对应第一阶段；`../../AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_window13_av_va/src/aligndit/config/pretrain_libritts_text_audio.yaml` 对应中间阶段；新增 `_libritts_pretrained` 后缀的最新实验目录内 `LIBRITTS_PRETRAINED_WINDOW13.md` 对应完整 EMA 迁移。中间阶段使用 `train-clean-100` 与 `train-clean-360`，训练 50k updates，不启用视觉、Gaussian bias 或 CTC；文本和说话人条件参数参与训练。子集名称继承自 LibriSpeech，不能将名称相加后声称实际使用 460 小时 LibriTTS；论文正文使用精确子集名，实际预处理后时长需以缓存清单汇总。
 
@@ -74,7 +74,7 @@ source /zjw524/texlive/env.sh
 
 ## 已完成验证
 
-1. 当前稿件（含三阶段训练方法、实验章节及五张结果表）完成多轮编译，生成 10 页 PDF；无未定义引用或内容越界警告。方法 D 位于第 5–6 页，已检查渲染后的正文及公式排版。
+1. 当前稿件（含三阶段训练方法、实验章节及五张结果表）完成多轮编译，生成 9 页 PDF；无未定义引用或内容越界警告。精简后的方法 D 位于第 5 页，已检查渲染后的正文及公式排版。
 2. 在空 HOME、仅含 `/usr/bin:/bin` 的 PATH 下强制复编译通过，验证不依赖 `/root` 初始化文件。
 3. XeLaTeX + fontspec + Latin Modern Roman 的 Unicode 文本/公式测试通过。
 4. 所有 28 个 TeX 格式文件成功重建；BibTeX/Biber、latexmk 和常用 IEEE 宏包已安装。
