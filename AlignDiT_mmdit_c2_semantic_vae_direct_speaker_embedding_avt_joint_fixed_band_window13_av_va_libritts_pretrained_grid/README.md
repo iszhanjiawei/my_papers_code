@@ -1,4 +1,12 @@
-# Current experiment: 13-frame Gaussian soft core
+# Current experiment: GRID with fixed-13 AVT and LibriTTS initialization
+
+Use [GRID_TRAINING.md](GRID_TRAINING.md), `finetune_grid.yaml` and
+`src/aligndit/run/train/finetune_grid.sh` for this independent GRID experiment.
+It preserves the source 13-frame AVT model and full LibriTTS 50k EMA parent,
+adapting the data and epoch budget to GRID. The sections below document the
+inherited CelebV-Dub experiment, not this GRID run.
+
+## Inherited experiment: 13-frame Gaussian soft core
 
 This independent copy of `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_av_va`
 changes only the effective Gaussian sigma from 0.100 to 0.150 seconds. At the
