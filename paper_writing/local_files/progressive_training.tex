@@ -10,9 +10,9 @@
 \label{subsec:progressive_training}
 \label{sec:progressive_training}
 
-Linguistic and visual conditioning constrain speech generation in different ways: text specifies ordered content without frame-level timing, whereas lip motion provides temporal cues. An audio-only pretrained generator has a speech prior but lacks an explicit transcript-to-speech mapping. Direct dubbing adaptation therefore introduces linguistic control and audiovisual correspondence within the same optimization stage.
+Linguistic and visual conditioning constrain speech generation in different ways: text specifies ordered content without frame-level timing, whereas lip motion provides temporal cues. Acoustic pretraining learns masked speech reconstruction without transcript conditioning. Direct dubbing adaptation therefore introduces linguistic control and audiovisual correspondence within the same optimization stage.
 
-We introduce Acoustic-to-Linguistic-to-Visual Curriculum Learning (ALV-CL). Let $\mathbf z_{\mathrm{ctx}}$, $\mathbf y$, $\mathbf v$, and $\mathbf s$ denote acoustic context, text tokens, lip-motion features, and the speaker embedding. The three stages progressively expand the conditioning sets:
+To introduce these requirements progressively, we propose Acoustic-to-Linguistic-to-Visual Curriculum Learning (ALV-CL). Let $\mathbf z_{\mathrm{ctx}}$, $\mathbf y$, $\mathbf v$, and $\mathbf s$ denote retained acoustic latents, text tokens, lip-motion features, and the speaker embedding. The conditioning sets are
 \begin{equation}
 \begin{aligned}
 \mathbf c^{\mathrm A} &= (\mathbf z_{\mathrm{ctx}}),\\
@@ -21,8 +21,10 @@ We introduce Acoustic-to-Linguistic-to-Visual Curriculum Learning (ALV-CL). Let 
 \end{aligned}
 \label{eq:alv_conditioning}
 \end{equation}
-Speech remains the generation target across all three stages.
+where A, AL, and ALV denote the acoustic, acoustic--linguistic, and acoustic--linguistic--visual stages, respectively. All stages use the same frozen codec and generate speech in its latent space.
 
-Stage I uses a LibriSpeech-pretrained acoustic generator~\cite{panayotov2015librispeech} that reconstructs masked speech from retained audio context. Stage II transfers its compatible acoustic parameters and trains on paired text and speech from LibriTTS~\cite{zen2019libritts}. Audio--text joint attention and speaker conditioning are optimized through masked flow matching, with visual input and CTC supervision disabled. Stage III initializes the dubbing model from this text-conditioned checkpoint and activates visual interaction and Gaussian-windowed audiovisual attention. All generator pathways are then jointly adapted on synchronized video, transcripts, and speech using the objective in~\eqref{eq:mmdit_training_objective}.
+Stage I uses a LibriSpeech-pretrained acoustic generator~\cite{panayotov2015librispeech} that reconstructs masked speech from retained audio context. Stage II transfers its compatible acoustic parameters to the MM-DiT backbone and trains on paired text and speech from LibriTTS~\cite{zen2019libritts}. Audio--text joint attention and the speaker-conditioning projection are optimized through masked flow matching, with visual input and CTC supervision disabled.
 
-The intermediate stage makes transcript-conditioned synthesis available before visual timing is introduced. Audiovisual adaptation can consequently refine an existing text--speech mapping under lip-motion constraints, with linguistic and acoustic parameters remaining trainable. This ordering separates the initial acquisition of linguistic control from its subsequent audiovisual adaptation, while retaining implicit alignment without externally supplied phoneme durations. The curriculum adds no modules or computational stages at inference.
+Stage III inherits the learned acoustic, textual, and speaker-conditioning parameters from Stage II and activates visual interaction and Gaussian-windowed audiovisual attention. All generator pathways remain trainable and are jointly optimized on synchronized video, transcripts, and speech using the objective in~\eqref{eq:mmdit_training_objective}.
+
+The intermediate stage assigns initial transcript-conditioned learning to text--speech pairs, allowing audiovisual data to refine the resulting mapping under lip-motion constraints. Training requires no external phoneme durations, and the curriculum adds no inference modules or generation stages.
