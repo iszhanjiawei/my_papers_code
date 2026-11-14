@@ -47,7 +47,7 @@ From this project, run the batch controller in a separate session:
 ```bash
 mkdir -p logs
 setsid env PYTHONPATH=src PYTHONUNBUFFERED=1 \
-  /zjw524/ENTER/envs/aligndit/bin/python -u scripts/evaluate_grid_150k_200k.py \
+  "${ROOT_PREFIX:-}/zjw524/ENTER/envs/aligndit/bin/python" -u scripts/evaluate_grid_150k_200k.py \
   --gpus 0,1,2,3 --workers-per-gpu 4 \
   > logs/evaluate_grid_150k_200k.log 2>&1 < /dev/null &
 ```
@@ -82,3 +82,70 @@ Runtime artifacts and weights are not Git content.
 Resume with the same command and worker count. Completed groups are reaudited;
 incomplete pipelines verify and reuse existing WAVs/shards. Never mix checkpoint,
 sampling parameters or S2 text modes in an output directory.
+
+## Results: 2026-11-14
+
+Each row covers all 3,274 held-out validation targets from 33 speakers, with
+19,644 reference words. These are EMA weights at 150,000 and 200,000 GRID
+updates. Before GRID training, both were initialized from the same LibriTTS
+text-audio 50k checkpoint; the parent updates are not part of the GRID counts.
+The architecture remains 12 AVT joint blocks plus 6 audio-only blocks, with the
+fixed 13-frame soft Gaussian AV/VA prior. No training configuration was changed
+for this evaluation.
+
+WER below is a fraction, not a percentage. Higher SPKSIM, EMOSIM and AVSync
+are better; lower WER is better. Values are rounded only for display.
+
+| Protocol | GRID checkpoint | SPKSIM ↑ | WER ↓ | EMOSIM ↑ | AVSync ↑ |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Setting 1, same-clip prompt | 150k | 0.80069 | 0.20011 | 0.85615 | 0.76416 |
+| Setting 1, same-clip prompt | 200k | 0.79334 | 0.21793 | 0.84971 | 0.75789 |
+| Setting 2, reference + target text | 150k | 0.67085 | 0.34861 | 0.80329 | 0.72696 |
+| Setting 2, reference + target text | 200k | 0.66627 | 0.35970 | 0.80089 | 0.72308 |
+| Setting 2, target text only | 150k | 0.68309 | 0.21452 | 0.82811 | 0.75629 |
+| Setting 2, target text only | 200k | 0.68033 | 0.22205 | 0.82623 | 0.75313 |
+
+Corpus WER is recomputed from the complete per-utterance edit counts:
+
+| Protocol | GRID checkpoint | Word edits / reference words | WER (%) |
+| --- | --- | ---: | ---: |
+| Setting 1 | 150k | 3,931 / 19,644 | 20.01120 |
+| Setting 1 | 200k | 4,281 / 19,644 | 21.79291 |
+| Setting 2, reference + target text | 150k | 6,848 / 19,644 | 34.86052 |
+| Setting 2, reference + target text | 200k | 7,066 / 19,644 | 35.97027 |
+| Setting 2, target text only | 150k | 4,214 / 19,644 | 21.45184 |
+| Setting 2, target text only | 200k | 4,362 / 19,644 | 22.20525 |
+
+Within each of these three protocols, 150k scores better than 200k on all four
+metrics. Setting 1 WER is lower by 1.78171 percentage points at 150k. Within
+Setting 2, target-only text improves all four metrics at both checkpoints,
+with WER lower by 13.40867 and 13.76502 percentage points, respectively. This
+comparison keeps the independent reference audio, latent prompt, CAM++, target
+video, sampling settings and reference assignments fixed. It describes these
+evaluations and does not by itself establish a cause for the differences.
+
+Setting 1 uses the target clip itself as the reference prompt. Both Setting 2
+variants instead use the same independent same-speaker, different-text
+reference. In particular, the S1/S2 SPKSIM scores have different reference
+pairings and should be interpreted with that distinction.
+
+The full validation manifest SHA256 is
+`c86309f5c5a0b9910608e74f54f82e71f0c30340b06b7c73dad6cb2a2b4a6230`.
+All four Setting 2 runs use reference-pair SHA256
+`eb092eeda9294fa06a21d893c1a04ce09e20bf3d2bb0fdd99558ad0e5acbd99c`.
+All six `verification.json` receipts report `PASS`, `complete=true`,
+`requested=succeeded=3274`, and `failed=0`. The independent audit checks full
+sample IDs, generated WAVs and prompt receipts, all four metric JSONLs,
+corpus WER, all 3,274 generated/GT joint-feature pairs, actual checkpoint
+hash/update/EMA metadata, decoder receipts and the captured source/configuration.
+The batch controller also reports `phase=complete` and `complete=true`.
+Both Setting 1 runs completed and passed verification before Setting 2 began.
+The four GPUs were used for generation and metrics; each checkpoint used two
+GPUs with eight independent workers.
+
+Final machine-readable results are in
+`${ROOT_PREFIX}/zjw524/projects/data/evaluations/GRID_avt_fixed13_libritts_comparison.json`.
+It links each output directory, exact metric values, WER counts and the hashes
+of its summary, protocol and independent verification receipts. Generated WAVs,
+per-sample metric JSONLs, joint features and logs remain in the six output
+directories listed above and are excluded from Git.
