@@ -11,7 +11,7 @@ import torch
 from aligndit.model.fixed_temporal_band_contract import validate_fixed_band_training_config
 from aligndit.model.libritts_pretrained_migration import validate_libritts_checkpoint_artifact
 from aligndit.script.train.finetune_grid import (
-    dataset_from_config, training_schedule_from_config, validate_grid_training_target,
+    dataset_from_config, make_repa_contract, training_schedule_from_config, validate_grid_training_target,
 )
 
 
@@ -46,6 +46,10 @@ def main() -> None:
         "result": "PASS", "records": len(dataset), "schedule": schedule,
         "batch_latent_shape": list(batch["mel"].shape),
         "batch_video_shape": list(batch["video"].shape),
+        "batch_repa_shape": list(batch["repa_features"].shape),
+        "batch_repa_lengths": batch["repa_feature_lengths"].tolist(),
+        "repa": make_repa_contract(config, dataset),
+        "repa_cache": dataset.repa_feature_contract,
         "checkpoint_dir": str(ckpt.save_dir), "run_name": run_name,
         "tensorboard_logdir": str((Path("runs") / run_name).resolve()),
     }, indent=2))

@@ -12,6 +12,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+from aligndit.model.repa import validate_repa_cache_metadata, validate_repa_feature_array
 from aligndit.model.speaker_embedding import (
     DEFAULT_SPEAKER_EMBEDDING_DIM,
     validate_speaker_cache_metadata,
@@ -119,6 +120,12 @@ class SemanticVaeCelebVDubDataset(Dataset):
         speaker_embedding_dim: int = DEFAULT_SPEAKER_EMBEDDING_DIM,
         speaker_embedding_model_id: str | None = None,
         speaker_embedding_checkpoint_sha256: str | None = None,
+        repa_feature_cache_dir: str | Path | None = None,
+        repa_feature_dim: int = 768,
+        repa_model_id: str | None = None,
+        repa_model_revision: str | None = None,
+        repa_checkpoint_sha256: str | None = None,
+        repa_teacher_layer: int | None = None,
     ):
         self.manifest_path = _regular_file(manifest_path, label="CelebV-Dub train manifest")
         if self.manifest_path.name != "train.jsonl":
@@ -310,6 +317,43 @@ class SemanticVaeCelebVDubDataset(Dataset):
                 "train_count": expected_record_count,
             }
 
+        self.repa_feature_cache_dir: Path | None = None
+        self.repa_feature_dim = repa_feature_dim
+        self.repa_feature_contract: dict | None = None
+        if repa_feature_cache_dir is not None:
+            if not repa_model_id or not repa_model_revision or not repa_checkpoint_sha256:
+                raise ValueError("REPA caching requires an expected model ID, revision and checkpoint SHA256")
+            if repa_teacher_layer is None:
+                raise ValueError("REPA caching requires an expected teacher layer")
+            repa_root = Path(repa_feature_cache_dir).expanduser().absolute()
+            if repa_root.is_symlink() or not repa_root.is_dir():
+                raise FileNotFoundError(f"REPA cache root must be a regular directory: {repa_root}")
+            self.repa_feature_cache_dir = repa_root.resolve(strict=True)
+            metadata_path = _regular_file(repa_root / "metadata.json", label="REPA cache metadata")
+            coverage_path = _regular_file(repa_root / "coverage_report.json", label="REPA cache coverage")
+            metadata = validate_repa_cache_metadata(
+                repa_root,
+                expected_manifest_sha256=actual_manifest_sha256,
+                expected_count=expected_record_count,
+                expected_dim=repa_feature_dim,
+                model_id=repa_model_id,
+                model_revision=repa_model_revision,
+                checkpoint_sha256=repa_checkpoint_sha256,
+                teacher_layer=repa_teacher_layer,
+            )
+            self.repa_feature_contract = {
+                "cache_dir": str(self.repa_feature_cache_dir),
+                "metadata_sha256": sha256_file(metadata_path),
+                "coverage_report_sha256": sha256_file(coverage_path),
+                "model_id": repa_model_id,
+                "model_revision": repa_model_revision,
+                "checkpoint_sha256": repa_checkpoint_sha256,
+                "teacher_layer": repa_teacher_layer,
+                "dimension": repa_feature_dim,
+                "source_audio": metadata["source_audio"],
+                "train_count": expected_record_count,
+            }
+
     def _load_speaker_embedding_array(self, record: dict) -> np.ndarray:
         if self.speaker_embedding_cache_dir is None:
             raise RuntimeError("Speaker embedding cache is not configured")
@@ -331,6 +375,26 @@ class SemanticVaeCelebVDubDataset(Dataset):
         embedding = np.load(cache_path, allow_pickle=False)
         validate_speaker_embedding_array(embedding, expected_dim=self.speaker_embedding_dim, source=cache_path)
         return embedding
+
+    def _load_repa_feature_array(self, record: dict) -> np.ndarray:
+        if self.repa_feature_cache_dir is None:
+            raise RuntimeError("REPA feature cache is not configured")
+        audio_relative_path = record.get("audio_relative_path")
+        if not isinstance(audio_relative_path, str):
+            raise TypeError(f"Missing REPA source audio path for {record['utterance_key']}")
+        audio_relative = Path(audio_relative_path)
+        if audio_relative.suffix.lower() != ".wav" or audio_relative.parts[0] != "train":
+            raise ValueError(f"Invalid REPA source audio path: {audio_relative_path!r}")
+        cache_path = _safe_join(
+            self.repa_feature_cache_dir,
+            str(audio_relative.with_suffix(".npy")),
+            label="WavLM REPA feature",
+        )
+        if not cache_path.is_file():
+            raise FileNotFoundError(f"Missing REPA feature for {record['utterance_key']}: {cache_path}")
+        feature = np.load(cache_path, allow_pickle=False)
+        validate_repa_feature_array(feature, expected_dim=self.repa_feature_dim, source=cache_path)
+        return feature
 
     def audit_speaker_embedding_cache(self) -> dict:
         """Read every training vector once before launch, outside DDP workers.
@@ -398,6 +462,10 @@ class SemanticVaeCelebVDubDataset(Dataset):
         }
         if self.speaker_embedding_cache_dir is not None:
             result["speaker_embedding"] = torch.from_numpy(self._load_speaker_embedding_array(record))
+        if self.repa_feature_cache_dir is not None:
+            # Keep the pinned-memory/device transfer half precision; cosine
+            # computation explicitly promotes each unpadded target to FP32.
+            result["repa_feature"] = torch.from_numpy(self._load_repa_feature_array(record))
         return result
 
     @staticmethod
@@ -426,4 +494,15 @@ class SemanticVaeCelebVDubDataset(Dataset):
             if not all(has_speaker_embedding):
                 raise RuntimeError("speaker_embedding must be present for every sample in a batch")
             result["speaker_embedding"] = torch.stack([item["speaker_embedding"] for item in batch])
+        has_repa_feature = ["repa_feature" in item for item in batch]
+        if any(has_repa_feature):
+            if not all(has_repa_feature):
+                raise RuntimeError("repa_feature must be present for every sample in a batch")
+            repa_lengths = torch.tensor([item["repa_feature"].shape[0] for item in batch], dtype=torch.long)
+            max_repa_length = int(repa_lengths.max())
+            result["repa_features"] = torch.stack(
+                [F.pad(item["repa_feature"], (0, 0, 0, max_repa_length - item["repa_feature"].shape[0]))
+                 for item in batch]
+            )
+            result["repa_feature_lengths"] = repa_lengths
         return result

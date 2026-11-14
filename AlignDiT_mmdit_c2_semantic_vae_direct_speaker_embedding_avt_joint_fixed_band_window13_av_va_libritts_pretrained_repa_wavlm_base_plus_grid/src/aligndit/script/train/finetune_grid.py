@@ -1,4 +1,4 @@
-"""Train GRID with fixed 13-frame AVT attention and the LibriTTS 50k EMA parent."""
+"""Train fixed-13 AVT GRID with WavLM REPA and the complete LibriTTS 50k EMA."""
 
 import json
 import math
@@ -17,6 +17,11 @@ from aligndit.model.fixed_temporal_band_contract import (
 )
 from aligndit.model.grid_dataset import GridDataset
 from aligndit.model.modules import PrecomputedAudioRepresentation
+from aligndit.model.repa import (
+    WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
+    WAVLM_BASE_PLUS_MODEL_ID,
+    WAVLM_BASE_PLUS_REVISION,
+)
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
 from aligndit.model.trainer_semantic_vae_fixed_band import SemanticVaeFixedBandTrainer
 from f5_tts.model.utils import get_tokenizer
@@ -44,7 +49,53 @@ def dataset_from_config(model_cfg, *, allow_partial=False):
         speaker_embedding_dim=int(model_cfg.datasets.speaker_embedding_dim),
         speaker_embedding_model_id=model_cfg.datasets.speaker_embedding_model_id,
         speaker_embedding_checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
+        repa_feature_cache_dir=model_cfg.datasets.repa_feature_cache_dir,
+        repa_feature_dim=int(model_cfg.datasets.repa_feature_dim),
+        repa_model_id=model_cfg.datasets.repa_model_id,
+        repa_model_revision=model_cfg.datasets.repa_model_revision,
+        repa_checkpoint_sha256=model_cfg.datasets.repa_checkpoint_sha256,
+        repa_teacher_layer=int(model_cfg.datasets.repa_teacher_layer),
     )
+
+
+def make_repa_contract(model_cfg, dataset):
+    """Pin the reference GRID REPA experiment while keeping fixed-13 AVT."""
+    arch, data = model_cfg.model.arch, model_cfg.datasets
+    if float(model_cfg.model.repa_lambda) != 0.1:
+        raise ValueError("This REPA comparison requires a fixed repa_lambda=0.1 from update zero")
+    if (int(arch.repa_layer), int(arch.repa_target_dim), int(arch.repa_projector_dim)) != (9, 768, 2048):
+        raise ValueError("REPA requires zero-based student block 9 and the 768->2048->2048->768 projector")
+    expected_teacher = {
+        "repa_feature_dim": 768,
+        "repa_model_id": WAVLM_BASE_PLUS_MODEL_ID,
+        "repa_model_revision": WAVLM_BASE_PLUS_REVISION,
+        "repa_checkpoint_sha256": WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
+        "repa_teacher_layer": 12,
+    }
+    for key, value in expected_teacher.items():
+        if data.get(key) != value:
+            raise ValueError(f"Pinned WavLM-Base+ REPA teacher changed: {key}")
+    if dataset.repa_feature_cache_dir is None or dataset.repa_feature_contract is None:
+        raise ValueError("REPA requires the audited GRID WavLM-Base+ feature cache")
+    if "repa_wavlm_base_plus" not in str(model_cfg.model.name) or "repa_wavlm_base_plus" not in str(model_cfg.ckpts.save_dir):
+        raise ValueError("REPA requires isolated model.name and ckpts.save_dir")
+    if int(model_cfg.optim.run_until_update) != 150_000:
+        raise ValueError("This REPA comparison must stop at exactly 150000 GRID updates")
+    return {
+        "lambda": 0.1,
+        "schedule": "fixed from the first update",
+        "student_layer_zero_based": 9,
+        "projector": {"dimensions": [768, 2048, 2048, 768], "activation": "SiLU", "new_parameter_tensors": 6},
+        "teacher_model_id": WAVLM_BASE_PLUS_MODEL_ID,
+        "teacher_model_revision": WAVLM_BASE_PLUS_REVISION,
+        "teacher_checkpoint_sha256": WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
+        "teacher_layer": 12,
+        "teacher_frozen": True,
+        "teacher_source_audio": "complete_unmasked_waveform",
+        "alignment": "linear interpolation of each unpadded 50-Hz target to valid 40-Hz latent length",
+        "loss": "mean 1-cosine on the flow-matching generation mask only",
+        "inference": "projector weights load strictly but the auxiliary head is not called",
+    }
 
 
 def training_schedule_from_config(model_cfg, dataset, *, world_size=1):
@@ -118,6 +169,7 @@ def validate_grid_training_target(model_cfg, dataset, schedule):
         raise ValueError("GRID requires isolated model.name and ckpts.save_dir")
     if dataset.speaker_embedding_cache_dir is None:
         raise ValueError("This GRID experiment requires the existing CAM++ speaker cache")
+    repa_contract = make_repa_contract(model_cfg, dataset)
     save_dir = Path(model_cfg.ckpts.save_dir)
     contract_path = save_dir / "speaker_training_contract.json"
     if any(save_dir.glob("*.pt")) and not contract_path.is_file():
@@ -129,6 +181,8 @@ def validate_grid_training_target(model_cfg, dataset, schedule):
             "config": OmegaConf.to_container(model_cfg, resolve=True),
             "grid_cache": dataset.cache_contract,
             "batch_and_schedule": schedule,
+            "repa_cache_metadata": dataset.repa_feature_contract,
+            "repa": repa_contract,
         }
         if not isinstance(previous, dict) or any(previous.get(key) != value for key, value in expected.items()):
             raise RuntimeError("Refusing to resume a different experiment or dataset in the GRID checkpoint directory")
@@ -200,6 +254,7 @@ def main(model_cfg):
         vocab_char_map=vocab_char_map,
         audio_video_ratio=model_arc.audio_video_ratio,
         ctc_lambda=model_cfg.model.ctc_lambda,
+        repa_lambda=float(model_cfg.model.repa_lambda),
     )
 
     trainer_cls = SemanticVaeFixedBandTrainer if temporal_band_enabled else SemanticVaeDirectC2SpeakerTrainer
@@ -254,9 +309,11 @@ def main(model_cfg):
             "batch_and_schedule": schedule,
             "validation": "existing GRID val split is held out; no online validation loop",
             "speaker_cache_metadata": speaker_metadata,
+            "repa_cache_metadata": train_dataset.repa_feature_contract,
+            "repa": make_repa_contract(model_cfg, train_dataset),
             "initialization": (
                 "complete LibriTTS text/audio/speaker 50k EMA; vocabulary rows mapped to the unchanged 159-character downstream vocabulary; "
-                "new optimizer/update counter; carry parent EMA step"
+                "only the six REPA projector tensors are newly initialized; new optimizer/update counter; carry parent EMA step"
                 if libritts_parent else "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter"
             ),
             "speaker_condition": (
@@ -278,11 +335,12 @@ def main(model_cfg):
 
     if trainer.is_main:
         print(
-            "GRID fixed-13 AVT CAM++ speaker CTC-warmup dataset validated: "
+            "GRID fixed-13 AVT CAM++ speaker CTC-warmup + WavLM-Base+ REPA dataset validated: "
             f"records={len(train_dataset)}, CTC feasible={train_dataset.ctc_feasible_count}, "
             f"CTC zero_infinity-only={train_dataset.ctc_infeasible_count}; "
             f"ctc_lambda=0 through update {model_cfg.model.ctc_warmup_start}, "
-            f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}",
+            f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}; "
+            f"repa_lambda={model_cfg.model.repa_lambda} from update zero; stop at 150000",
             flush=True,
         )
     trainer.finetune(

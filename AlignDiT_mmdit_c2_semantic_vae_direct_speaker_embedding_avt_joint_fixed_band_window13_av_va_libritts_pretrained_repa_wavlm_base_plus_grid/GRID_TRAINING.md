@@ -1,122 +1,113 @@
-# Fixed 13-frame AVT + LibriTTS initialization on GRID
+# GRID fixed-13 AVT + LibriTTS + WavLM-Base+ REPA
 
-This is an independent copy of
-`AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_window13_av_va_libritts_pretrained`
-at Git `5da427000355bed377d94c2dae333f44a00bcf4c`. The byte-identical source copy
-was committed as `32c7ad48219fc960c43c5f1c1e7e8ff1a31d09b3`; logs, weights,
-TensorBoard events and generated outputs were not copied. The original project
-and the GRID reference project remain unchanged.
+This is an isolated copy of
+`AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_window13_av_va_libritts_pretrained_grid`
+at Git `d8dc16758373479064241ff6bd1d02e94605172d`. Its 286 tracked files were copied
+byte-for-byte and recorded in the standalone snapshot commit
+`d9299ae1dc89030d4f0555c2ff4035093c954bf5`. Runtime logs, events, generated samples
+and checkpoints were not copied. The source experiment remains unchanged.
 
-The GRID reference is
+The user requested a controlled REPA addition, fresh LibriTTS initialization,
+and training through **150,000 GRID updates**. The reference is
 `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_adaptive_band_repa_wavlm_base_plus_grid`.
-Only its data protocol, dataset validation and launch/schedule checks are reused.
-The new model has neither its adaptive temporal predictor nor its REPA head/loss.
-Inherited CelebV-Dub/LRS3 launchers and evaluation documents describe the source
-experiments; use the GRID entry below for this snapshot.
+Only its REPA feature loading, auxiliary projection/loss and diagnostics are
+ported; this model keeps the source AVT joint attention and fixed temporal band.
+Copied evaluation reports describe the parent experiment without REPA.
 
-## Model and initialization
+## Preserved configuration
 
-- 12 AVT joint-attention blocks + 6 audio-only blocks, unchanged backbone.
-- Fixed AV/VA Gaussian attention bias: sigma 0.150 s, offset 0, aligned 40-Hz
-  features. The nominal core is +/-6 frames (13 total); tails remain soft.
-- Full EMA initialization from
+- 12 AVT joint-attention blocks + 6 audio-only blocks; dim 768, 12 heads.
+- Fixed soft AV/VA Gaussian prior: sigma 0.150 s, offset 0, aligned 40-Hz grid.
+  The nominal +/-6-frame core is not a hard attention cutoff.
+- Full LibriTTS text-audio 50k EMA initialization, including trained text and
+  CAM++ speaker parameters. Source checkpoint:
   `${ROOT_PREFIX}/zjw524/projects/alignDiT_idea6/libriSpeech_LibriTTS_pretrained_models/model_00050000.pt`.
-  SHA256: `4ee7dd9e1377728a042e75ebbbe70c2a12cd830c9b078afe13ebca289d03503c`.
-- Preserve all 802 transferred tensors, including trained text and CAM++ speaker
-  projection parameters. The same five vocabulary-dependent tensors are mapped
-  by character/filler/CTC-blank identity to the unchanged 159-character vocabulary.
-- Fresh optimizer, scheduler and GRID update counter starting at zero. Carry the
-  parent EMA step 50000, matching the source experiment. No CelebV-Dub-trained
-  checkpoint is used for initialization.
+  SHA256 `4ee7dd9e1377728a042e75ebbbe70c2a12cd830c9b078afe13ebca289d03503c`.
+- All 802 parent tensors are transferred, with the original five vocabulary
+  row mappings to 159 characters. Exactly six new REPA projector tensors are
+  initialized. Online and EMA start with identical weights; EMA retains the
+  parent step 50000, while GRID update and optimizer state start from zero.
+- Same audited GRID cache, 29,531 train / 3,274 held-out validation utterances,
+  full MPG audio, 64-D Semantic-VAE latents, 1024-D AV-HuBERT video, 192-D CAM++.
+  Same character vocabulary and LibriSpeech latent normalization; no val training.
+- Four RTX 4090 GPUs, BF16, 3,600 frames/GPU, max 32 samples, gradient accumulation 1,
+  data workers 16, seed 666, LR 5e-5, LR warmup 20k, gradient clipping 1.
+- CTC is zero through 10k, then rises linearly to 0.03 at 30k.
+- **The original 1,000-epoch LR decay horizon is preserved.** Only the stopping
+  condition changes from 200k to 150k; learning rate is not compressed into 150k.
+  The actual four-rank sampler has 985 batches, 246 per rank, dropping one tail.
+- Numbered checkpoints every 50k and latest checkpoint every 5k, in the new path.
 
-## Data and schedule
+## Added REPA objective
 
-Cache: `${ROOT_PREFIX}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp32`.
-It contains 29,531 train and 3,274 held-out val utterances; original train/val
-assignments and the existing 163/26 exclusions are preserved. The held-out split
-is not fed into training and there is no online validation loop.
+| Setting | Value |
+| --- | --- |
+| Teacher | Frozen `microsoft/wavlm-base-plus` |
+| Teacher revision | `4c66d4806a428f2e922ccfa1a962776e232d487b` |
+| Teacher checkpoint SHA256 | `3bb273a6ace99408b50cfc81afdbb7ef2de02da2eab0234e18db608ce692fe51` |
+| Teacher features | Layer 12, 768-D FP16, about 50 Hz, complete unmasked canonical audio |
+| Student features | Audio output of MM block 10, zero-based index 9 |
+| Projector | 768 -> 2048 -> 2048 -> 768, SiLU, six parameter tensors |
+| Alignment | Interpolate each utterance's valid teacher span to valid 40-Hz latent length |
+| Loss | Mean `1-cosine` over generated valid frames only; no teacher gradients |
+| Weight | 0.1 from the first update, with no new warmup |
 
-The cache uses complete MPG audio aligned to the mouth-frame timeline, 16-kHz
-mono, 64-D FP32 Semantic-VAE posterior samples, 1024-D FP32 AV-HuBERT video
-interpolated to the same 40-Hz length, and 192-D normalized CAM++ embeddings.
-The pretraining vocabulary and LibriSpeech normalization remain unchanged.
-Existing REPA cache files are unused. Features are not regenerated.
+Total loss is `flow_loss + scheduled_ctc_weight * ctc_loss + 0.1 * repa_loss`.
+Reuse the reference's completed cache at
+`${ROOT_PREFIX}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp32/repa`.
+No online teacher model or additional teacher GPU memory is needed. Teacher
+identity, extraction provenance, shapes and valid lengths are checked. Inference
+loads projector parameters strictly but never calls the auxiliary projector;
+sampling parameters and waveform decoding are unchanged.
 
-GRID's extraction metadata and completed inventory are validated before model
-creation. Initialization checks the GRID metadata's actual codec, normalization
-and posterior-sampling protocol instead of treating its copied source VAE spec
-as a GRID extraction receipt. Per-sample reads check dimensions, finite values
-and speaker-vector normalization.
+## Verification and training
 
-- Four RTX 4090 GPUs, BF16, 3,600 frames/GPU, max 32 samples/GPU, seed 666.
-- Learning rate 5e-5, 20k LR warmup, gradient accumulation 1, max grad norm 1.
-- CTC weight zero through update 10k, linear increase to 0.03 at update 30k.
-- Same GRID schedule as the reference: 1,000 epochs, stop at update 200,000.
-  The actual sampler has 985 frame batches, 246 per rank on four GPUs, dropping
-  one tail batch after each deterministic epoch shuffle. Capacity is 246,000
-  updates; the inherited 200 epochs would only allow 49,200. This changes the
-  LR decay horizon relative to the CelebV-Dub run and is recorded explicitly.
-- Numbered checkpoints every 50k updates; latest checkpoint every 5k.
-
-## Start training
-
-From this project directory:
+From this snapshot:
 
 ```bash
 source env.sh
+PYTHON="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
+PYTHONPATH=src "$PYTHON" -u scripts/test_grid_repa_transfer.py --real-parent --audit-cache
+CUDA_VISIBLE_DEVICES=3 PYTHONPATH=src "$PYTHON" -u scripts/check_grid_repa_gpu.py
 mkdir -p logs
-setsid env PYTHONUNBUFFERED=1 \
+setsid env PYTHONUNBUFFERED=1 CUDA_VISIBLE_DEVICES=0,1,2,3 \
   bash src/aligndit/run/train/finetune_grid.sh \
-  > logs/train_grid_window13_libritts_pretrained.log 2>&1 < /dev/null &
+  > logs/train_grid_window13_libritts_repa.log 2>&1 < /dev/null &
 train_pid=$!
 ps -o pid,ppid,sid,tty,stat,cmd -p "$train_pid"
 ```
 
-The entry checks the requested GPU count, full train cache, batch schedule and
-parent checkpoint hash, starts a separate TensorBoard service, then execs
-Accelerate. Default DDP port is 29644 (`TRAIN_PORT` override). TensorBoard chooses
-a free port starting at 6028 (`TENSORBOARD_PORT` override), and reuses only a
-verified service belonging to this exact snapshot. `NUM_PROCESSES`,
-`CUDA_VISIBLE_DEVICES` and `PYTHON_BIN` are explicit runtime overrides.
+The launcher checks the real configuration and cache, starts an isolated
+TensorBoard service, and launches four BF16 workers. Default DDP port 29646;
+TensorBoard selects a free port starting at 6030. Runtime overrides are
+`NUM_PROCESSES`, `CUDA_VISIBLE_DEVICES`, `TRAIN_PORT`, `TENSORBOARD_PORT` and
+`PYTHON_BIN`. Restart only this experiment with the same contract to resume.
+The normal stop at 150k saves the numbered checkpoint before exiting.
 
-Use an empty checkpoint directory for the first run. Later launches resume only
-a matching GRID training contract; inherited or differently configured weights
-in the same directory are rejected.
-
-Checkpoint directory:
+The checkpoint directory is:
 
 ```text
-${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_GRID_ctc003_warmup10k30k_40hz_char
+${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k_40hz_char
 ```
 
-TensorBoard run/logdir relative to this project:
+TensorBoard run directory, relative to this snapshot:
 
 ```text
-runs/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_GRID_ctc003_warmup10k30k_semantic_vae_40hz_GRID_char
+runs/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k_semantic_vae_40hz_GRID_char
 ```
 
-The service scans this project's `runs/` directory. Its actual PID, port and
-local URL are written to `logs/tensorboard_grid.json`; launch/process metadata
-are recorded in `logs/grid_training_run.json`. Open the IDE bottom panel's
-Ports tab and click the actual forwarded address for that port. A local/private
-IP URL is not a verified IDE forwarding URL.
+Scalars include total/flow/CTC/REPA losses, weighted losses, LR, global and
+projector gradients. Exact process/port/logdir are recorded in
+`logs/tensorboard_grid.json` and `logs/grid_training_run.json`; training contracts
+and `parent_migration.json` are saved with the new checkpoints. The user deferred
+IDE forwarding-link verification; local HTTP and scalar recording are checked.
 
-The checkpoint directory records `speaker_training_contract.json` (resolved
-configuration, GRID hashes, schedule and fixed-band geometry) and
-`parent_migration.json` (actual parent and all tensor/vocabulary mappings).
-Runtime artifacts remain untracked.
+## Evaluation after training
 
-## Verification
-
-```bash
-PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u \
-  scripts/test_grid_transfer.py --real-parent
-PYTHONPATH=src /zjw524/ENTER/envs/aligndit/bin/python -u \
-  src/aligndit/script/misc/check_grid_training.py --num-processes 4
-```
-
-The tests check preserved model/trainer implementations and configuration,
-train/val separation, actual batch schedule, sample collation, rejected invalid
-contracts, and exact full-model LibriTTS EMA transfer on CPU. They perform no
-optimizer updates. Launch validation additionally checks real workers, fresh
-training loss and gradient scalars, and TensorBoard HTTP/scalar visibility.
+The copied GRID S1/S2 entries keep the same full validation protocol. Their
+checkpoint defaults and output names are isolated from the no-REPA baseline.
+Once 150k has completed, `scripts/evaluate_grid_150k.py` evaluates S1 and both S2
+text variants in order, using all four GPUs. It is not automatically started by
+the training command. Compare against the original 150k results using the same
+protocol, seed, EMA, 32 NFE and CFG 5/2. This experiment tests REPA's effect; an
+improvement in WER has not yet been established.

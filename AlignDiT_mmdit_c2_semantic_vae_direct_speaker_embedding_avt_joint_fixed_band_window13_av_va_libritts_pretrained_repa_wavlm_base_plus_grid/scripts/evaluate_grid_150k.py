@@ -1,8 +1,8 @@
-"""Evaluate both EMA checkpoints, completing Setting1 before both Setting2 modes.
+"""Evaluate the isolated REPA experiment's 150k EMA in S1 and both S2 modes.
 
-Each checkpoint uses two GPUs and four independent, single-utterance workers per
-GPU. The two checkpoints run concurrently within each phase. Existing verified
-artifacts can be resumed with the same output directories and worker count.
+The checkpoint uses all four GPUs and four independent single-utterance workers
+per GPU. Complete and verify each phase before the next. Existing artifacts can
+be resumed with the same output directories and worker count.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import time
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-EXPERIMENT = "AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_GRID_ctc003_warmup10k30k_40hz_char"
+EXPERIMENT = "AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k_40hz_char"
 PHASES = (("s1", "reference-target", "s1"),
           ("s2", "reference-target", "s2_reference_target"),
           ("s2", "target-only", "s2_target_only"))
@@ -36,7 +36,7 @@ def run(args):
     if len(gpus) != 4 or len(set(gpus)) != 4 or args.workers_per_gpu < 1:
         raise ValueError("Supply four distinct GPU indices and positive workers-per-gpu")
     args.output_root.mkdir(parents=True, exist_ok=True)
-    report = args.output_root / "GRID_avt_fixed13_libritts_evaluation_batch.json"
+    report = args.output_root / "GRID_avt_fixed13_libritts_repa_evaluation_batch.json"
     state = {"started_at": datetime.datetime.now().astimezone().isoformat(),
              "pid": os.getpid(), "project": str(PROJECT), "gpus": gpus,
              "workers_per_gpu": args.workers_per_gpu, "complete": False, "runs": []}
@@ -51,11 +51,11 @@ def run(args):
             state["phase"] = label
             children = []
             current = []
-            for index, step in enumerate((150000, 200000)):
+            for step in (150000,):
                 checkpoint = args.checkpoint_root / f"model_{step}.pt"
                 if not checkpoint.is_file():
                     raise FileNotFoundError(checkpoint)
-                output = args.output_root / f"GRID_avt_fixed13_libritts_{label}_{step//1000}k_seed0_nfe32_cfg5_2"
+                output = args.output_root / f"GRID_avt_fixed13_libritts_repa_{label}_{step//1000}k_seed0_nfe32_cfg5_2"
                 output.mkdir(parents=True, exist_ok=True)
                 item = {"setting": setting, "text_conditioning": mode, "step": step,
                         "output_dir": str(output), "checkpoint": str(checkpoint), "verified": False}
@@ -69,7 +69,7 @@ def run(args):
                 command = [sys.executable, "-u", "-m", "aligndit.script.eval.run_grid_s1",
                            "--setting", setting, "--text-conditioning", mode,
                            "--checkpoint", str(checkpoint), "--step", str(step),
-                           "--output-dir", str(output), "--gpus", ",".join(gpus[index*2:index*2+2]),
+                           "--output-dir", str(output), "--gpus", ",".join(gpus),
                            "--workers-per-gpu", str(args.workers_per_gpu)]
                 with (output / "pipeline.log").open("a") as log:
                     proc = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,

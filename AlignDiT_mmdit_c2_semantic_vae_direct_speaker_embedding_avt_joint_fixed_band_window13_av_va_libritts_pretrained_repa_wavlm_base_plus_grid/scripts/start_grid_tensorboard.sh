@@ -35,11 +35,11 @@ if [[ -n "$existing_service" ]]; then
     printf 'Reusing verified GRID TensorBoard: %s\n' "$existing_service"
     exit 0
 fi
-# A requested port must be free; otherwise select the first free port >=6028.
+# A requested port must be free; otherwise select the first free port >=6030.
 port="$("$python_bin" - <<'PY'
 import os, socket
 requested = os.environ.get('TENSORBOARD_PORT')
-ports = [int(requested)] if requested else range(6028, 6128)
+ports = [int(requested)] if requested else range(6030, 6130)
 for port in ports:
     with socket.socket() as sock:
         try:

@@ -29,5 +29,5 @@ fi
 exec "$python_bin" -u -m accelerate.commands.launch \
     "${distributed_args[@]}" \
     --mixed_precision bf16 --num_machines 1 --dynamo_backend no \
-    --num_processes "$num_processes" --main_process_port "${TRAIN_PORT:-29644}" \
+    --num_processes "$num_processes" --main_process_port "${TRAIN_PORT:-29646}" \
     src/aligndit/script/train/finetune_grid.py --config-name finetune_grid "$@"

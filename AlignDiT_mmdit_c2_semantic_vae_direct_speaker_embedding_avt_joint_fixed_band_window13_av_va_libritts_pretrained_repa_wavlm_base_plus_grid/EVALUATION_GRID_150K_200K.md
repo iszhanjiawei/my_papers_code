@@ -1,5 +1,9 @@
 # GRID fixed-13 LibriTTS: EMA 150k and 200k evaluation
 
+> Historical baseline copied from the parent **without REPA**. None of these
+> scores belongs to this new REPA experiment. Use `GRID_TRAINING.md` for its
+> configuration and isolated output paths; its requested training stop is 150k.
+
 Evaluate this snapshot's GRID-trained `model_150000.pt` and `model_200000.pt`,
 using the complete held-out GRID validation split: 3,274 targets and 19,644
 reference words. Preserve this project's AVT joint backbone, fixed sigma=0.15 s
