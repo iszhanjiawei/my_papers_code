@@ -245,6 +245,14 @@ class Trainer_VT(Trainer):
                     speaker_kwargs = (
                         {"speaker_embedding": batch["speaker_embedding"]} if "speaker_embedding" in batch else {}
                     )
+                    repa_kwargs = (
+                        {
+                            "repa_features": batch["repa_features"],
+                            "repa_feature_lens": batch["repa_feature_lengths"],
+                        }
+                        if "repa_features" in batch
+                        else {}
+                    )
 
                     loss, loss_components, cond, pred = self.model(
                         mel_spec,
@@ -255,6 +263,7 @@ class Trainer_VT(Trainer):
                         video_lens=video_lengths,
                         noise_scheduler=self.noise_scheduler,
                         **speaker_kwargs,
+                        **repa_kwargs,
                     )
                     diagnostics = self._forward_diagnostics(loss, loss_components)
                     self.accelerator.backward(loss)

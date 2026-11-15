@@ -236,7 +236,7 @@ def run(args):
 def main():
     root = Path(os.environ.get("ROOT_PREFIX", "") + "/zjw524/projects")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=PROJECT / "src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained.yaml")
+    parser.add_argument("--config", type=Path, default=PROJECT / "src/aligndit/config/finetune_celebvdub_repa.yaml")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--bundle", type=Path, default=root / "alignDiT_idea6/my_papers_code/Setting2-Dubbing-test")
     parser.add_argument("--reference-cache", type=Path, default=root / "alignDiT_idea6/Video-to-Speech-benchmark/cache/ours_svae_campplus_setting2_gttext_dubbing")

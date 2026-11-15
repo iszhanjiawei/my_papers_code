@@ -16,6 +16,13 @@ from aligndit.model.fixed_temporal_band_contract import (
     validate_fixed_band_training_config,
 )
 from aligndit.model.modules import PrecomputedAudioRepresentation
+from aligndit.model.repa import (
+    WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
+    WAVLM_BASE_PLUS_LAYER,
+    WAVLM_BASE_PLUS_MODEL_ID,
+    WAVLM_BASE_PLUS_REVISION,
+    validate_repa_cache_metadata,
+)
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
@@ -26,6 +33,93 @@ from f5_tts.model.utils import get_tokenizer
 os.chdir(str(files("aligndit").joinpath("../..")))
 
 
+def validate_repa_training_config(model_cfg):
+    """Validate the fixed reference REPA recipe and pinned CelebV-Dub targets."""
+
+    repa_lambda = float(OmegaConf.select(model_cfg, "model.repa_lambda", default=0.0))
+    if not math.isfinite(repa_lambda) or repa_lambda < 0:
+        raise ValueError(f"repa_lambda must be finite and non-negative, got {repa_lambda}")
+    if repa_lambda == 0:
+        return None
+    expected = {
+        "model.repa_lambda": 0.1,
+        "model.arch.repa_layer": 9,
+        "model.arch.repa_target_dim": 768,
+        "model.arch.repa_projector_dim": 2048,
+        "datasets.repa_feature_dim": 768,
+        "datasets.repa_model_id": WAVLM_BASE_PLUS_MODEL_ID,
+        "datasets.repa_model_revision": WAVLM_BASE_PLUS_REVISION,
+        "datasets.repa_checkpoint_sha256": WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
+        "datasets.repa_teacher_layer": WAVLM_BASE_PLUS_LAYER,
+    }
+    for key, expected_value in expected.items():
+        actual = OmegaConf.select(model_cfg, key)
+        if actual != expected_value:
+            raise ValueError(f"REPA contract mismatch: {key}={actual!r}, expected {expected_value!r}")
+    if any(
+        "repa_wavlm_base_plus" not in str(value)
+        for value in (model_cfg.model.name, model_cfg.ckpts.save_dir)
+    ):
+        raise ValueError("REPA runs require dedicated model.name and ckpts.save_dir")
+    return validate_repa_cache_metadata(
+        model_cfg.datasets.repa_feature_cache_dir,
+        expected_manifest_sha256=model_cfg.datasets.expected_manifest_sha256,
+        expected_count=int(model_cfg.datasets.expected_record_count),
+        expected_dim=int(model_cfg.datasets.repa_feature_dim),
+        model_id=model_cfg.datasets.repa_model_id,
+        model_revision=model_cfg.datasets.repa_model_revision,
+        checkpoint_sha256=model_cfg.datasets.repa_checkpoint_sha256,
+        teacher_layer=int(model_cfg.datasets.repa_teacher_layer),
+    )
+
+
+def dataset_from_config(model_cfg):
+    """Build the exact training split for launch, preflight and batch checks."""
+
+    repa_enabled = float(OmegaConf.select(model_cfg, "model.repa_lambda", default=0.0)) > 0
+    return SemanticVaeCelebVDubDataset(
+        manifest_path=model_cfg.datasets.manifest_path,
+        cache_root=model_cfg.datasets.cache_root,
+        normalization_path=model_cfg.datasets.normalization_path,
+        vocab_path=model_cfg.datasets.vocab_path,
+        expected_manifest_sha256=model_cfg.datasets.expected_manifest_sha256,
+        expected_inventory_sha256=model_cfg.datasets.expected_inventory_sha256,
+        expected_normalization_sha256=model_cfg.datasets.expected_normalization_sha256,
+        expected_vocab_sha256=model_cfg.datasets.expected_vocab_sha256,
+        expected_record_count=model_cfg.datasets.expected_record_count,
+        speaker_embedding_cache_dir=model_cfg.datasets.speaker_embedding_cache_dir,
+        speaker_embedding_dim=int(model_cfg.datasets.speaker_embedding_dim),
+        speaker_embedding_model_id=model_cfg.datasets.speaker_embedding_model_id,
+        speaker_embedding_checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
+        repa_feature_cache_dir=(model_cfg.datasets.repa_feature_cache_dir if repa_enabled else None),
+        repa_feature_dim=(int(model_cfg.datasets.repa_feature_dim) if repa_enabled else 768),
+        repa_model_id=(model_cfg.datasets.repa_model_id if repa_enabled else None),
+        repa_model_revision=(model_cfg.datasets.repa_model_revision if repa_enabled else None),
+        repa_checkpoint_sha256=(model_cfg.datasets.repa_checkpoint_sha256 if repa_enabled else None),
+        repa_teacher_layer=(int(model_cfg.datasets.repa_teacher_layer) if repa_enabled else None),
+    )
+
+
+def make_repa_contract(model_cfg, dataset):
+    """Describe the train-only auxiliary supervision and validated target cache."""
+
+    if float(OmegaConf.select(model_cfg, "model.repa_lambda", default=0.0)) == 0:
+        return None
+    if dataset.repa_feature_contract is None:
+        raise RuntimeError("REPA is enabled but the training dataset has no validated teacher cache")
+    return {
+        "lambda": float(model_cfg.model.repa_lambda),
+        "schedule": "fixed from the first update",
+        "student_layer_zero_based": int(model_cfg.model.arch.repa_layer),
+        "teacher_layer": int(model_cfg.datasets.repa_teacher_layer),
+        "projector": "768 -> 2048 -> 2048 -> 768, SiLU",
+        "alignment": "linear interpolation of each unpadded 50-Hz target to valid 40-Hz latent length",
+        "loss": "mean 1-cosine on the flow-matching generation mask only",
+        "inference": "projector weights load strictly but the auxiliary head is not called",
+        "teacher_cache": dataset.repa_feature_contract,
+    }
+
+
 @hydra.main(version_base="1.3", config_path=str(files("aligndit").joinpath("config")), config_name=None)
 def main(model_cfg):
     set_seed(int(model_cfg.seed))
@@ -33,6 +127,8 @@ def main(model_cfg):
     model_arc = model_cfg.model.arch
     audio_cfg = model_cfg.model.audio_representation
     temporal_band_enabled = validate_fixed_band_training_config(model_cfg)
+    repa_metadata = validate_repa_training_config(model_cfg)
+    repa_lambda = float(OmegaConf.select(model_cfg, "model.repa_lambda", default=0.0))
     if model_cfg.ckpts.log_samples:
         raise ValueError("Use the Semantic-VAE inference entry for samples; inherited mel sample logging is unsupported")
     speaker_dim = int(model_arc.speaker_dim)
@@ -73,6 +169,7 @@ def main(model_cfg):
         vocab_char_map=vocab_char_map,
         audio_video_ratio=model_arc.audio_video_ratio,
         ctc_lambda=model_cfg.model.ctc_lambda,
+        repa_lambda=repa_lambda,
     )
 
     trainer_cls = SemanticVaeFixedBandTrainer if temporal_band_enabled else SemanticVaeDirectC2SpeakerTrainer
@@ -113,6 +210,7 @@ def main(model_cfg):
     )
     trainer.run_until_update = int(model_cfg.optim.run_until_update)
     set_seed(int(model_cfg.seed) + trainer.accelerator.process_index)
+    train_dataset = dataset_from_config(model_cfg)
     if trainer.is_main:
         libritts_parent = model_cfg.ckpts.get("initialization_mode", "s2c") == "libritts_text_audio"
         save_dir = Path(model_cfg.ckpts.save_dir)
@@ -134,6 +232,9 @@ def main(model_cfg):
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
+        if repa_metadata is not None:
+            contract["repa_cache_metadata"] = repa_metadata
+            contract["repa"] = make_repa_contract(model_cfg, train_dataset)
         if temporal_band_enabled:
             contract["temporal_band"] = make_fixed_band_contract(model_arc, model.transformer.temporal_band)
         contract_path = save_dir / "speaker_training_contract.json"
@@ -144,28 +245,14 @@ def main(model_cfg):
         else:
             contract_path.write_text(json.dumps(contract, indent=2, ensure_ascii=False) + "\n")
 
-    train_dataset = SemanticVaeCelebVDubDataset(
-        manifest_path=model_cfg.datasets.manifest_path,
-        cache_root=model_cfg.datasets.cache_root,
-        normalization_path=model_cfg.datasets.normalization_path,
-        vocab_path=model_cfg.datasets.vocab_path,
-        expected_manifest_sha256=model_cfg.datasets.expected_manifest_sha256,
-        expected_inventory_sha256=model_cfg.datasets.expected_inventory_sha256,
-        expected_normalization_sha256=model_cfg.datasets.expected_normalization_sha256,
-        expected_vocab_sha256=model_cfg.datasets.expected_vocab_sha256,
-        expected_record_count=model_cfg.datasets.expected_record_count,
-        speaker_embedding_cache_dir=model_cfg.datasets.speaker_embedding_cache_dir,
-        speaker_embedding_dim=speaker_dim,
-        speaker_embedding_model_id=model_cfg.datasets.speaker_embedding_model_id,
-        speaker_embedding_checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
-    )
     if trainer.is_main:
         print(
             "Direct-C2 CAM++ speaker CTC-warmup dataset validated: "
             f"records={len(train_dataset)}, CTC feasible={train_dataset.ctc_feasible_count}, "
             f"CTC zero_infinity-only={train_dataset.ctc_infeasible_count}; "
             f"ctc_lambda=0 through update {model_cfg.model.ctc_warmup_start}, "
-            f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}",
+            f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}; "
+            f"repa_lambda={repa_lambda}",
             flush=True,
         )
     trainer.finetune(

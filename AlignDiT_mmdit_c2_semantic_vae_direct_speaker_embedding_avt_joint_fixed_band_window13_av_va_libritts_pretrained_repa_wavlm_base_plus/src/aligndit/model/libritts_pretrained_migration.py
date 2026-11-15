@@ -1,7 +1,8 @@
-"""Load the pinned LibriTTS EMA while preserving the fixed-13 CelebVDub recipe.
+"""Load the pinned LibriTTS EMA into fixed-13 AVT with a new REPA projector.
 
 The LibriTTS vocabulary extends the original CelebVDub vocabulary. Transfer
 embedding and CTC rows by their meanings; never change the downstream vocabulary.
+Every original tensor is mandatory; only six named projector tensors are new.
 """
 
 from __future__ import annotations
@@ -32,6 +33,14 @@ CTC_ROW_KEYS = frozenset(
     f"transformer.projectors_ctc.{index}.model.6.{suffix}"
     for index in (0, 1) for suffix in ("weight", "bias")
 )
+REPA_PROJECTOR_SHAPES = {
+    "transformer.repa_projector.0.weight": (2048, 768),
+    "transformer.repa_projector.0.bias": (2048,),
+    "transformer.repa_projector.2.weight": (2048, 2048),
+    "transformer.repa_projector.2.bias": (2048,),
+    "transformer.repa_projector.4.weight": (768, 2048),
+    "transformer.repa_projector.4.bias": (768,),
+}
 
 
 def _plain(config):
@@ -176,10 +185,33 @@ def _validate_model(model, config):
         raise ValueError("Instantiated model must retain AVT and text_mask_padding=False")
     if backbone.text_embed.text_embed.num_embeddings != 160:
         raise ValueError("Instantiated model must retain the downstream 160-row text embedding")
+    for key, value in {"repa_layer": 9, "repa_target_dim": 768}.items():
+        if arch.get(key) != value or getattr(backbone, key, None) != value:
+            raise ValueError(f"Instantiated REPA model/configuration mismatch: {key}")
+    if arch.get("repa_projector_dim") != 2048 or float(config["model"].get("repa_lambda", 0.0)) != 0.1:
+        raise ValueError("LibriTTS transfer requires the pinned REPA projector and loss weight")
+    if getattr(model, "repa_lambda", None) != 0.1:
+        raise ValueError("Instantiated CFM must enable REPA with lambda=0.1")
+
+
+def validate_repa_transfer_keys(source, target) -> list[str]:
+    """Allow only the six explicit new head tensors; retain every parent key."""
+    new_keys = set(REPA_PROJECTOR_SHAPES)
+    if len(source) != 802 or new_keys.intersection(source):
+        raise ValueError("LibriTTS parent must contain its original 802 tensors without a REPA projector")
+    if len(target) != 808 or set(target) != set(source) | new_keys:
+        raise ValueError("LibriTTS transfer requires all 802 parent tensor names plus only six REPA projector tensors")
+    for key, shape in REPA_PROJECTOR_SHAPES.items():
+        value = target[key]
+        if not isinstance(value, torch.Tensor) or not value.is_floating_point() or tuple(value.shape) != shape:
+            raise ValueError(f"Unexpected new REPA projector tensor: {key}")
+        if not value.is_meta and not torch.isfinite(value).all():
+            raise ValueError(f"Non-finite newly initialized REPA projector tensor: {key}")
+    return sorted(new_keys)
 
 
 def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verify_checkpoint_hash=True) -> dict:
-    """Load all 802 EMA tensors, with five explicit vocabulary row remappings."""
+    """Load all 802 EMA tensors, remap five vocab rows, retain six fresh REPA tensors."""
     config = _plain(model_cfg)
     _validate_pins(config)
     path = Path(checkpoint_path).expanduser().absolute()
@@ -210,10 +242,11 @@ def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verify_ch
         raise ValueError("LibriTTS EMA must be initialized at step 50000")
     source = {key.removeprefix("ema_model."): value for key, value in ema.items() if key.startswith("ema_model.")}
     target = model.state_dict()
-    if len(source) != 802 or len(target) != 802 or set(source) != set(target):
-        raise ValueError("LibriTTS transfer requires exactly the same 802 tensor names")
+    new_keys = validate_repa_transfer_keys(source, target)
     remapped, loaded = {}, {}
     for key, destination in target.items():
+        if key in new_keys:
+            continue
         value = source[key]
         if not isinstance(value, torch.Tensor) or not value.is_floating_point():
             raise TypeError(f"LibriTTS source value is not a floating-point tensor: {key}")
@@ -232,20 +265,25 @@ def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verify_ch
         raise RuntimeError("LibriTTS transfer did not perform exactly the five approved row remappings")
     if _identity(path) != before:
         raise RuntimeError("LibriTTS parent changed while its tensors were being read")
-    model.load_state_dict(loaded, strict=True)
+    model.load_state_dict({**loaded, **{key: target[key] for key in new_keys}}, strict=True)
     return {
-        "initialization": "Complete LibriTTS text/audio/speaker EMA; original fixed-13 AVT configuration",
+        "initialization": "Complete LibriTTS text/audio/speaker EMA; original fixed-13 AVT configuration plus a fresh REPA projector",
         "parent_path": str(path.resolve()), "parent_sha256": PARENT_SHA256, "parent_size": PARENT_SIZE,
         "parent_contract_sha256": contract_hash, "parent_stage": "libritts_text_audio",
         "parent_update": PARENT_UPDATE, "parent_ema_step": PARENT_UPDATE,
         "source_key_count": len(source), "target_key_count": len(target), "loaded_key_count": len(loaded),
-        "shape_identical_key_count": len(loaded) - len(remapped), "ignored_source_keys": [], "new_target_keys": [],
+        "shape_identical_key_count": len(loaded) - len(remapped), "ignored_source_keys": [], "new_target_keys": new_keys,
+        "new_target_key_count": len(new_keys),
+        "new_target_shapes": {key: list(target[key].shape) for key in new_keys},
+        "new_target_numel": sum(target[key].numel() for key in new_keys),
+        "new_target_initialization": "retain the standalone REPA projector initialization; copy the same values into EMA",
         "loaded_keys": sorted(loaded), "loaded_numel": sum(value.numel() for value in loaded.values()),
         "row_remappings": remapped, "vocabulary": vocabulary,
         "source_text_mask_padding": True, "target_text_mask_padding": False,
         "source_text_audio_only": True, "target_text_audio_only": False,
         "intentional_runtime_changes": ["AT to AVT", "restore original fixed-13 soft Gaussian prior",
-                                        "retain downstream text_mask_padding=False and checkpoint_activations=False"],
+                                        "retain downstream text_mask_padding=False and checkpoint_activations=False",
+                                        "add reference WavLM-Base+ REPA loss at fixed lambda 0.1 on block 9"],
         "source_ctc_lambda": contract["model"]["ctc_lambda"],
         "visual_weights_pretrained": False, "ctc_weights_pretrained": False,
         "speaker_weights_pretrained": True, "optimizer_restored": False, "downstream_initial_update": 0,

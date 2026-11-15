@@ -5,7 +5,7 @@ project_root="$script_dir"
 while [[ "$project_root" != / && ! -f "$project_root/env.sh" ]]; do project_root="$(dirname "$project_root")"; done
 source "$project_root/env.sh"
 cd "$project_root"
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_ctc003_warmup10k30k_40hz_CelebVDub_char"
+checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char"
 output="${OUTPUT_DIR:-$checkpoint_dir/eval_s2_150000_gttext_original115_cfgtext5_cfgvideo2}"
 export PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 exec "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python" -u scripts/run_setting2.py \
