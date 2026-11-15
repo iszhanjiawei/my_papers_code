@@ -20,7 +20,17 @@ D 小节实现依据：`../../AlignDiT_mmdit_c2_semantic_vae/src/aligndit/model/
 
 `conclusion.tex` 总结方法、主要实验结论和已验证的任务扩展。`acknowledgment.tex` 按作者选择采用通用致谢，感谢公开数据集、预训练模型、基线实现及评测工具的贡献者；具体资助与致谢信息待作者后续提供。致谢不编号，置于参考文献之前。
 
-原始示例入口 `bare_jrnl_new_sample4.tex`、`IEEEtran.cls`、图片和原版示例 PDF 均保留，供后续查阅排版用法。
+原始示例入口 `bare_jrnl_new_sample4.tex`、图片和原版示例 PDF 均保留，供后续查阅排版用法。`IEEEtran.cls` 已按下述核对记录对齐 IEEE 官网可下载的通用 Transactions 模板包。
+
+## TCSVT 格式核对（2026-11-15）
+
+核对依据为 [TCSVT 官方稿件要求](https://ieee-cas.org/tcsvt-submission-manuscript)和 [IEEE Editorial Style Manual for Authors](https://journals.ieeeauthorcenter.ieee.org/wp-content/uploads/sites/7/IEEE-Editorial-Style-Manual-for-Authors.pdf)。TCSVT 要求使用单倍行距、双栏的 IEEE Transactions 模板；普通 Transactions Paper 投稿上限为 14 页，摘要为 150–200 词。
+
+主稿保留 `\documentclass[letterpaper,journal]{IEEEtran}`，正文由类文件控制为 10 pt，未覆盖全局页边距、栏宽或行距。引言沿用 `\section{Introduction}` 和模板的 `\IEEEPARstart{H}{uman}` 首字下沉，贡献列表采用类文件支持的 `enumerate`，图引用使用 IEEE 规范的 `Fig.~\ref{...}`。新引言正文来自 `../local_files/intro/introduction_en.tex`；配套文献与 `references.bib` 去重合并，重复文献复用主稿引用键，参考文献仍由 `IEEEtran.bst` 生成。后续替换引言时需保留这些模板命令。
+
+当前摘要为 186 词，编译后的 PDF 为 10 页。已检查引言两页及全稿缩略图，无未定义文献引用、内容越界或过大浮动体；有少量 Underfull 提示。作者信息仍为占位内容，需在投稿前补齐作者、单位和邮箱。按作者要求，暂不添加图片，`fig:motivation` 引用保留待补。
+
+类文件核验：从 [IEEE 官网的通用 Transactions 模板包](https://journals.ieeeauthorcenter.ieee.org/wp-content/uploads/sites/7/IEEE-Transactions-LaTeX2e-templates-and-instructions.zip) 提取 `IEEEtran.cls` 后，发现本目录原文件的 10 pt 模式包含标记为 `%20230227` 的修改，将 `\LARGE`、`\huge`、`\Huge` 全部设为 18 pt。现已恢复为上述官方类文件，三者分别为 17、20、24 pt，论文标题使用 24 pt；其余差异仅为空行。当前类文件 SHA256 为 `c972aca108fda004c3514d63658e02816da2e54d9a1451e870b9bd970e003f55`，与下载包中的类文件逐字节一致。该官方 ZIP 的 SHA256 为 `68e922ec3134efbae53a54f5cfd757adc15b1dfd8b147616d6d469c17abf3099`。IEEE Template Selector 的动态下载 API 本次返回 HTTP 418，故本记录的依据是官网静态通用 Transactions 包，不代表已核对 Selector 当天返回的版本。
 
 ## 在终端编译
 
