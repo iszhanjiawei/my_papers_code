@@ -17,7 +17,7 @@ completed pilot uses 6027. No externally forwarded URL is generated.
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import fcntl
 import inspect
 import json
@@ -35,6 +35,7 @@ import requests
 
 from aligndit.model.lrs3_semantic_vae_dataset import SemanticVaeLRS3Dataset, _iter_jsonl
 from aligndit.model.semantic_vae_dataset import sha256_file
+from lrs3_cache_parallel import ChildSupervisor, ShutdownRequested
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -61,13 +62,31 @@ def snapshot(path):
     return {"path": str(path), "sha256": digest, "size_bytes": after.st_size}
 
 
+@contextmanager
+def owned_lock(path, mode):
+    """One process owns the descriptor and explicitly unlocks before closing."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a")
+    acquired = False
+    try:
+        fcntl.flock(handle, mode | fcntl.LOCK_NB)
+        acquired = True
+        os.set_inheritable(handle.fileno(), False)
+        yield handle
+    finally:
+        try:
+            if acquired:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
 def acquire_read_locks(root, stack):
     descriptors = []
     for name in ("audio", "video40", "media", "publication"):
         path = root / f"state/locks/{name}.lock"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        handle = stack.enter_context(path.open("a"))
-        fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        handle = stack.enter_context(owned_lock(path, fcntl.LOCK_SH))
         descriptors.append(handle.fileno())
     for feature in ("latents", "video_25hz", "video_40hz", "speaker_embeddings"):
         guard = root / f"state/{feature}/WRITE_ACTIVE.json"
@@ -288,7 +307,8 @@ def ensure_tensorboard(output, event_dir, port):
         with (output / "tensorboard.log").open("ab") as log:
             process = subprocess.Popen([sys.executable, "-u", "-m", "tensorboard.main", "--logdir", str(logdir),
                                         "--host", "0.0.0.0", "--port", str(port)], stdout=log,
-                                       stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+                                        stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                        start_new_session=True, close_fds=True)
             pid = process.pid
         for _ in range(30):
             try:
@@ -314,48 +334,74 @@ def worker(plan_path):
     state = {"status": "validating", "pid": os.getpid(), "process_group": os.getpgrp(),
              "started_unix": time.time(), "plan": str(plan_path), "scope": plan["scope"]}
     wrote_status = False
-    try:
-        with ExitStack() as stack:
-            launch_lock = stack.enter_context((output / "launch.lock").open("a"))
-            fcntl.flock(launch_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            write_json(status_path, state)
-            wrote_status = True
-            descriptors = acquire_read_locks(Path(plan["cache_root"]), stack)
-            verify_pins(plan["artifacts"])
-            validate_devices(plan["gpus"], plan["master_port"])
-            tb = ensure_tensorboard(output, Path(plan["event_dir"]), plan["tensorboard_port"])
-            environment = dict(os.environ)
-            environment.update(CUDA_VISIBLE_DEVICES=plan["gpus"], ACCELERATE_MIXED_PRECISION="bf16",
-                               OMP_NUM_THREADS="4", MKL_NUM_THREADS="4", TOKENIZERS_PARALLELISM="false",
-                               WANDB_MODE="disabled", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
-                               PYTHONPATH=str(PROJECT / "src"))
-            for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
-                environment.pop(name, None)
-            with (output / "training.log").open("ab") as log:
-                process = subprocess.Popen(plan["command"], cwd=PROJECT, env=environment, stdin=subprocess.DEVNULL,
-                                           stdout=log, stderr=subprocess.STDOUT, pass_fds=tuple(descriptors + [launch_lock.fileno()]))
-                state.update(status="running", torchrun_pid=process.pid, tensorboard=tb)
+    children = ChildSupervisor(isolated_children=True)
+    with children.signals():
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(owned_lock(output / "launch.lock", fcntl.LOCK_EX))
                 write_json(status_path, state)
-                session = requests.Session()
-                session.trust_env = False
-                while process.poll() is None:
-                    state["heartbeat_unix"] = time.time()
-                    try:
-                        tags = session.get(tb["local_url"] + "/data/plugin/scalars/tags", timeout=3).json()
-                        state["tensorboard_loss_visible"] = any("loss" in values for values in tags.values())
-                    except (requests.RequestException, ValueError):
-                        state["tensorboard_loss_visible"] = False
+                wrote_status = True
+                try:
+                    acquire_read_locks(Path(plan["cache_root"]), stack)
+                    children.check()
+                    verify_pins(plan["artifacts"])
+                    children.check()
+                    validate_devices(plan["gpus"], plan["master_port"])
+                    children.check()
+                    # TensorBoard has its own session and is not a training child.
+                    tb = ensure_tensorboard(output, Path(plan["event_dir"]), plan["tensorboard_port"])
+                    children.check()
+                    environment = dict(os.environ)
+                    environment.update(CUDA_VISIBLE_DEVICES=plan["gpus"], ACCELERATE_MIXED_PRECISION="bf16",
+                                       OMP_NUM_THREADS="4", MKL_NUM_THREADS="4", TOKENIZERS_PARALLELISM="false",
+                                       WANDB_MODE="disabled", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
+                                       PYTHONPATH=str(PROJECT / "src"))
+                    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+                        environment.pop(name, None)
+                    with (output / "training.log").open("ab") as log:
+                        process = children.spawn(plan["command"], cwd=PROJECT, env=environment,
+                                                 stdin=subprocess.DEVNULL, stdout=log,
+                                                 stderr=subprocess.STDOUT, close_fds=True)
+                        state.update(status="running", torchrun_pid=process.pid, tensorboard=tb)
+                        write_json(status_path, state)
+                        session = requests.Session()
+                        session.trust_env = False
+                        next_heartbeat = 0.0
+                        while process.poll() is None:
+                            children.check()
+                            # Elastic ranks have separate sessions. Remember their
+                            # birth identities while they are still descendants.
+                            children.live()
+                            if time.monotonic() >= next_heartbeat:
+                                state["heartbeat_unix"] = time.time()
+                                try:
+                                    tags = session.get(tb["local_url"] + "/data/plugin/scalars/tags", timeout=3).json()
+                                    state["tensorboard_loss_visible"] = any("loss" in values for values in tags.values())
+                                except (requests.RequestException, ValueError):
+                                    state["tensorboard_loss_visible"] = False
+                                write_json(status_path, state)
+                                next_heartbeat = time.monotonic() + 10
+                            children.sleep(.25)
+                    children.check()
+                    if children.live():
+                        raise RuntimeError("Torchrun exited with live registered descendants")
+                    state.update(status="completed" if process.returncode == 0 else "failed",
+                                 returncode=process.returncode)
+                finally:
+                    # Keep the owning descriptors open until every registered
+                    # training process is gone; never pass these FDs to children.
+                    state["cleanup"] = children.stop_and_reap()
+                    state["locks_release_after_descendants"] = True
+                    state["finished_unix"] = time.time()
                     write_json(status_path, state)
-                    time.sleep(10)
-            state.update(status="completed" if process.returncode == 0 else "failed",
-                         returncode=process.returncode, finished_unix=time.time())
-            write_json(status_path, state)
             return process.returncode
-    except Exception as error:
-        state.update(status="failed", error=f"{type(error).__name__}: {error}", finished_unix=time.time())
-        if wrote_status:
-            write_json(status_path, state)
-        raise
+        except BaseException as error:
+            state.update(status="failed", error=f"{type(error).__name__}: {error}", finished_unix=time.time())
+            if isinstance(error, ShutdownRequested):
+                state["shutdown_signal"] = error.signum
+            if wrote_status:
+                write_json(status_path, state)
+            raise
 
 
 def main():
@@ -437,7 +483,7 @@ def main():
                 process = subprocess.Popen([sys.executable, "-u", str(Path(__file__).resolve()),
                                             "--worker-plan", str(plan_path)], cwd=PROJECT,
                                            stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                           start_new_session=True)
+                                           start_new_session=True, close_fds=True)
             print(json.dumps({"launched_pid": process.pid, "process_group": process.pid,
                               "status_file": str(output / "training_process.json"),
                               "local_tensorboard_url": f"http://127.0.0.1:{args.tensorboard_port}",
