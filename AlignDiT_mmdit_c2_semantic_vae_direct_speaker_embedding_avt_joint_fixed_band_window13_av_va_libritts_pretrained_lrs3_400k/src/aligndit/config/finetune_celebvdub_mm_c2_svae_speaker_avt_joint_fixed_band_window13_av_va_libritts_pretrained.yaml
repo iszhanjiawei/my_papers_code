@@ -1,0 +1,17 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window13_av_va
+  - _self_
+
+# Preserve the fixed 13-frame experiment; change only its pretrained parent.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_ctc003_warmup10k30k
+
+ckpts:
+  initialization_mode: libritts_text_audio
+  pretrained_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/alignDiT_idea6/libriSpeech_LibriTTS_pretrained_models/model_00050000.pt
+  expected_parent_sha256: 4ee7dd9e1377728a042e75ebbbe70c2a12cd830c9b078afe13ebca289d03503c
+  expected_parent_size: 5048750348
+  expected_parent_update: 50000
+  parent_contract_path: null
+  expected_parent_contract_sha256: 88e16bfe6a0c393bd4236e70a1bebd824713cc00c06bbb709e3a530d433f236f
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_ctc003_warmup10k30k_40hz_CelebVDub_char
