@@ -1,4 +1,71 @@
-# Current experiment: 13-frame Gaussian soft core
+# Current experiment: isolated LRS3 training for 400k updates
+
+This directory is a physical copy of
+`AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_window13_av_va_libritts_pretrained`
+at Git `78f293f9f5b468a7f645d7e776e2de2c45eb5051`. Model/trainer source is local
+to this snapshot. Runtime logs, events and checkpoints were not copied.
+
+The active recipe is
+`src/aligndit/config/finetune_lrs3_svae_speaker_window13_libritts.yaml`.
+It reads the published strict LRS3 cache at
+`${ROOT_PREFIX}/zjw524/datasets/LRS3/AlignDiT_SVAE_LRS3_v2_sharded`:
+289,727 training clips / 422.998268 hours, 1,200 validation clips and 1,321 test
+clips. This is the accepted training publication, not a lossless restoration
+of every official LRS3 clip. The optional P1 publication has a separate config
+and output identity; it is not selected by default.
+
+Training starts a fresh downstream optimizer/update counter from the LibriTTS
+50k EMA parent, not from a CelebV-Dub checkpoint. It retains Semantic-VAE 64-D
+40-Hz latents, 1024-D aligned AV-HuBERT, 192-D CAM++, 12 AVT joint blocks plus
+6 audio blocks, the 150-ms Gaussian AV/VA prior, the 159-character vocabulary,
+and the same latent normalization. Four GPUs use BF16, 3,600 frames and at most
+32 samples per GPU, LR 5e-5, 20k LR warmup and CTC 0 through 10k then a linear
+increase to 0.03 at 30k. DataLoader uses 8 workers per rank for LRS3.
+
+`optim.run_until_update: 400000` stops at exactly 400k downstream optimizer
+updates. The inherited 200-epoch linear learning-rate schedule is retained;
+it does not decay to zero at 400k. The accepted dataset produces 4,623 updates
+per epoch on four ranks, so the 200-epoch budget is sufficient. Numbered
+checkpoints are saved every 50k and `model_last.pt` every 5k and at normal stop.
+
+From this directory:
+
+```bash
+# Validate data/source contracts, parent checkpoint, and freeze the launch plan.
+bash train_lrs3_400k.sh
+# Validate and launch the supervisor, four ranks and TensorBoard in new sessions.
+bash train_lrs3_400k.sh --start
+```
+
+The launcher uses setsid via `start_new_session=True`, unbuffered Python and
+this snapshot's explicit `PYTHONPATH`; no editable install is needed. After a
+stopped run, the same command resumes a matching downstream checkpoint. It
+refuses to reuse an active launch or a checkpoint with a conflicting contract.
+Use `--help` for optional GPU, port and output overrides.
+
+Default runtime paths:
+
+- Launch plan, frozen YAML, status and logs: `logs/lrs3_400k_strict/`.
+- Checkpoints: `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_LRS3_400k_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts`.
+- Event directory: `runs/AlignDiT_LRS3_400k_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_semantic_vae_40hz_LRS3_char`.
+- TensorBoard logdir: `logs/lrs3_400k_strict/tensorboard/`, port 6032; DDP port 29592.
+
+TensorBoard is started by the launcher and records total/flow/CTC losses and
+diagnostics. Its server-local URL is `http://127.0.0.1:6032`; an external URL
+requires the IDE's actual port-forwarding service. The PID/status files report
+the process from the current launch rather than an assumed PID.
+
+Data caches, source provenance, frozen text recovery, vocabulary, normalization
+and pretrained model files remain shared read dependencies. Do not remove the
+v1 provenance/raw media or external dependencies listed in the dataset's
+`DELIVERY.txt`. No source directory, source experiment checkpoints or source
+events are reused for writes by the LRS3 entry above.
+
+The copied CelebV-Dub/Slurm/evaluation scripts and reports below are historical
+references; they are not the entry points or results of this LRS3 experiment.
+Use `train_lrs3_400k.sh` for this run.
+
+# Historical source experiment: 13-frame Gaussian soft core
 
 This independent copy of `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_av_va`
 changes only the effective Gaussian sigma from 0.100 to 0.150 seconds. At the

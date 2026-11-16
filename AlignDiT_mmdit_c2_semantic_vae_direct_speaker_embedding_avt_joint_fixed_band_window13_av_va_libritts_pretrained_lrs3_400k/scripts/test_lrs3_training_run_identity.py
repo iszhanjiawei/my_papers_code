@@ -32,13 +32,13 @@ class RunIdentityTests(unittest.TestCase):
         entry_name = f'{frozen.model.name}_{frozen.model.audio_representation.name}_{frozen.datasets.name}_{frozen.model.tokenizer}'
         self.assertEqual(expected, PROJECT/'runs'/entry_name)
 
-    def test_default_identity_unchanged_and_different_from_smoke(self):
+    def test_default_identity_is_400k_and_different_from_smoke(self):
         smoke = training_event_dir(load_config(self.args))
         del self.args.run_name  # Existing callers need no new argument.
         baseline = load_config(self.args)
         self.assertNotEqual(training_event_dir(baseline), smoke)
         self.assertEqual(training_event_dir(baseline), PROJECT/'runs'/
-            'AlignDiT_LRS3_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_semantic_vae_40hz_LRS3_char')
+            'AlignDiT_LRS3_400k_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained_semantic_vae_40hz_LRS3_char')
 
     def test_path_traversal_and_injection_and_missing_marker_rejected(self):
         for name in ['../'+self.name, self.name+'/child', self.name+'\\child', self.name+' bad',

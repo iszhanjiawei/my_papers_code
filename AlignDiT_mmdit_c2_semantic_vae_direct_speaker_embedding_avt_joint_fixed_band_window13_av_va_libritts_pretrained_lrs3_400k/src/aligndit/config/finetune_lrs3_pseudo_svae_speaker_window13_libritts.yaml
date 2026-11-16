@@ -9,7 +9,7 @@ datasets:
   expected_text_policy: source_plus_asr_pseudo
 
 model:
-  name: AlignDiT_LRS3_pseudo_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained
+  name: AlignDiT_LRS3_400k_pseudo_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained
 
 ckpts:
-  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_LRS3_pseudo_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_LRS3_400k_pseudo_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts

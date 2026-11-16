@@ -10,8 +10,9 @@ Examples (run from this project, using the aligndit environment):
   PYTHONPATH=src python scripts/launch_lrs3_training.py --start --gpus 0,1,2,3
   PYTHONPATH=src python scripts/launch_lrs3_training.py --variant pseudo
 
-TensorBoard defaults to local port 6028 for strict or 6029 for pseudo; the
-completed pilot uses 6027. No externally forwarded URL is generated.
+This isolated snapshot defaults to 400k downstream updates. Launch reports
+stay inside this project's logs/ directory. TensorBoard uses local port 6032
+for strict or 6033 for pseudo. No externally forwarded URL is generated.
 """
 
 from __future__ import annotations
@@ -413,7 +414,7 @@ def main():
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--run-name", help="Separate model/run identity and TensorBoard events; retain the fixed-band marker")
     parser.add_argument("--gpus", default="0,1,2,3")
-    parser.add_argument("--master-port", type=int, default=29587)
+    parser.add_argument("--master-port", type=int, default=29592)
     parser.add_argument("--tensorboard-port", type=int)
     parser.add_argument("--run-until-update", type=int)
     parser.add_argument("--epochs", type=int)
@@ -425,10 +426,10 @@ def main():
         raise SystemExit(worker(args.worker_plan.resolve()))
     config = load_config(args)
     if args.tensorboard_port is None:
-        args.tensorboard_port = 6028 if args.variant == "strict" else 6029
+        args.tensorboard_port = 6032 if args.variant == "strict" else 6033
     root = Path(config.datasets.cache_root).resolve()
     publication = "full" if args.variant == "strict" else "full_pseudo"
-    output = (args.output_dir or root / f"reports/{publication}_training_launch").resolve()
+    output = (args.output_dir or PROJECT / "logs" / f"lrs3_400k_{args.variant}").resolve()
     output.mkdir(parents=True, exist_ok=True)
     active_path = output / "training_process.json"
     if active_path.exists():

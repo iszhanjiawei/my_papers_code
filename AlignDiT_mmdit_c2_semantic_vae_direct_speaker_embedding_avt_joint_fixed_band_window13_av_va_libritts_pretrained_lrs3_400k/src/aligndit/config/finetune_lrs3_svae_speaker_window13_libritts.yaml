@@ -19,13 +19,13 @@ datasets:
   num_workers: 8
 
 model:
-  name: AlignDiT_LRS3_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained
+  name: AlignDiT_LRS3_400k_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained
 
 optim:
-  # Baseline schedule; calibrate the final budget using full-cache throughput.
-  # The data preparation pilot overrides this to two verified optimizer updates.
-  run_until_update: 200000
+  # Fresh downstream training from the LibriTTS 50k EMA; stop at 400k updates.
+  # Retain the inherited 200-epoch LR schedule (not a 400k-to-zero schedule).
+  run_until_update: 400000
 
 ckpts:
   logger: tensorboard
-  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_LRS3_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_LRS3_400k_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts
