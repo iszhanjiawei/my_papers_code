@@ -12,7 +12,7 @@ from unittest import mock
 import numpy as np
 
 from aligndit.lrs3_media_quality import (
-    EXCLUSIONS, TERMINAL, PROTOCOL, build_terminal, load_terminal, scope, sha256,
+    EXCLUSIONS, TERMINAL, PROTOCOL, build_terminal, load_terminal, row_hash, scope, sha256, snapshot,
 )
 import lrs3_seal_media_quality as seal
 from lrs3_finish_production import Finisher, cache_status
@@ -104,6 +104,46 @@ class QualityClosureTests(unittest.TestCase):
         write_jsonl(Path(path), [{**self.failure, 'error': "OSError('disk full')"}])
         with self.assertRaisesRegex(ValueError, 'Latest media retry'):
             build_terminal(self.root, self.reviewed)
+
+    def test_fan_io_or_oom_cannot_be_hidden_by_legacy_retry_quality(self):
+        path = Path(self.stages['full_media_landmark_repair']['reports'][0])
+        for error in ("OSError('disk full')", "OutOfMemoryError('CUDA out of memory')", "RuntimeError('unknown')"):
+            write_jsonl(path,[{**self.failure,'error':error}])
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError,'Latest formal FAN failure'):
+                build_terminal(self.root,self.reviewed)
+        self.assertTrue(self.guard.exists())
+
+    def test_successful_fan_then_source_bound_crop_geometry_is_allowed(self):
+        fan_path = Path(self.stages['full_media_landmark_repair']['reports'][0])
+        fan = {**self.records[1],'status':'ok','source_sha256':sha256(self.records[1]['video_path'])}
+        write_jsonl(fan_path,[fan])
+        geometry = {**self.failure,'error':"ValueError('Mouth ROI outside canonical canvas: (1, 2)')"}
+        for name in ('full_media_retry','full_media_retry_long'):
+            write_jsonl(Path(self.stages[name]['reports'][0]),[geometry])
+        write_json(self.reviewed,[{'sample_id':'bad','reason':'mouth_geometry_invalid'}])
+        terminal = self.invoke()
+        self.assertEqual(terminal['excluded'][0]['fan_evidence']['status'],'ok')
+        self.assertEqual(terminal['excluded'][0]['retry_evidence']['status'],'failed')
+        self.assertEqual(terminal['excluded'][0]['quality_evidence'],terminal['excluded'][0]['retry_evidence'])
+
+    def test_successful_fan_cannot_authorize_a_legacy_coverage_failure(self):
+        fan_path = Path(self.stages['full_media_landmark_repair']['reports'][0])
+        write_jsonl(fan_path,[{**self.records[1],'status':'ok','source_sha256':sha256(self.records[1]['video_path'])}])
+        with self.assertRaisesRegex(ValueError,'only a source-bound final crop geometry'):
+            build_terminal(self.root,self.reviewed)
+
+    def test_consumer_revalidates_fan_chain_even_if_all_hashes_are_recomputed(self):
+        self.invoke()
+        path = Path(self.stages['full_media_landmark_repair']['reports'][0])
+        failure = {**self.failure,'error':"OSError('disk full')"}
+        write_jsonl(path,[failure])
+        document = json.loads((self.root / EXCLUSIONS).read_text())
+        document['excluded'][0]['fan_evidence'].update(record_sha256=row_hash(failure),error=failure['error'])
+        write_json(self.root / EXCLUSIONS,document)
+        terminal = json.loads((self.root / TERMINAL).read_text())
+        terminal['evidence_files'] = [snapshot(ref['path']) for ref in terminal['evidence_files']]
+        write_json(self.root / TERMINAL,terminal)
+        with self.assertRaisesRegex(ValueError,'Latest formal FAN failure'):load_terminal(self.root)
 
     def test_fake_embedded_quality_string_is_not_accepted(self):
         for stage in self.stages.values():

@@ -30,6 +30,50 @@ def matches_reason(error, reason):
         for prefix in ('', 'ValueError: ', "ValueError('", 'ValueError("'))
 
 
+def recovery_chain(root, state, sample_ids):
+    """Read latest officially registered FAN and media retry results separately."""
+    fan, retry, paths = {}, {}, []
+    for name in ('full_media_landmark_repair', 'full_media_retry', 'full_media_retry_long'):
+        stage = state.get('stages', {}).get(name)
+        if not stage or stage.get('finished') is not True:
+            raise ValueError(f'Latest media recovery stage is unfinished: {name}')
+        target = fan if name == 'full_media_landmark_repair' else retry
+        for item in stage.get('processes', []):
+            if item.get('exit_code') not in (0, 1):
+                raise ValueError('Media recovery process did not finish normally')
+            path = Path(item['report']).resolve(strict=True)
+            if not path.is_relative_to((root / 'reports').resolve()):
+                raise ValueError('Media recovery report is outside this cache')
+            if str(path) not in stage.get('reports', []):
+                raise ValueError('Recovery process report is not registered by its latest stage')
+            paths.append(path)
+            for row in rows(path):
+                if row['sample_id'] in sample_ids:
+                    ref = {'path': str(path), 'record_sha256': row_hash(row),
+                           'status': row.get('status'), 'error': row.get('error')}
+                    target[row['sample_id']] = (row, ref)
+    if fan.keys() != sample_ids or retry.keys() != sample_ids:
+        raise ValueError('Every final exclusion requires its latest formal FAN and media retry result')
+    return fan, retry, paths
+
+
+def check_recovery_chain(fan, retry, *, reason, relative_stem, source_video_sha256):
+    if fan.get('relative_stem') != relative_stem or retry.get('relative_stem') != relative_stem:
+        raise ValueError('Media recovery chain differs from its canonical identity')
+    if retry.get('status') != 'failed' or not matches_reason(retry.get('error'), reason):
+        raise ValueError('Latest media retry failure is not the explicitly reviewed quality rejection')
+    if fan.get('status') == 'failed':
+        allowed_fan = ('no_valid_landmarks', 'landmark_coverage_insufficient', 'landmark_geometry_invalid')
+        if not any(matches_reason(fan.get('error'), code) for code in allowed_fan):
+            raise ValueError('Latest formal FAN failure is IO/OOM/unknown, not an allowed quality rejection')
+    elif fan.get('status') == 'ok':
+        if (fan.get('source_sha256') != source_video_sha256
+                or reason not in {'landmark_geometry_invalid', 'mouth_geometry_invalid'}):
+            raise ValueError('Successful formal FAN permits only a source-bound final crop geometry rejection')
+    else:
+        raise ValueError('Latest formal FAN did not complete with an auditable result')
+
+
 def sha256(path):
     h = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -157,7 +201,9 @@ def load_terminal(root, *, expected_sha256=None, source_sha256=None):
             or {r['sample_id']:r['reason'] for r in approved} != {r['sample_id']:r['reason'] for r in excluded}):
         raise ValueError('Media quality exclusion set differs from the explicit reviewed list')
     seen = set()
-    records_by_report = {}
+    fan, retry, report_paths = recovery_chain(root, state, {row['sample_id'] for row in excluded})
+    if any(str(path) not in by_path for path in report_paths):
+        raise ValueError('Media quality closure omits latest formal FAN/retry evidence')
     for row in excluded:
         key, reason = row.get("sample_id"), row.get("reason")
         proof = row.get("quality_evidence", {})
@@ -167,14 +213,13 @@ def load_terminal(root, *, expected_sha256=None, source_sha256=None):
                 or not matches_reason(proof.get("error"), reason)):
             raise ValueError("Invalid/duplicate media quality exclusion or unauthorized failure reason")
         seen.add(key)
-        if proof["path"] not in records_by_report:
-            records_by_report[proof["path"]] = {r["sample_id"]: r for r in rows(proof["path"])}
-        actual = records_by_report[proof["path"]].get(key)
-        if (actual is None or row_hash(actual) != proof.get("record_sha256")
-                or actual.get("status") != proof["status"] or actual.get("error") != proof["error"]
-                or actual.get("relative_stem") != row["relative_stem"]
+        fan_row, fan_ref = fan[key]
+        retry_row, retry_ref = retry[key]
+        if (proof != retry_ref or row.get('fan_evidence') != fan_ref or row.get('retry_evidence') != retry_ref
                 or sha256(row["source_video_path"]) != row["source_video_sha256"]):
             raise ValueError("Quality exclusion differs from its actual failure/source evidence")
+        check_recovery_chain(fan_row, retry_row, reason=reason, relative_stem=row['relative_stem'],
+                             source_video_sha256=row['source_video_sha256'])
     proof_status, proof_excluded = {}, {}
     for r in rows(root / "reports/media_full_pipeline/independent_verification.jsonl"):
         proof_status[r['sample_id']] = r.get('status')
@@ -237,47 +282,20 @@ def build_terminal(root, reviewed_path):
     approved = {row["sample_id"]: row for row in reviewed}
     if len(approved) != len(reviewed) or approved.keys() != failed:
         raise ValueError("Reviewed exclusions must equal the exact final independent-verification failure ID set")
-    # Only reports registered by completed, latest retry/repair stages qualify.
-    evidence = {}
-    retry_evidence = {}
-    report_paths = []
-    for name in ("full_media_landmark_repair", "full_media_retry", "full_media_retry_long"):
-        stage = state.get("stages", {}).get(name)
-        if not stage or stage.get("finished") is not True:
-            raise ValueError(f"Latest media recovery stage is unfinished: {name}")
-        for item in stage.get("processes", []):
-            if item.get("exit_code") not in (0, 1):
-                raise ValueError("Media recovery process did not finish normally")
-            path = Path(item["report"]).resolve(strict=True)
-            if not path.is_relative_to((root / "reports").resolve()):
-                raise ValueError("Media recovery report is outside this cache")
-            report_paths.append(path)
-            latest_report = {r["sample_id"]: r for r in rows(path)}
-            for key in failed & latest_report.keys():
-                r = latest_report[key]
-                if name in {"full_media_retry", "full_media_retry_long"}:
-                    retry_evidence[key] = r
-                reason = approved[key].get("reason")
-                if (reason in QUALITY_ERRORS and r.get("status") == "failed"
-                        and r.get("relative_stem") == canonical_rows[key]["relative_stem"]
-                        and matches_reason(r.get("error"), reason)):
-                    evidence[key] = {"path": str(path), "record_sha256": row_hash(r),
-                                     "status": r["status"], "error": r["error"]}
-    if evidence.keys() != failed:
-        raise ValueError("Some final failures lack a latest recorded FAN/crop quality rejection; IO/OOM/unknown errors cannot be sealed")
-    if retry_evidence.keys() != failed or any(
-            r.get("status") != "failed" or not any(matches_reason(r.get("error"), reason)
-                for reason in QUALITY_ERRORS) for r in retry_evidence.values()):
-        raise ValueError("Latest media retry failure is not an allowed quality rejection")
+    fan, retry, report_paths = recovery_chain(root, state, failed)
     excluded = []
     for key in sorted(failed):
         source = canonical_rows[key]
         if source.get("width") != 224:
             raise ValueError("This policy only permits failed 224-pixel face-to-mouth quality repairs")
+        source_video_sha = sha256(source['video_path'])
+        check_recovery_chain(fan[key][0], retry[key][0], reason=approved[key].get('reason'),
+                             relative_stem=source['relative_stem'], source_video_sha256=source_video_sha)
         excluded.append({"sample_id": key, "relative_stem": source["relative_stem"],
             "original_clip_id": source["original_clip_id"], "reason": approved[key]["reason"],
             "review_note": approved[key].get("review_note", ""), "source_video_path": source["video_path"],
-            "source_video_sha256": sha256(source["video_path"]), "quality_evidence": evidence[key],
+            "source_video_sha256": source_video_sha, "quality_evidence": retry[key][1],
+            'fan_evidence': fan[key][1], 'retry_evidence': retry[key][1],
             "independent_verification_record_sha256": row_hash(latest[key]), "independent_verification_error": latest[key].get("error")})
     paths = [canonical, contract_path, state_path, summary_path, proof_path, reviewed_path] + report_paths
     refs = [snapshot(path) for path in dict.fromkeys(paths)]
