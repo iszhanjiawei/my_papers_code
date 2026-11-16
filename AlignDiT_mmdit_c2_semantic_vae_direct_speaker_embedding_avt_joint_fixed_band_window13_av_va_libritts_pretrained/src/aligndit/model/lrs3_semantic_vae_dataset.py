@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 from collections import Counter
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,7 @@ from aligndit.model.semantic_vae_dataset import (
     _safe_join,
     sha256_file,
 )
+from aligndit.model.lrs3_path_validation import path_checked_rows
 from aligndit.model.speaker_embedding import (
     validate_speaker_cache_metadata,
     validate_speaker_embedding_array,
@@ -195,6 +197,18 @@ def _record_digest(row: dict) -> bytes:
     return hashlib.sha256(payload.encode("utf-8")).digest()
 
 
+def _validate_record_paths(root, row):
+    # Preserve the original per-field identity and _safe_join order exactly.
+    stem, key = row.get("relative_stem"), row.get("utterance_key")
+    for field, prefix in (("latent_relative_path", "latents"),
+                          ("video_40hz_relative_path", "video_40hz"),
+                          ("speaker_relative_path", "speaker_embeddings")):
+        expected_path = f"{prefix}/{stem}.npy"
+        if row.get(field) != expected_path:
+            raise ValueError(f"Invalid LRS3 {field}: {key}")
+        _safe_join(root, expected_path, label=field)
+
+
 class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
     """Reuse the established tensor loading/collation, with LRS3 provenance.
 
@@ -223,6 +237,7 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
         expected_text_policy: str = "source_grounded",
         speaker_embedding_dim: int = 192,
         speaker_embedding_cache_dir: str | Path | None = None,
+        path_validation_workers: int = 16,
     ):
         self.manifest_path = _regular_file(manifest_path, label="LRS3 split manifest")
         self.split = self.manifest_path.stem
@@ -313,63 +328,61 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
             entry = entries[f"{split}.jsonl"]
             feasible_count, record_count = 0, 0
             source_kinds = Counter()
-            for row in _iter_jsonl(manifest_dir / f"{split}.jsonl"):
-                record_count += 1
-                if imported_cache is not None:
-                    import_entry = imported_cache['receipts'].get(row.get('sample_id'))
-                    if (import_entry is None or import_entry['relative_stem'] != row.get('relative_stem')
-                            or import_entry['import_receipt_sha256'] != row.get('import_receipt_sha256')):
-                        raise ValueError('Published LRS3 row differs from its immutable import receipt ledger')
-                if row.get('sample_id') in self.media_quality_exclusions or row.get('relative_stem') in excluded_stems:
-                    raise ValueError('Published inventory contains a sealed media quality exclusion')
-                key, text, frames = row.get("utterance_key"), row.get("text"), row.get("latent_frames")
-                original, source = row.get("original_clip_id"), row.get("source_split")
-                if (row.get("split") != split or not isinstance(key, str) or key in inventory_rows
-                        or not isinstance(original, str) or not original or source not in {"pretrain", "trainval", "test"}):
-                    raise ValueError(f"Invalid or duplicate LRS3 record identity: {key!r}")
-                if (source == "test") != (split == "test"):
-                    raise ValueError(f"Official LRS3 test membership changed: {key}")
-                kind = row.get("source_kind")
-                if policy is not None:
-                    if kind not in SOURCE_KINDS:
-                        raise ValueError(f"Unknown or missing LRS3 label source_kind: {key}")
-                    if kind == "asr_pseudo":
-                        if expected_text_policy != "source_plus_asr_pseudo":
-                            raise ValueError("Strict LRS3 publication cannot contain pseudo labels")
-                        _validate_pseudo_label(row, self.cache_root, evidence_hashes)
-                        pseudo_keys.add(key)
-                    source_kinds[kind] += 1
-                elif kind == "asr_pseudo":
-                    raise ValueError("Legacy pilot cannot authorize pseudo labels")
-                original_key = (source, original)
-                if original_splits.setdefault(original_key, split) != split:
-                    raise ValueError(f"LRS3 original clip leaks across splits: {original_key}")
-                if (not isinstance(text, str) or not text.strip() or type(frames) is not int or frames <= 0
-                        or row.get("latent_dim") != 64 or row.get("video_dim") != 1024):
-                    raise ValueError(f"Invalid LRS3 text/feature dimensions: {key}")
-                unknown = sorted(set(text) - vocabulary.keys())
-                if unknown:
-                    raise ValueError(f"LRS3 text has out-of-vocabulary characters for {key}: {unknown!r}")
-                stem = row.get("relative_stem")
-                if not isinstance(stem, str) or not stem.startswith(f"{split}/{source}/") or key != f"lrs3/{stem}":
-                    raise ValueError(f"LRS3 utterance key/path identity mismatch: {key}")
-                for field, prefix in (("latent_relative_path", "latents"),
-                                      ("video_40hz_relative_path", "video_40hz"),
-                                      ("speaker_relative_path", "speaker_embeddings")):
-                    expected_path = f"{prefix}/{stem}.npy"
-                    if row.get(field) != expected_path:
-                        raise ValueError(f"Invalid LRS3 {field}: {key}")
-                    _safe_join(self.cache_root, expected_path, label=field)
-                target, repeats, minimum = _ctc_lengths(text, vocabulary)
-                feasible = frames >= minimum
-                if (row.get("ctc_target_length") != target or row.get("ctc_adjacent_repeats") != repeats
-                        or row.get("ctc_min_input_frames") != minimum or row.get("ctc_feasible_40hz") is not feasible):
-                    raise ValueError(f"Invalid LRS3 40 Hz CTC metadata: {key}")
-                feasible_count += int(feasible)
-                total_frames += frames
-                inventory_rows[key] = _record_digest(row)
-                if split == self.split:
-                    self.records.append({field: row[field] for field in RUNTIME_FIELDS})
+            with path_checked_rows(
+                _iter_jsonl(manifest_dir / f"{split}.jsonl"),
+                partial(_validate_record_paths, self.cache_root), workers=path_validation_workers,
+            ) as checked_rows:
+                for row, check_paths in checked_rows:
+                    record_count += 1
+                    if imported_cache is not None:
+                        import_entry = imported_cache['receipts'].get(row.get('sample_id'))
+                        if (import_entry is None or import_entry['relative_stem'] != row.get('relative_stem')
+                                or import_entry['import_receipt_sha256'] != row.get('import_receipt_sha256')):
+                            raise ValueError('Published LRS3 row differs from its immutable import receipt ledger')
+                    if row.get('sample_id') in self.media_quality_exclusions or row.get('relative_stem') in excluded_stems:
+                        raise ValueError('Published inventory contains a sealed media quality exclusion')
+                    key, text, frames = row.get("utterance_key"), row.get("text"), row.get("latent_frames")
+                    original, source = row.get("original_clip_id"), row.get("source_split")
+                    if (row.get("split") != split or not isinstance(key, str) or key in inventory_rows
+                            or not isinstance(original, str) or not original or source not in {"pretrain", "trainval", "test"}):
+                        raise ValueError(f"Invalid or duplicate LRS3 record identity: {key!r}")
+                    if (source == "test") != (split == "test"):
+                        raise ValueError(f"Official LRS3 test membership changed: {key}")
+                    kind = row.get("source_kind")
+                    if policy is not None:
+                        if kind not in SOURCE_KINDS:
+                            raise ValueError(f"Unknown or missing LRS3 label source_kind: {key}")
+                        if kind == "asr_pseudo":
+                            if expected_text_policy != "source_plus_asr_pseudo":
+                                raise ValueError("Strict LRS3 publication cannot contain pseudo labels")
+                            _validate_pseudo_label(row, self.cache_root, evidence_hashes)
+                            pseudo_keys.add(key)
+                        source_kinds[kind] += 1
+                    elif kind == "asr_pseudo":
+                        raise ValueError("Legacy pilot cannot authorize pseudo labels")
+                    original_key = (source, original)
+                    if original_splits.setdefault(original_key, split) != split:
+                        raise ValueError(f"LRS3 original clip leaks across splits: {original_key}")
+                    if (not isinstance(text, str) or not text.strip() or type(frames) is not int or frames <= 0
+                            or row.get("latent_dim") != 64 or row.get("video_dim") != 1024):
+                        raise ValueError(f"Invalid LRS3 text/feature dimensions: {key}")
+                    unknown = sorted(set(text) - vocabulary.keys())
+                    if unknown:
+                        raise ValueError(f"LRS3 text has out-of-vocabulary characters for {key}: {unknown!r}")
+                    stem = row.get("relative_stem")
+                    if not isinstance(stem, str) or not stem.startswith(f"{split}/{source}/") or key != f"lrs3/{stem}":
+                        raise ValueError(f"LRS3 utterance key/path identity mismatch: {key}")
+                    check_paths()
+                    target, repeats, minimum = _ctc_lengths(text, vocabulary)
+                    feasible = frames >= minimum
+                    if (row.get("ctc_target_length") != target or row.get("ctc_adjacent_repeats") != repeats
+                            or row.get("ctc_min_input_frames") != minimum or row.get("ctc_feasible_40hz") is not feasible):
+                        raise ValueError(f"Invalid LRS3 40 Hz CTC metadata: {key}")
+                    feasible_count += int(feasible)
+                    total_frames += frames
+                    inventory_rows[key] = _record_digest(row)
+                    if split == self.split:
+                        self.records.append({field: row[field] for field in RUNTIME_FIELDS})
             if record_count != entry["count"]:
                 raise RuntimeError(f"LRS3 {split} record count differs from metadata")
             split_counts[split] = record_count
