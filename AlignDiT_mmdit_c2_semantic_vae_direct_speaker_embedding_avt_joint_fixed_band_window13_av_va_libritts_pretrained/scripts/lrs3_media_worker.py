@@ -29,6 +29,7 @@ from skimage.transform import estimate_transform
 VERSION = "lrs3_landmarks_mouth_avhubert_v1"
 PROJECT = Path(__file__).resolve().parents[1]
 STABLE = [33, 36, 39, 42, 45]
+DECODE_THREADS = 0
 
 
 def sha256(path):
@@ -72,8 +73,33 @@ def complete_segment_offsets(inventory, requested):
     return offsets
 
 
+def open_video(path):
+    """Bound FFmpeg threads when explicitly requested; zero preserves defaults."""
+    if DECODE_THREADS:
+        if not hasattr(cv2, "CAP_PROP_N_THREADS"):
+            raise RuntimeError("Explicit decoder threading requires CAP_PROP_N_THREADS")
+        return cv2.VideoCapture(str(path), cv2.CAP_FFMPEG,
+                                [cv2.CAP_PROP_N_THREADS, DECODE_THREADS])
+    return cv2.VideoCapture(str(path))
+
+
+def load_grayscale_video(path):
+    """Same uint8 BGR-to-gray decoding used by the original AV-HuBERT reader."""
+    cap = open_video(path)
+    frames = []
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+    finally:
+        cap.release()
+    return np.stack(frames)
+
+
 def read_frames(path, expected=None, dimensions=None):
-    cap = cv2.VideoCapture(str(path))
+    cap = open_video(path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video: {path}")
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -157,7 +183,7 @@ def verify_original_frame_mapping(original, frames, offset, total_count):
     """Check actual frame identity, not just equal aggregate durations."""
     if not original.exists():
         return {"landmark_mapping_evidence": "original_unavailable_frame_count_and_geometry"}
-    capture = cv2.VideoCapture(str(original))
+    capture = open_video(original)
     comparisons = []
     try:
         if int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) != total_count:
@@ -208,6 +234,8 @@ def load_reader(args):
     fairseq.utils.import_user_module(argparse.Namespace(user_dir=args.user_dir))
     from aligndit.script.misc import avhubert_utils
     from aligndit.script.misc.extract_avhubert_from_only_video import AVHubertFeatureReader
+    if DECODE_THREADS:
+        avhubert_utils.load_video = load_grayscale_video
     return AVHubertFeatureReader(args.checkpoint, custom_utils=avhubert_utils)
 
 
@@ -224,6 +252,10 @@ def media_protocol(checkpoint, mean_face):
 
 
 def main(args):
+    global DECODE_THREADS
+    DECODE_THREADS = getattr(args, "decode_threads", 0)
+    if DECODE_THREADS < 0:
+        raise ValueError("decode_threads must be nonnegative")
     cv2.setNumThreads(args.cpu_threads)
     root = Path(args.output_root)
     all_records = [json.loads(line) for line in Path(args.manifest).read_text().splitlines() if line.strip()]
@@ -378,6 +410,8 @@ if __name__ == "__main__":
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--cpu-threads", type=int, default=2)
+    parser.add_argument("--decode-threads", type=int, default=0,
+                        help="FFmpeg threads per video; zero preserves the decoder default")
     parser.add_argument("--stage", choices=["all", "crop", "features"], default="all")
     arguments = parser.parse_args()
     if not 0 <= arguments.shard < arguments.num_shards:

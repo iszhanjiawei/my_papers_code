@@ -7,6 +7,7 @@ import unittest
 import cv2
 import numpy as np
 
+import lrs3_media_worker as worker
 from lrs3_media_worker import (complete_segment_offsets, crop_mouth, interpolate_landmarks,
                               read_frames, valid_array, verify_original_frame_mapping)
 
@@ -70,6 +71,28 @@ class MediaWorkerTests(unittest.TestCase):
             self.assertEqual(metrics["landmark_mapping_evidence"], "decoded_original_first_middle_last_frames")
             with self.assertRaisesRegex(ValueError, "temporal mapping"):
                 verify_original_frame_mapping(path, frames[2:4], 1, 5)
+
+    def test_explicit_decoder_threads_preserve_reader_pixels_and_frame_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mouth.mp4"
+            writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 25, (96, 96))
+            generator = np.random.default_rng(74)
+            for _ in range(17):
+                writer.write(generator.integers(0, 256, (96, 96, 3), dtype=np.uint8))
+            writer.release()
+            previous = worker.DECODE_THREADS
+            try:
+                worker.DECODE_THREADS = 0
+                expected = np.stack([cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                                     for frame in worker.read_frames(path, 17, (96, 96))])
+                for count in (1, 2, 4):
+                    worker.DECODE_THREADS = count
+                    actual = worker.load_grayscale_video(path)
+                    self.assertEqual(actual.shape, (17, 96, 96))
+                    self.assertEqual(actual.dtype, np.uint8)
+                    np.testing.assert_array_equal(actual, expected)
+            finally:
+                worker.DECODE_THREADS = previous
 
 
 if __name__ == "__main__":

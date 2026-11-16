@@ -107,19 +107,24 @@ class Pipeline:
                            "updated_at": time.time(), "status": "running"})
         atomic_json(self.state_path, self.state)
 
-    def command(self, manifest, rank, count, repair=False):
+    def command(self, manifest, rank, count, repair=False, media_stage="all", cpu_threads=None,
+                decode_threads=None):
         script = "lrs3_media_worker_repair.py" if repair else "lrs3_media_worker.py"
         command = [sys.executable, "-u", str(SCRIPTS / script), "--manifest", str(manifest),
                    "--output-root", str(self.root), "--num-shards", str(count), "--shard", str(rank),
-                   "--cpu-threads", str(self.args.cpu_threads)]
+                   "--cpu-threads", str(cpu_threads or self.args.cpu_threads)]
         if not repair:
             command += ["--mean-face", self.args.mean_face, "--checkpoint", self.args.checkpoint,
                         "--inventory", self.args.inventory, "--landmark-root", self.args.landmark_root,
                         "--original-root", self.args.original_root,
-                        "--fairseq-root", self.args.fairseq_root, "--user-dir", self.args.user_dir]
+                        "--fairseq-root", self.args.fairseq_root, "--user-dir", self.args.user_dir,
+                        "--stage", media_stage]
+            if decode_threads is not None:
+                command += ["--decode-threads", str(decode_threads)]
         return command
 
-    def run_stage(self, name, rows, gpu_map, repair=False):
+    def run_stage(self, name, rows, gpu_map, repair=False, media_stage="all", separate_manifests=False,
+                  cpu_threads=None, decode_threads=None):
         manifest = self.manifests / (name + ".jsonl")
         save_manifest(manifest, rows)
         fingerprint = sha256(manifest)
@@ -135,26 +140,48 @@ class Pipeline:
         gpu_map = gpu_map[:min(len(rows), len(gpu_map))]
         count = len(gpu_map)
         stage = {"finished": False, "manifest_sha256": fingerprint, "requested": len(rows),
-                 "started_at": time.time(), "processes": [], "reports": []}
+                 "started_at": time.time(), "attempt_token": f"a{time.time_ns()}",
+                 "processes": [], "reports": []}
+        if previous:
+            self.state.setdefault("stage_attempt_history", {}).setdefault(name, []).append(previous)
         self.state["stages"][name] = stage
         self.state["active_stage"] = name
         children = []
+        attempt_name = f"{name}__{stage['attempt_token']}"
+        attempt_manifest = self.manifests / (attempt_name + ".jsonl")
+        if not separate_manifests:
+            save_manifest(attempt_manifest, rows)
         for rank, gpu in enumerate(gpu_map):
-            command = self.command(manifest, rank, count, repair)
+            child_manifest = attempt_manifest
+            child_rank, child_count = rank, count
+            if separate_manifests:
+                # CPU crop stages use small physical shards, avoiding dozens of
+                # copies of the complete source manifest in worker memory.
+                child_manifest = self.manifests / f"{attempt_name}_part{rank:02d}.jsonl"
+                save_manifest(child_manifest, rows[rank::count])
+                child_rank, child_count = 0, 1
+            command = self.command(child_manifest, child_rank, child_count, repair, media_stage,
+                                   cpu_threads, decode_threads)
             env = os.environ.copy()
-            env.update({"CUDA_VISIBLE_DEVICES": str(gpu), "OMP_NUM_THREADS": str(self.args.cpu_threads),
-                        "MKL_NUM_THREADS": str(self.args.cpu_threads), "PYTHONUNBUFFERED": "1",
+            threads = cpu_threads or self.args.cpu_threads
+            env.update({"CUDA_VISIBLE_DEVICES": str(gpu), "OMP_NUM_THREADS": str(threads),
+                        "MKL_NUM_THREADS": str(threads), "PYTHONUNBUFFERED": "1",
                         "PYTHONPATH": str(SCRIPTS.parent / "src")})
+            if media_stage == "crop":
+                env["OPENBLAS_NUM_THREADS"] = "1"
             log_path = self.logs / f"{name}_shard{rank}.log"
             log = log_path.open("a")
             process = subprocess.Popen(command, env=env, cwd=SCRIPTS.parent, stdout=log, stderr=subprocess.STDOUT,
                                        pass_fds=() if self.lock_fd is None else (self.lock_fd,))
-            suffix = f"_shard{rank}" if count > 1 else ""
-            report_name = (f"media_fan_repair_{name}{suffix}.jsonl" if repair
-                           else f"media_{name}_all_shard{rank}.jsonl")
+            suffix = f"_shard{child_rank}" if child_count > 1 else ""
+            report_name = (f"media_fan_repair_{child_manifest.stem}{suffix}.jsonl" if repair
+                           else f"media_{child_manifest.stem}_{media_stage}_shard{child_rank}.jsonl")
             stage["reports"].append(str(self.root / "reports" / report_name))
             receipt = {"pid": process.pid, "sid": os.getsid(process.pid), "gpu": gpu,
-                       "rank": rank, "command": command, "log": str(log_path)}
+                       "rank": rank, "command": command, "log": str(log_path),
+                       "manifest": str(child_manifest), "manifest_sha256": sha256(child_manifest),
+                       "report": str(self.root / "reports" / report_name),
+                       "expected_records": len(rows[rank::count])}
             stage["processes"].append(receipt)
             children.append((process, log, receipt))
             atomic_json(self.state_path, self.state)
@@ -174,12 +201,30 @@ class Pipeline:
             atomic_json(self.state_path, self.state)
             if pending:
                 time.sleep(5)
-        # Per-item failures legitimately return 1. A missing summary indicates a
-        # crashed/initialization-failed worker; preserve state and stop for review.
+        # Each attempt has unique reports. A stale prior summary can never make
+        # a crashed worker appear complete; per-item failures may return 1.
         missing_summaries = [str(Path(p).with_suffix(".summary.json")) for p in stage["reports"]
                              if not Path(p).with_suffix(".summary.json").exists()]
         if missing_summaries:
             raise RuntimeError(f"Workers did not finish their reports: {missing_summaries}")
+        for receipt in stage["processes"]:
+            summary = json.loads(Path(receipt["report"]).with_suffix(".summary.json").read_text())
+            expected = {row["relative_stem"] for row in rows[receipt["rank"]::count]}
+            results = self.latest_results([receipt["report"]])
+            counts = Counter(row["status"] for row in results.values())
+            if (receipt["exit_code"] not in (0, 1) or set(results) != expected
+                    or summary.get("requested") != len(expected)
+                    or summary.get("succeeded") != counts["ok"]
+                    or summary.get("failed") != counts["failed"]
+                    or counts["ok"] + counts["failed"] != len(expected)
+                    or receipt["exit_code"] != int(counts["failed"] > 0)):
+                raise RuntimeError(f"Worker completion/coverage mismatch: {receipt}")
+            if not repair:
+                protocol = json.loads(Path(receipt["report"]).with_suffix(".protocol.json").read_text())
+                if (summary.get("protocol_sha256") != self.protocol_hash
+                        or protocol.get("protocol_sha256") != self.protocol_hash
+                        or protocol.get("manifest_sha256") != receipt["manifest_sha256"]):
+                    raise RuntimeError(f"Worker completion protocol/manifest mismatch: {receipt}")
         stage.update({"finished": True, "finished_at": time.time()})
         atomic_json(self.state_path, self.state)
         return stage["reports"]
@@ -204,6 +249,12 @@ class Pipeline:
         long = [row for row in rows if row["video_frames"] > 750]
         gpu_map = args.gpu_map.split(",")
         repair_gpus = args.repair_gpus.split(",")
+        if args.crop_workers:
+            # This stage finishes before any GPU media writer starts. Existing
+            # verified receipts are reused, including complete AV feature caches.
+            self.run_stage("full_media_cpu_crop", [row for row in rows if row["width"] == 224],
+                           [""] * args.crop_workers, media_stage="crop", separate_manifests=True,
+                           cpu_threads=1, decode_threads=args.crop_decode_threads)
         first_paths = self.run_stage("full_media_regular", regular, gpu_map)
         first_paths += self.run_stage("full_media_long", long, [args.long_gpu])
         first = self.latest_results(first_paths)
@@ -291,6 +342,9 @@ if __name__ == "__main__":
     parser.add_argument("--repair-gpus", default="0,1,3")
     parser.add_argument("--long-gpu", default="0")
     parser.add_argument("--cpu-threads", type=int, default=2)
+    parser.add_argument("--crop-workers", type=int, default=0,
+                        help="Run a separate CPU face-to-mouth stage before GPU extraction")
+    parser.add_argument("--crop-decode-threads", type=int, default=2)
     parser.add_argument("--verify-workers", type=int, default=12)
     parser.add_argument("--verify-decoder-threads", type=int, default=2)
     parser.add_argument("--expected-protocol-sha256", default="29d918bfbcb10e9bca98b1ff283c273618231f57159983d236d5f4b367df720f")
@@ -301,6 +355,8 @@ if __name__ == "__main__":
     parser.add_argument("--fairseq-root", default=prefix + "/zjw524/projects/data/av_hubert/fairseq/fairseq")
     parser.add_argument("--user-dir", default=prefix + "/zjw524/projects/data/av_hubert/avhubert/avhubert")
     arguments = parser.parse_args()
+    if arguments.crop_workers < 0 or arguments.crop_decode_threads < 1:
+        parser.error("crop-workers must be nonnegative and crop-decode-threads positive")
     state_root = Path(arguments.output_root) / "state"
     lock_path = state_root / "locks" / "media.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
