@@ -173,6 +173,7 @@ def main():
     write_jsonl(out/'manifests/source_inventory.jsonl', rows)
     write_jsonl(out/'manifests/pilot.jsonl', pilot)
     write_json(marker, {'schema_version':1,'input_sha256':identities,'source_media_pairs':len(rows),
+                        'source_inventory_sha256':digest(out/'manifests/source_inventory.jsonl'),
                         'original_clip_count':151819,'purpose':'audited source inventory; not training-ready',
                         'base_posterior_seed':666,'normalization':'pinned LibriSpeech train statistics',
                         'vocab_sha256':digest(args.vocab)})

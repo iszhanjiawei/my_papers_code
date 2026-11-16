@@ -5,6 +5,7 @@ import argparse
 import collections
 import csv
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -59,6 +60,31 @@ def check_pseudo_label(label, row, text_policy):
 def read_rows(path):
     with Path(path).open() as f:
         return [json.loads(l) for l in f if l.strip()]
+
+
+def read_rows_snapshot(path):
+    payload = Path(path).read_bytes()
+    return [json.loads(line) for line in payload.splitlines() if line.strip()], hashlib.sha256(payload).hexdigest()
+
+
+def frozen_recovery(path, source_hash, missing_pairs, missing_groups):
+    labels, fingerprint = read_rows_snapshot(path)
+    frozen_path = path.parent / 'frozen_export.json'
+    frozen_bytes = frozen_path.read_bytes()
+    frozen = json.loads(frozen_bytes)
+    summary = frozen.get('summary', {})
+    if (summary.get('processing_complete') is not True or summary.get('pending_segments') != 0 or
+        summary.get('groups_requested') != missing_groups or
+        summary.get('groups_complete') != missing_groups or
+        summary.get('segments_requested') != missing_pairs or
+        frozen.get('source_manifest_sha256') != source_hash or
+        frozen.get('files', {}).get(path.name) != fingerprint):
+        raise ValueError('Recovery labels are not a complete frozen export for this source scope')
+    accounted = sum(summary.get(key, 0) for key in
+                    ['strict_segments','pseudo_p1_segments','pseudo_p2_candidate_segments','excluded_segments'])
+    if accounted != missing_pairs:
+        raise ValueError('Frozen recovery export does not account for every requested segment')
+    return labels, fingerprint, frozen_path, hashlib.sha256(frozen_bytes).hexdigest()
 
 
 def text_policy_contract(root, policy, baseline):
@@ -214,7 +240,22 @@ def main():
     policy, baseline_path = text_policy_contract(args.root,args.text_policy,args.strict_baseline)
     if baseline_path is not None and baseline_path.resolve()==manifest_dir.resolve():
         raise ValueError('An extension cannot overwrite its strict baseline')
-    rows=read_rows(args.source_manifest)
+    rows,source_hash=read_rows_snapshot(args.source_manifest)
+    input_pins={str(args.source_manifest):source_hash}
+    source_contract_hash=None
+    if args.mode=='full':
+        contract_path=args.root/'reports/source_contract.json'
+        contract_bytes=contract_path.read_bytes()
+        contract=json.loads(contract_bytes)
+        source_contract_hash=hashlib.sha256(contract_bytes).hexdigest()
+        canonical=args.root/'manifests/source_inventory.jsonl'
+        if (source_hash!=contract.get('source_inventory_sha256') or digest(canonical)!=source_hash or
+            len(rows)!=contract['source_media_pairs'] or
+            len({r['original_clip_id'] for r in rows})!=contract['original_clip_count']):
+            raise ValueError('Full source inventory differs from the canonical source contract')
+        input_pins.update({str(contract_path):source_contract_hash,str(canonical):source_hash})
+        if any(not r['text'] for r in rows) and not args.recovered_labels:
+            raise ValueError('Full publication requires completed text recovery accounting for missing transcripts')
     for key in ['sample_id','utterance_key','relative_stem']:
         if len({r[key] for r in rows})!=len(rows):raise ValueError(f'Duplicate source {key}')
     source_videos={s:{r['original_clip_id'].split('/')[1] for r in rows if r['split']==s}
@@ -224,8 +265,18 @@ def main():
     recovered={}
     checked_evidence=set()
     known_source_ids={r['sample_id'] for r in rows}
+    missing_pairs=sum(not r['text'] for r in rows)
+    missing_groups=len({r['original_clip_id'] for r in rows if not r['text']})
+    label_pins=[]
     for path in args.recovered_labels:
-        for r in read_rows(path):
+        if args.mode=='full':
+            labels,fingerprint,frozen_path,frozen_hash=frozen_recovery(path,source_hash,missing_pairs,missing_groups)
+            input_pins[str(frozen_path)]=frozen_hash
+        else:
+            labels,fingerprint=read_rows_snapshot(path)
+        input_pins[str(path)]=fingerprint
+        label_pins.append({'path':str(path),'sha256':fingerprint})
+        for r in labels:
             if r.get('accepted') is True:
                 if r['sample_id'] not in known_source_ids:raise ValueError('Recovery label outside requested source scope')
                 if r.get('source_kind')=='asr_pseudo' and args.text_policy!='source_plus_asr_pseudo':
@@ -239,7 +290,7 @@ def main():
                 if previous and clean_text(previous['text'])!=clean_text(r['text']):
                     raise ValueError(f'Conflicting accepted recovery labels: {r["sample_id"]}')
                 recovered[r['sample_id']]=r
-    policy['recovered_label_files']=[{'path':str(p),'sha256':digest(p)} for p in args.recovered_labels]
+    policy['recovered_label_files']=label_pins
     vocab_path=Path(prefix+'/zjw524/projects/data/CelebVDub_char/vocab.txt')
     vocabulary={c:i for i,c in enumerate(vocab_path.read_text().splitlines())}
     accepted=[]; quality=[]; reasons_count=collections.Counter(); originals={}
@@ -279,9 +330,16 @@ def main():
     if not accepted:raise RuntimeError('No training-ready samples; no manifest published')
     if baseline_path is not None:
         accepted_by_id={r['sample_id']:r for r in accepted}
+        baseline_ids=set()
         for previous in read_rows(baseline_path/'inventory.jsonl'):
+            baseline_ids.add(previous['sample_id'])
             if accepted_by_id.get(previous['sample_id'])!=previous:
                 raise ValueError('Pseudo extension changed or removed a strict baseline record')
+        if any(r['source_kind']!='asr_pseudo' or r['split']!='train'
+               for sid,r in accepted_by_id.items() if sid not in baseline_ids):
+            raise ValueError('A pseudo extension may only add explicitly marked training pseudo labels')
+    for path,fingerprint in input_pins.items():
+        if digest(path)!=fingerprint:raise ValueError('A publication input changed during the cache audit')
     entries={};split_counts={}
     for split in ['train','valid','test']:
         selected=[r for r in accepted if r['split']==split]
@@ -301,7 +359,8 @@ def main():
                         for s in ['train','valid','test']}
     meta={'schema_version':1,'dataset':'LRS3','status':'complete','selection':{'mode':args.mode},
           'text_policy':args.text_policy,'text_policy_sha256':policy_sha,'source_kind_counts':source_kind_counts,
-          'manifests':entries,'latent_spec':LATENT_SPEC,'source_manifest_sha256':digest(args.source_manifest),
+          'manifests':entries,'latent_spec':LATENT_SPEC,'source_manifest_sha256':source_hash,
+          'source_contract_sha256':source_contract_hash,'source_original_ids':len(originals),
           'source_pairs':len(rows),'training_ready_pairs':len(accepted),'excluded_pairs':len(rows)-len(accepted),
           'all_requested_source_pairs_ready':len(accepted)==len(rows),'vocab_sha256':digest(vocab_path)}
     write_json(manifest_dir/'inventory_meta.json',meta)
@@ -317,6 +376,7 @@ def main():
     write_json(speaker_dir/'metadata.json',speaker);write_json(speaker_dir/'coverage_report.json',coverage)
     total_frames=sum(r['latent_frames'] for r in accepted)
     receipt={'schema_version':1,'status':'complete','selection':{'mode':args.mode},
+             'source_contract_sha256':source_contract_hash,'source_original_ids':len(originals),
              'text_policy':args.text_policy,'text_policy_sha256':policy_sha,
              'inventory_sha256':digest(inv),'count':len(accepted),'features':{
                  'latents':{'feature':'semantic_vae_posterior_sample_v1','count':len(accepted),'total_frames':total_frames},
@@ -356,7 +416,8 @@ def main():
              'excluded_audio_hours':sum(q['audio_seconds'] for q in quality if not q['ready'])/3600,
              'pending_reasons':dict(reasons_count),'original_ids':len(originals),
              'fully_covered_original_ids':sum(o['fully_covered'] for o in originals.values()),
-             'manifest_dir':str(manifest_dir),'source_manifest_sha256':digest(args.source_manifest),
+             'manifest_dir':str(manifest_dir),'source_manifest_sha256':source_hash,
+             'source_contract_sha256':source_contract_hash,'publication_input_pins':input_pins,
              'source_videos_by_split':{s:len(v) for s,v in source_videos.items()},
              'test_source_video_overlap_count':0,
              'train_valid_source_video_overlap_count':len(source_videos['train']&source_videos['valid']),
@@ -364,6 +425,8 @@ def main():
                             'Duration and feature-length agreement alone do not prove lip/audio synchronization.',
                             'Completion receipt covers only the published accepted inventory; exclusions remain explicit.']}
     write_json(args.root/f'reports/{args.name}_readiness.json',summary)
+    for path,fingerprint in input_pins.items():
+        if digest(path)!=fingerprint:raise ValueError('A publication input changed before completion')
     write_json(manifest_dir/'cache_completion.json',receipt) # Publication completion marker is last.
     print(json.dumps(summary,ensure_ascii=False,indent=2),flush=True)
 

@@ -83,6 +83,11 @@ class PublicationIntegrityTests(unittest.TestCase):
     def run_publication(self, rows):
         source = self.root / "source.jsonl"
         write_jsonl(source, rows)
+        write_jsonl(self.root / 'manifests/source_inventory.jsonl', rows)
+        write_json(self.root / 'reports/source_contract.json', {
+            'source_inventory_sha256': digest(source), 'source_media_pairs': len(rows),
+            'original_clip_count': len({row['original_clip_id'] for row in rows}),
+        })
         return subprocess.run([sys.executable, str(Path(finalizer.__file__)), "--root", str(self.root),
                                "--source-manifest", str(source), "--name", "test_publication", "--mode", "full"],
                               capture_output=True, text=True, timeout=30)
@@ -199,8 +204,56 @@ class PublicationIntegrityTests(unittest.TestCase):
         write_jsonl(self.root / 'source.jsonl', [changed])
         extension = self.run_extension()
         self.assertNotEqual(extension.returncode, 0)
-        self.assertIn('changed or removed a strict baseline record', extension.stderr)
+        self.assertIn('Full source inventory differs', extension.stderr)
         self.assertFalse((self.root / 'manifests/extension/cache_completion.json').exists())
+
+    def test_full_cannot_publish_a_subset_as_complete_source_scope(self):
+        strict = self.run_publication([self.row])
+        self.assertEqual(strict.returncode, 0, strict.stderr)
+        write_jsonl(self.root / 'source.jsonl', [])
+        extension = self.run_extension()
+        self.assertNotEqual(extension.returncode, 0)
+        self.assertIn('Full source inventory differs', extension.stderr)
+
+    def test_full_missing_text_requires_completed_recovery_accounting(self):
+        self.row['text'] = ''
+        result = self.run_publication([self.row])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requires completed text recovery', result.stderr)
+
+    def frozen_bundle(self):
+        labels = self.root / 'release/labels.strict.accepted.jsonl'
+        write_jsonl(labels, [{'sample_id': 'one', 'text': 'hello'}])
+        frozen = {'source_manifest_sha256': 'a' * 64, 'files': {labels.name: digest(labels)},
+                  'summary': {'processing_complete': True, 'pending_segments': 0,
+                              'groups_requested': 1, 'groups_complete': 1, 'segments_requested': 2,
+                              'strict_segments': 1, 'pseudo_p1_segments': 0,
+                              'pseudo_p2_candidate_segments': 0, 'excluded_segments': 1}}
+        path = labels.parent / 'frozen_export.json'
+        write_json(path, frozen)
+        return labels, path, frozen
+
+    def test_frozen_recovery_uses_the_same_bytes_for_rows_and_hash(self):
+        path, frozen_path, _ = self.frozen_bundle()
+        rows, fingerprint, actual_frozen, frozen_hash = finalizer.frozen_recovery(path, 'a' * 64, 2, 1)
+        self.assertEqual(rows[0]['text'], 'hello')
+        self.assertEqual(fingerprint, digest(path))
+        self.assertEqual(actual_frozen, frozen_path)
+        self.assertEqual(frozen_hash, digest(frozen_path))
+        write_jsonl(path, [{'sample_id': 'one', 'text': 'changed'}])
+        with self.assertRaisesRegex(ValueError, 'complete frozen export'):
+            finalizer.frozen_recovery(path, 'a' * 64, 2, 1)
+
+    def test_unfinished_or_wrong_scope_recovery_cannot_be_frozen_for_publication(self):
+        path, frozen_path, frozen = self.frozen_bundle()
+        frozen['summary']['processing_complete'] = False
+        write_json(frozen_path, frozen)
+        with self.assertRaisesRegex(ValueError, 'complete frozen export'):
+            finalizer.frozen_recovery(path, 'a' * 64, 2, 1)
+        frozen['summary']['processing_complete'] = True
+        write_json(frozen_path, frozen)
+        with self.assertRaisesRegex(ValueError, 'complete frozen export'):
+            finalizer.frozen_recovery(path, 'a' * 64, 3, 1)
 
     def test_duplicate_source_identity_rejected_before_publication(self):
         result = self.run_publication([self.row, self.row])
