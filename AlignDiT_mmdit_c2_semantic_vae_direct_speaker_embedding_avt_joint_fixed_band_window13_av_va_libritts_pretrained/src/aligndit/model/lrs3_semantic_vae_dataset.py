@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +37,88 @@ LATENT_SPEC = {
     "dimension": 64, "dtype": "float32", "frame_rate_hz": 40.0,
     "hop_length_samples": 400, "mode": "fixed_posterior_sample", "sample_rate": 16000,
 }
+SOURCE_KINDS = {
+    "existing_transcript", "source_asr_consensus", "source_asr_mfa_consensus",
+    "source_asr_ctc_consensus", "asr_pseudo",
+}
+TEXT_POLICIES = {"source_grounded", "source_plus_asr_pseudo"}
+
+
+def _text_policy(root, manifest_dir, meta, expected):
+    """Validate the label policy independently of the source-coverage scope."""
+    if expected not in TEXT_POLICIES:
+        raise ValueError(f"Unknown LRS3 text policy: {expected}")
+    if "text_policy" not in meta:
+        if meta["selection"] == {"mode": "pilot"} and expected == "source_grounded":
+            return None, None, None, []
+        raise RuntimeError("Full LRS3 publication requires an explicit text policy")
+    path = _regular_file(manifest_dir / "text_policy.json", label="LRS3 text policy")
+    fingerprint = sha256_file(path)
+    policy = _read_json(path, label="LRS3 text policy")
+    json.dumps(policy, allow_nan=False)
+    if (meta["text_policy"] != expected or meta.get("text_policy_sha256") != fingerprint
+            or policy.get("schema_version") != 1 or policy.get("policy") != expected
+            or policy.get("version") != "lrs3_text_policy_v1"):
+        raise RuntimeError("LRS3 text policy identity/hash mismatch")
+    artifacts = [path]
+    baseline = policy.get("strict_baseline")
+    if expected == "source_grounded":
+        if policy.get("pseudo_scope") != "none" or baseline is not None:
+            raise RuntimeError("Strict LRS3 policy cannot authorize pseudo labels")
+        return policy, fingerprint, None, artifacts
+    if (policy.get("pseudo_scope") != "train_only" or not isinstance(baseline, dict)
+            or baseline.get("manifest_dir") != "manifests/full"):
+        raise RuntimeError("Pseudo LRS3 policy requires a pinned strict baseline and train-only scope")
+    baseline_dir = _safe_join(root, baseline["manifest_dir"], label="strict LRS3 baseline")
+    if baseline_dir.resolve() == manifest_dir.resolve():
+        raise RuntimeError("Pseudo LRS3 publication must be separate from its strict baseline")
+    for filename, field in (("inventory_meta.json", "inventory_meta_sha256"),
+                            ("inventory.jsonl", "inventory_sha256"), ("train.jsonl", "train_sha256"),
+                            ("valid.jsonl", "valid_sha256"), ("test.jsonl", "test_sha256"),
+                            ("text_policy.json", "text_policy_sha256")):
+        artifact = _regular_file(baseline_dir / filename, label="pinned strict LRS3 baseline")
+        if sha256_file(artifact) != baseline.get(field):
+            raise RuntimeError(f"Strict LRS3 baseline hash mismatch: {filename}")
+        artifacts.append(artifact)
+    strict_meta = _read_json(baseline_dir / "inventory_meta.json", label="strict baseline metadata")
+    strict_policy = _read_json(baseline_dir / "text_policy.json", label="strict baseline text policy")
+    if (strict_meta.get("status") != "complete" or strict_meta.get("selection") != {"mode": "full"}
+            or strict_meta.get("text_policy") != "source_grounded"
+            or strict_meta.get("text_policy_sha256") != baseline["text_policy_sha256"]
+            or strict_policy.get("policy") != "source_grounded"
+            or strict_policy.get("pseudo_scope") != "none" or strict_policy.get("strict_baseline") is not None):
+        raise RuntimeError("Pseudo publication baseline is not a complete strict publication")
+    for split in ("valid", "test"):
+        if meta["manifests"][f"{split}.jsonl"]["sha256"] != baseline[f"{split}_sha256"]:
+            raise RuntimeError(f"Pseudo publication changed the strict {split} split")
+    return policy, fingerprint, baseline_dir, artifacts
+
+
+def _validate_pseudo_label(row, root, evidence_hashes):
+    if (row["split"] != "train" or row.get("independent_content_verified") is not False
+            or not isinstance(row.get("acceptance_policy_version"), str)
+            or not row["acceptance_policy_version"].strip()):
+        raise ValueError("Pseudo labels require train-only scope and explicit unverified provenance")
+    confidence = row.get("confidence")
+    if (not isinstance(confidence, dict) or not confidence
+            or any(type(value) not in (int, float) or not math.isfinite(value) for value in confidence.values())):
+        raise ValueError("Pseudo label confidence must contain finite numeric measurements")
+    references = row.get("evidence_refs")
+    if not isinstance(references, list) or not references:
+        raise ValueError("Pseudo labels require hashed evidence references")
+    for reference in references:
+        if (not isinstance(reference, dict) or not isinstance(reference.get("path"), str)
+                or not reference["path"] or not isinstance(reference.get("sha256"), str)):
+            raise ValueError("Malformed pseudo-label evidence reference")
+        path = Path(reference["path"])
+        if not path.is_absolute():
+            path = _safe_join(root, reference["path"], label="pseudo-label evidence")
+        path = _regular_file(path, label="pseudo-label evidence")
+        actual = evidence_hashes.get(path)
+        if actual is None:
+            actual = evidence_hashes[path] = sha256_file(path)
+        if actual != reference["sha256"]:
+            raise RuntimeError(f"Pseudo-label evidence hash mismatch: {path}")
 
 
 def _validate_entry(path: Path, entry: dict) -> str:
@@ -102,6 +186,7 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
         expected_inventory_meta_sha256: str | None = None,
         expected_record_count: int | None = None,
         expected_selection: str = "full",
+        expected_text_policy: str = "source_grounded",
         speaker_embedding_dim: int = 192,
         speaker_embedding_cache_dir: str | Path | None = None,
     ):
@@ -132,6 +217,9 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
         }:
             raise ValueError("LRS3 metadata requires train, valid, test and inventory manifests")
         digests = {name: _validate_entry(manifest_dir / name, entry) for name, entry in entries.items()}
+        policy, policy_digest, baseline_dir, self.text_policy_artifact_paths = _text_policy(
+            self.cache_root, manifest_dir, meta, expected_text_policy,
+        )
         for expected, actual, label in (
             (expected_manifest_sha256, digests[self.manifest_path.name], "selected split"),
             (expected_inventory_sha256, digests["inventory.jsonl"], "inventory"),
@@ -160,11 +248,13 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
             raise RuntimeError("LRS3 vocabulary SHA256 mismatch")
 
         original_splits, inventory_rows = {}, {}
+        kind_counts, pseudo_keys, evidence_hashes = {}, set(), {}
         split_counts, total_frames = {}, 0
         self.records = []
         for split in ("train", "valid", "test"):
             entry = entries[f"{split}.jsonl"]
             feasible_count, record_count = 0, 0
+            source_kinds = Counter()
             for row in _iter_jsonl(manifest_dir / f"{split}.jsonl"):
                 record_count += 1
                 key, text, frames = row.get("utterance_key"), row.get("text"), row.get("latent_frames")
@@ -174,6 +264,18 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
                     raise ValueError(f"Invalid or duplicate LRS3 record identity: {key!r}")
                 if (source == "test") != (split == "test"):
                     raise ValueError(f"Official LRS3 test membership changed: {key}")
+                kind = row.get("source_kind")
+                if policy is not None:
+                    if kind not in SOURCE_KINDS:
+                        raise ValueError(f"Unknown or missing LRS3 label source_kind: {key}")
+                    if kind == "asr_pseudo":
+                        if expected_text_policy != "source_plus_asr_pseudo":
+                            raise ValueError("Strict LRS3 publication cannot contain pseudo labels")
+                        _validate_pseudo_label(row, self.cache_root, evidence_hashes)
+                        pseudo_keys.add(key)
+                    source_kinds[kind] += 1
+                elif kind == "asr_pseudo":
+                    raise ValueError("Legacy pilot cannot authorize pseudo labels")
                 original_key = (source, original)
                 if original_splits.setdefault(original_key, split) != split:
                     raise ValueError(f"LRS3 original clip leaks across splits: {original_key}")
@@ -206,6 +308,7 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
             if record_count != entry["count"]:
                 raise RuntimeError(f"LRS3 {split} record count differs from metadata")
             split_counts[split] = record_count
+            kind_counts[split] = dict(source_kinds)
             if (entry.get("ctc_feasible_count") != feasible_count
                     or entry.get("ctc_infeasible_count") != record_count - feasible_count):
                 raise RuntimeError(f"LRS3 {split} CTC counts differ from metadata")
@@ -214,6 +317,21 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
                 self.ctc_infeasible_count = record_count - feasible_count
         if not self.records or (expected_record_count is not None and len(self.records) != expected_record_count):
             raise RuntimeError("LRS3 selected split is empty or differs from expected count")
+        if policy is not None and meta.get("source_kind_counts") != kind_counts:
+            raise RuntimeError("LRS3 label source-kind counts differ from metadata")
+        if baseline_dir is not None:
+            strict_count, strict_keys = 0, set()
+            for row in _iter_jsonl(baseline_dir / "train.jsonl"):
+                key = row.get("utterance_key")
+                if (key in strict_keys or row.get("split") != "train"
+                        or row.get("source_kind") not in SOURCE_KINDS - {"asr_pseudo"}
+                        or inventory_rows.get(key) != _record_digest(row)):
+                    raise RuntimeError(f"Pseudo publication removed or changed a strict training record: {key}")
+                strict_keys.add(key)
+                strict_count += 1
+            if (strict_keys & pseudo_keys or split_counts["train"] != strict_count + len(pseudo_keys)):
+                raise RuntimeError("Pseudo publication may only add explicit pseudo labels to strict training")
+            del strict_keys
         inventory_count = 0
         for row in _iter_jsonl(manifest_dir / "inventory.jsonl"):
             inventory_count += 1
@@ -231,6 +349,9 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
                 or receipt.get("inventory_sha256") != digests["inventory.jsonl"]
                 or receipt.get("count") != inventory_count):
             raise RuntimeError("LRS3 cache receipt does not certify this exact inventory")
+        if policy is not None and (receipt.get("text_policy") != expected_text_policy
+                or receipt.get("text_policy_sha256") != policy_digest):
+            raise RuntimeError("LRS3 cache receipt does not certify this text policy")
         features = receipt.get("features", {})
         for name, feature in (("latents", SEMANTIC_VAE_FEATURE), ("video_40hz", VIDEO_40HZ_FEATURE)):
             part = features.get(name, {})
@@ -272,6 +393,9 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
         }
         self.data_contract = {
             "dataset": "LRS3", "selection": meta["selection"], "split": self.split,
+            **({"text_policy": expected_text_policy, "text_policy_sha256": policy_digest,
+                "source_kind_counts": kind_counts, "strict_baseline": policy.get("strict_baseline")}
+               if policy is not None else {}),
             "inventory_meta_sha256": meta_digest, "manifest_sha256": digests[self.manifest_path.name],
             "inventory_sha256": digests["inventory.jsonl"], "cache_completion_sha256": sha256_file(receipt_path),
             "normalization_sha256": expected_normalization_sha256, "vocab_sha256": vocab_digest,
@@ -279,6 +403,12 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
             "ctc_feasible_count": self.ctc_feasible_count, "ctc_infeasible_count": self.ctc_infeasible_count,
             "speaker": self.speaker_embedding_contract,
         }
+        # The launcher pins every unique evidence file; training constructors
+        # verify hashes without retaining full transcript/probability payloads.
+        self.text_evidence_artifacts = [
+            {"path": str(path.resolve()), "sha256": fingerprint, "size_bytes": path.stat().st_size}
+            for path, fingerprint in sorted(evidence_hashes.items())
+        ]
 
     def _load_speaker_embedding_array(self, record: dict) -> np.ndarray:
         path = _safe_join(self.cache_root, record["speaker_relative_path"], label="LRS3 speaker embedding")

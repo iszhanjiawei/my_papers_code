@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
+from copy import deepcopy
 from pathlib import Path
 import tempfile
 import unittest
@@ -63,6 +65,8 @@ class LRS3ContractTests(unittest.TestCase):
         path.write_text(json.dumps(value) + "\n")
 
     def freeze(self):
+        selection = {"mode": getattr(self, "selection", "pilot")}
+        self.manifests.mkdir(parents=True, exist_ok=True)
         entries, counts = {}, {}
         for name in ("train", "valid", "test", "inventory"):
             rows = self.rows if name == "inventory" else [row for row in self.rows if row["split"] == name]
@@ -74,9 +78,17 @@ class LRS3ContractTests(unittest.TestCase):
                 entry["ctc_infeasible_count"] = len(rows) - entry["ctc_feasible_count"]
                 counts[name] = len(rows)
             entries[path.name] = entry
+        policy_fields = {}
+        if getattr(self, "policy", None) is not None:
+            self.write(self.manifests / "text_policy.json", self.policy)
+            policy_fields = {"text_policy": self.policy["policy"],
+                             "text_policy_sha256": sha256_file(self.manifests / "text_policy.json")}
         self.write(self.manifests / "inventory_meta.json", {
             "schema_version": 1, "dataset": "LRS3", "status": "complete",
-            "selection": {"mode": "pilot"}, "latent_spec": LATENT_SPEC, "manifests": entries,
+            "selection": selection, "latent_spec": LATENT_SPEC, "manifests": entries,
+            **policy_fields,
+            **({"source_kind_counts": {split: dict(Counter(row["source_kind"] for row in self.rows if row["split"] == split))
+                                     for split in ("train", "valid", "test")}} if policy_fields else {}),
         })
         speaker_dir = self.manifests / "speaker_contract"
         self.write(speaker_dir / "metadata.json", {
@@ -93,7 +105,8 @@ class LRS3ContractTests(unittest.TestCase):
         })
         total = sum(row["latent_frames"] for row in self.rows)
         self.write(self.manifests / "cache_completion.json", {
-            "schema_version": 1, "status": "complete", "selection": {"mode": "pilot"},
+            "schema_version": 1, "status": "complete", "selection": selection,
+            **policy_fields,
             "inventory_sha256": entries["inventory.jsonl"]["sha256"], "count": len(self.rows),
             "features": {
                 "latents": {"feature": SEMANTIC_VAE_FEATURE, "count": len(self.rows), "total_frames": total},
@@ -109,10 +122,47 @@ class LRS3ContractTests(unittest.TestCase):
             manifest_path=self.manifests / "train.jsonl", cache_root=self.root,
             normalization_path=self.norm, vocab_path=self.vocab,
             expected_normalization_sha256=sha256_file(self.norm), expected_vocab_sha256=sha256_file(self.vocab),
-            expected_selection="pilot", speaker_embedding_model_id="fixture",
+            expected_selection=getattr(self, "selection", "pilot"), speaker_embedding_model_id="fixture",
             speaker_embedding_checkpoint_sha256="fixture",
+            expected_text_policy=self.policy["policy"] if getattr(self, "policy", None) else "source_grounded",
         )
         return SemanticVaeLRS3Dataset(**(kwargs | overrides))
+
+    def strict_publication(self):
+        self.selection = "full"
+        self.manifests = self.root / "manifests/full"
+        self.policy = {"schema_version": 1, "policy": "source_grounded", "version": "lrs3_text_policy_v1",
+                       "pseudo_scope": "none", "strict_baseline": None}
+        for row in self.rows:
+            row["source_kind"] = "existing_transcript"
+        self.freeze()
+
+    def pseudo_publication(self):
+        self.strict_publication()
+        baseline = {"manifest_dir": "manifests/full"}
+        for filename, field in (("inventory_meta.json", "inventory_meta_sha256"),
+                                ("inventory.jsonl", "inventory_sha256"), ("train.jsonl", "train_sha256"),
+                                ("valid.jsonl", "valid_sha256"), ("test.jsonl", "test_sha256"),
+                                ("text_policy.json", "text_policy_sha256")):
+            baseline[field] = sha256_file(self.manifests / filename)
+        self.manifests = self.root / "manifests/full_pseudo"
+        self.policy = {"schema_version": 1, "policy": "source_plus_asr_pseudo", "version": "lrs3_text_policy_v1",
+                       "pseudo_scope": "train_only", "strict_baseline": baseline}
+        row = deepcopy(self.rows[0])
+        row.update(original_clip_id="five", relative_stem="train/pretrain/five", utterance_key="lrs3/train/pretrain/five",
+                   source_kind="asr_pseudo", independent_content_verified=False, acceptance_policy_version="asr_policy_v1",
+                   confidence={"min_word_probability": .8, "mean_word_probability": .9, "avg_logprob": -.1})
+        evidence = self.root / "evidence/pseudo.json"
+        self.write(evidence, {"independent_clip_decode": "aa"})
+        row["evidence_refs"] = [{"path": str(evidence), "sha256": sha256_file(evidence)}]
+        for field in ("latent_relative_path", "video_40hz_relative_path", "speaker_relative_path", "audio_relative_path"):
+            old = row[field]
+            row[field] = old.replace("/one.", "/five.")
+            source = self.root / old
+            if source.exists():
+                (self.root / row[field]).write_bytes(source.read_bytes())
+        self.rows.append(row)
+        self.freeze()
 
     def test_load_normalize_pad_and_keep_ctc_infeasible(self):
         data = self.dataset()
@@ -225,6 +275,108 @@ class LRS3ContractTests(unittest.TestCase):
         self.write(meta_path, meta)
         with self.assertRaisesRegex(ValueError, "inventory row differs"):
             self.dataset()
+
+    def test_full_requires_explicit_text_policy(self):
+        self.selection = "full"
+        self.freeze()
+        with self.assertRaisesRegex(RuntimeError, "explicit text policy"):
+            self.dataset()
+
+    def test_strict_full_policy_and_counts(self):
+        self.strict_publication()
+        data = self.dataset()
+        self.assertEqual(data.data_contract["text_policy"], "source_grounded")
+        self.assertEqual(data.data_contract["source_kind_counts"]["train"], {"existing_transcript": 2})
+        self.assertEqual(data.audit_cache()["count"], 2)
+
+    def test_strict_publication_cannot_relabel_pseudo_as_accepted(self):
+        self.strict_publication()
+        self.rows[0]["source_kind"] = "asr_pseudo"
+        self.freeze()
+        with self.assertRaisesRegex(ValueError, "cannot contain pseudo"):
+            self.dataset()
+
+    def test_pseudo_publication_preserves_strict_rows_and_uses_all_existing_cache_checks(self):
+        self.pseudo_publication()
+        data = self.dataset()
+        self.assertEqual(len(data), 3)
+        self.assertEqual(data.data_contract["source_kind_counts"]["train"], {"existing_transcript": 2, "asr_pseudo": 1})
+        self.assertEqual(len(data.text_evidence_artifacts), 1)
+        self.assertNotIn("confidence", data.records[-1])
+        self.assertEqual(data.audit_cache()["total_frames"], 10)
+        with self.assertRaisesRegex(RuntimeError, "text policy identity"):
+            self.dataset(expected_text_policy="source_grounded")
+        np.save(self.root / self.rows[-1]["latent_relative_path"], np.full((4, 64), np.nan, dtype=np.float32))
+        with self.assertRaises(FloatingPointError):
+            data[-1]
+
+    def test_pseudo_cannot_change_strict_training_text(self):
+        self.pseudo_publication()
+        self.rows[0]["text"] = "bb"
+        self.freeze()
+        with self.assertRaisesRegex(RuntimeError, "changed a strict training record"):
+            self.dataset()
+
+    def test_pseudo_cannot_change_strict_evaluation(self):
+        self.pseudo_publication()
+        self.rows[2]["text"] = "bb"
+        self.freeze()
+        with self.assertRaisesRegex(RuntimeError, "changed the strict valid"):
+            self.dataset()
+
+    def test_pseudo_requires_unchanged_evidence_and_finite_confidence(self):
+        self.pseudo_publication()
+        evidence = Path(self.rows[-1]["evidence_refs"][0]["path"])
+        evidence.write_text("changed evidence\n")
+        with self.assertRaisesRegex(RuntimeError, "evidence hash mismatch"):
+            self.dataset()
+        self.rows[-1]["evidence_refs"][0]["sha256"] = sha256_file(evidence)
+        self.rows[-1]["confidence"]["mean_word_probability"] = float("nan")
+        self.freeze()
+        with self.assertRaisesRegex(ValueError, "finite numeric"):
+            self.dataset()
+
+    def test_pseudo_cannot_be_claimed_independently_verified(self):
+        self.pseudo_publication()
+        self.rows[-1]["independent_content_verified"] = True
+        self.freeze()
+        with self.assertRaisesRegex(ValueError, "unverified provenance"):
+            self.dataset()
+
+    def test_pseudo_receipt_cannot_reuse_strict_policy_hash(self):
+        self.pseudo_publication()
+        path = self.manifests / "cache_completion.json"
+        receipt = json.loads(path.read_text())
+        receipt["text_policy_sha256"] = self.policy["strict_baseline"]["text_policy_sha256"]
+        self.write(path, receipt)
+        with self.assertRaisesRegex(RuntimeError, "does not certify this text policy"):
+            self.dataset()
+
+    def test_label_source_counts_are_recomputed(self):
+        self.pseudo_publication()
+        path = self.manifests / "inventory_meta.json"
+        meta = json.loads(path.read_text())
+        meta["source_kind_counts"]["train"]["asr_pseudo"] = 2
+        self.write(path, meta)
+        with self.assertRaisesRegex(RuntimeError, "source-kind counts"):
+            self.dataset()
+
+    def test_explicit_pseudo_config_keeps_training_semantics_and_separate_outputs(self):
+        from argparse import Namespace
+        from omegaconf import OmegaConf
+        from launch_lrs3_training import load_config
+        args = Namespace(cache_root=None, checkpoint_dir=None, run_until_update=None, epochs=None, variant="strict")
+        strict = load_config(args)
+        args.variant = "pseudo"
+        pseudo = load_config(args)
+        self.assertEqual(strict.datasets.expected_text_policy, "source_grounded")
+        self.assertEqual(pseudo.datasets.expected_text_policy, "source_plus_asr_pseudo")
+        self.assertTrue(pseudo.datasets.manifest_path.endswith("/manifests/full_pseudo/train.jsonl"))
+        self.assertNotEqual(strict.ckpts.save_dir, pseudo.ckpts.save_dir)
+        self.assertNotEqual(strict.model.name, pseudo.model.name)
+        self.assertEqual(OmegaConf.to_container(strict.model.arch), OmegaConf.to_container(pseudo.model.arch))
+        self.assertEqual(OmegaConf.to_container(strict.optim), OmegaConf.to_container(pseudo.optim))
+        self.assertEqual(strict.ckpts.expected_parent_sha256, pseudo.ckpts.expected_parent_sha256)
 
 
 if __name__ == "__main__":

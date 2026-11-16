@@ -10,6 +10,7 @@ datasets:
   cache_root: ${oc.env:LRS3_CACHE_ROOT,${datasets.default_cache_root}}
   manifest_path: ${datasets.cache_root}/manifests/full/train.jsonl
   expected_selection: full
+  expected_text_policy: source_grounded
   expected_inventory_meta_sha256: null
   expected_manifest_sha256: null
   expected_inventory_sha256: null
