@@ -31,6 +31,29 @@ SOURCE_KINDS = {
     "accepted_source_group_segment_mfa_boundary_consensus": "source_asr_mfa_consensus",
     "accepted_source_whisper_ctc_mfa_consensus": "source_asr_ctc_consensus",
 }
+REQUIRED_RELEASE_FILES = frozenset({
+    "labels.strict.accepted.jsonl", "labels.pseudo_p1.accepted.jsonl",
+    "labels.pseudo_p2.candidates.jsonl", "labels.excluded.jsonl",
+    "labels.pending.jsonl", "coverage_by_original.jsonl", "summary.json", "rules.json",
+})
+
+
+def frozen_output_hashes(output, expected_summary):
+    """Pin actual output bytes, refusing an incomplete or inconsistent release."""
+    paths = {p.name: p for p in output.iterdir()
+             if p.is_file() and p.suffix in {".json", ".jsonl"} and p.name != "frozen_export.json"}
+    missing = REQUIRED_RELEASE_FILES - paths.keys()
+    if missing:
+        raise ValueError(f"Cannot freeze text release; missing required outputs: {sorted(missing)}")
+    payloads = {name: path.read_bytes() for name, path in paths.items()}
+    actual_summary = json.loads(payloads["summary.json"])
+    if actual_summary != expected_summary:
+        raise ValueError("Text summary changed before frozen output hashing")
+    if not actual_summary.get("processing_complete") or actual_summary.get("pending_segments") != 0:
+        raise ValueError("Cannot freeze incomplete text release")
+    if payloads["labels.pending.jsonl"].strip():
+        raise ValueError("Cannot freeze text release containing pending labels")
+    return {name: hashlib.sha256(payload).hexdigest() for name, payload in payloads.items()}
 
 
 def pseudo_candidate(row, label, group, decode, ctc):
@@ -346,7 +369,7 @@ def main():
                         hasher.update(chunk)
                 if hasher.hexdigest() != expected:
                     raise ValueError(f"Evidence changed before frozen export: {path}")
-            hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in args.output.iterdir() if p.suffix in {"json", "jsonl"}}
+            hashes = frozen_output_hashes(args.output, summary)
             atomic_json(args.output / "frozen_export.json", {"frozen_unix": time.time(), "files": hashes,
                 "source_manifest_sha256": exporter.manifest_hash, "unique_evidence_hashes_rechecked": len(refs), "summary": summary})
 
