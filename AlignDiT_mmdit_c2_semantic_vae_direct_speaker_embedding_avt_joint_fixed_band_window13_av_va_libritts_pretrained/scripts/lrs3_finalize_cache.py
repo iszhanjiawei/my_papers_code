@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import csv
 import fcntl
 import json
 import os
@@ -122,6 +123,10 @@ def main():
     rows=read_rows(args.source_manifest)
     for key in ['sample_id','utterance_key','relative_stem']:
         if len({r[key] for r in rows})!=len(rows):raise ValueError(f'Duplicate source {key}')
+    source_videos={s:{r['original_clip_id'].split('/')[1] for r in rows if r['split']==s}
+                   for s in ['train','valid','test']}
+    if source_videos['test'] & (source_videos['train'] | source_videos['valid']):
+        raise ValueError('A test source video also appears in training or validation')
     recovered={}
     for path in args.recovered_labels:
         for r in read_rows(path):
@@ -203,6 +208,16 @@ def main():
         o['crop_kind_counts']=dict(o['crop_kind_counts'])
         o['ready_duration_fraction']=o['ready_audio_seconds']/o['source_audio_seconds'] if o['source_audio_seconds'] else 0.0
     write_jsonl(args.root/f'reports/{args.name}_original_coverage.jsonl',originals.values())
+    coverage_tsv=args.root/f'reports/{args.name}_original_coverage.tsv'
+    with coverage_tsv.with_suffix('.tsv.tmp').open('w') as handle:
+        fields=['original_clip_id','split','source_pairs','ready_pairs','cache_ready_pairs',
+                'source_audio_seconds','ready_audio_seconds','ready_duration_fraction',
+                'fully_covered','ctc_infeasible_pairs','text_status_counts','crop_kind_counts','pending_reasons']
+        writer=csv.DictWriter(handle,fieldnames=fields,delimiter='\t');writer.writeheader()
+        for original in originals.values():
+            writer.writerow({key:json.dumps(original[key],ensure_ascii=False) if isinstance(original[key],dict)
+                             else original[key] for key in fields})
+    coverage_tsv.with_suffix('.tsv.tmp').replace(coverage_tsv)
     summary={'selection':args.mode,'source_pairs':len(rows),'ready_pairs':len(accepted),
              'all_requested_source_pairs_ready':len(accepted)==len(rows),'split_counts':split_counts,
              'audio_hours_by_split':{s:sum(r['audio_seconds'] for r in accepted if r['split']==s)/3600 for s in split_counts},
@@ -214,6 +229,9 @@ def main():
              'pending_reasons':dict(reasons_count),'original_ids':len(originals),
              'fully_covered_original_ids':sum(o['fully_covered'] for o in originals.values()),
              'manifest_dir':str(manifest_dir),'source_manifest_sha256':digest(args.source_manifest),
+             'source_videos_by_split':{s:len(v) for s,v in source_videos.items()},
+             'test_source_video_overlap_count':0,
+             'train_valid_source_video_overlap_count':len(source_videos['train']&source_videos['valid']),
              'limitations':['Text consensus is automatic evidence, not human verification.',
                             'Duration and feature-length agreement alone do not prove lip/audio synchronization.',
                             'Completion receipt covers only the published accepted inventory; exclusions remain explicit.']}

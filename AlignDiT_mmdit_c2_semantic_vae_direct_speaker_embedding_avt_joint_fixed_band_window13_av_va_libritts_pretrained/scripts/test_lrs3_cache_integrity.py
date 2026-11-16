@@ -123,6 +123,17 @@ class PublicationIntegrityTests(unittest.TestCase):
         self.assertIn("Duplicate source sample_id", result.stderr)
         self.assertFalse((self.root / "manifests/test_publication/cache_completion.json").exists())
 
+    def test_test_source_video_cannot_cross_training_split(self):
+        other = dict(self.row)
+        original = self.row['original_clip_id'].split('/')
+        other.update(sample_id='heldout_other_clip', utterance_key='lrs3/test/test/heldout_other_clip',
+                     relative_stem='test/test/heldout_other_clip', split='test',
+                     original_clip_id=f'test/{original[1]}/99999')
+        result = self.run_publication([self.row, other])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('A test source video also appears', result.stderr)
+        self.assertFalse((self.root / 'manifests/test_publication/cache_completion.json').exists())
+
     def test_active_writer_lock_rejects_publication(self):
         lock_path = self.root / "state/locks/audio.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
