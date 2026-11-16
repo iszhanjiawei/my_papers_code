@@ -3,18 +3,20 @@ from __future__ import annotations
 
 import argparse
 import collections
+from contextlib import ExitStack, closing, contextmanager
 import csv
 import fcntl
 import hashlib
 import json
 import math
 import os
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 
 from lrs3_build_inventory import clean_text, digest, write_json, write_jsonl
+from lrs3_cache_parallel import ShutdownRequested
+from lrs3_finalize_parallel import ValidationControl, ordered_validate
 from aligndit.lrs3_media_quality import evidence_paths, excluded_map, load_terminal, scope as media_quality_scope
 from aligndit.lrs3_imported_source import (
     CONTRACT as IMPORT_CONTRACT, imported_source_scope, imported_source_artifacts,
@@ -240,6 +242,23 @@ def validate(row, root, vocabulary, recovered, strict_provenance=False, text_pol
     return r,reasons
 
 
+@contextmanager
+def publication_lock(path):
+    path.parent.mkdir(parents=True,exist_ok=True)
+    lock=path.open('a')
+    acquired=False
+    try:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        acquired=True
+        os.set_inheritable(lock.fileno(),False)
+        yield lock
+    finally:
+        try:
+            if acquired:fcntl.flock(lock,fcntl.LOCK_UN)
+        finally:
+            lock.close()
+
+
 def main():
     prefix=os.environ.get('ROOT_PREFIX','')
     p=argparse.ArgumentParser(description=__doc__)
@@ -251,15 +270,27 @@ def main():
     p.add_argument('--text-policy',choices=['source_grounded','source_plus_asr_pseudo'],default='source_grounded')
     p.add_argument('--strict-baseline',type=Path,help='Frozen strict manifest directory, relative to cache root')
     p.add_argument('--workers',type=int,default=8)
+    p.add_argument('--executor',choices=['thread','process'],default='thread')
+    p.add_argument('--batch-size',type=int,default=16,help='Rows per validation task; at most twice workers tasks are pending')
     args=p.parse_args()
+    if args.workers<1 or args.batch_size<1:p.error('--workers and --batch-size must be positive')
     if (args.root/IMPORT_CONTRACT).exists() and args.mode!='full':
         raise ValueError('Imported pilot shards may be audited individually; publication requires the full merge')
     if '/' in args.name or args.name in {'.','..'}:raise ValueError('Invalid publication name')
+    control=ValidationControl()
+    try:
+        with control.signals(), ExitStack() as locks:
+            for stage in ['audio','video40','media','publication']:
+                control.check()
+                locks.enter_context(publication_lock(args.root/f'state/locks/{stage}.lock'))
+            control.check()
+            finalize(args,prefix,control)
+    except ShutdownRequested as error:
+        raise SystemExit(128+error.signum) from error
+
+
+def finalize(args,prefix,control):
     manifest_dir=args.root/'manifests'/args.name
-    locks=[]
-    for stage in ['audio','video40','media','publication']:
-        path=args.root/f'state/locks/{stage}.lock';path.parent.mkdir(parents=True,exist_ok=True)
-        lock=path.open('a');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);locks.append(lock)
     for feature in ['latents','video_25hz','video_40hz','speaker_embeddings']:
         if (args.root/f'state/{feature}/WRITE_ACTIVE.json').exists():
             raise RuntimeError(f'Cache writes are unfinished: {feature}')
@@ -343,9 +374,12 @@ def main():
     vocab_path=Path(prefix+'/zjw524/projects/data/CelebVDub_char/vocab.txt')
     vocabulary={c:i for i,c in enumerate(vocab_path.read_text().splitlines())}
     accepted=[]; quality=[]; reasons_count=collections.Counter(); originals={}
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        results=pool.map(lambda r:validate(r,args.root,vocabulary,recovered,args.mode=='full',args.text_policy,
-            media_exclusions,imported_source,import_completion['receipts'].get(r['sample_id']) if import_completion else None),rows)
+    control.check()
+    with closing(ordered_validate(rows,root=args.root,vocabulary=vocabulary,recovered=recovered,
+            strict_provenance=args.mode=='full',text_policy=args.text_policy,
+            media_quality_exclusions=media_exclusions,imported_source=imported_source,
+            import_receipts=import_completion['receipts'] if import_completion else None,
+            executor=args.executor,workers=args.workers,batch_size=args.batch_size,control=control)) as results:
         for i,(r,reasons) in enumerate(results):
             oid=r['original_clip_id']
             original=originals.setdefault(oid,{'original_clip_id':oid,'split':r['split'],'source_pairs':0,
@@ -382,6 +416,7 @@ def main():
             if 'import_receipt_sha256' in r:
                 quality[-1]['import_receipt_sha256']=r['import_receipt_sha256']
             if (i+1)%1000==0:print(json.dumps({'audited':i+1,'total':len(rows),'accepted':len(accepted)}),flush=True)
+    control.check()
     if not accepted:raise RuntimeError('No training-ready samples; no manifest published')
     if baseline_path is not None:
         accepted_by_id={r['sample_id']:r for r in accepted}
@@ -395,6 +430,7 @@ def main():
             raise ValueError('A pseudo extension may only add explicitly marked training pseudo labels')
     for path,fingerprint in input_pins.items():
         if digest(path)!=fingerprint:raise ValueError('A publication input changed during the cache audit')
+    control.check()
     entries={};split_counts={}
     for split in ['train','valid','test']:
         selected=[r for r in accepted if r['split']==split]
@@ -488,6 +524,7 @@ def main():
     write_json(args.root/f'reports/{args.name}_readiness.json',summary)
     for path,fingerprint in input_pins.items():
         if digest(path)!=fingerprint:raise ValueError('A publication input changed before completion')
+    control.check()
     write_json(manifest_dir/'cache_completion.json',receipt) # Publication completion marker is last.
     print(json.dumps(summary,ensure_ascii=False,indent=2),flush=True)
 
