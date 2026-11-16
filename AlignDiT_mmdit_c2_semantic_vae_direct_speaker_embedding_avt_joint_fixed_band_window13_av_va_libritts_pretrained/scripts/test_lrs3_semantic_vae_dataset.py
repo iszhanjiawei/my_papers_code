@@ -278,7 +278,7 @@ class LRS3ContractTests(unittest.TestCase):
         with initialize_config_dir(version_base="1.3", config_dir=str(project / "src/aligndit/config")):
             config = compose(config_name="finetune_lrs3_svae_speaker_window13_libritts")
         with patch.dict(os.environ, {"ROOT_PREFIX": "/mounted"}, clear=True):
-            self.assertEqual(config.datasets.cache_root, "/mounted/zjw524/datasets/LRS3/AlignDiT_SVAE_LRS3_v1")
+            self.assertEqual(config.datasets.cache_root, "/mounted/zjw524/datasets/LRS3/AlignDiT_SVAE_LRS3_v2_sharded")
             self.assertTrue(config.datasets.manifest_path.endswith("/manifests/full/train.jsonl"))
         with patch.dict(os.environ, {"ROOT_PREFIX": "/mounted", "LRS3_CACHE_ROOT": "/custom/lrs3"}, clear=True):
             self.assertEqual(config.datasets.cache_root, "/custom/lrs3")

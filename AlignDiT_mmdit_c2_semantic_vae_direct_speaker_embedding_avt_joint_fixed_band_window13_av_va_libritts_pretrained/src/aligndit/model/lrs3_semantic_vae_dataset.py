@@ -14,6 +14,9 @@ from pathlib import Path
 
 import numpy as np
 from aligndit.lrs3_media_quality import evidence_paths, excluded_map, load_terminal, scope as media_quality_scope
+from aligndit.lrs3_imported_source import (
+    imported_source_scope, imported_source_artifacts, validate_import_completion,
+)
 
 from aligndit.model.semantic_vae_dataset import (
     CELEBVDUB_VIDEO_DIM,
@@ -254,6 +257,15 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
         source_contract, self.source_artifact_paths = _source_contract(self.cache_root, meta)
         terminal = load_terminal(self.cache_root, source_sha256=meta.get('source_manifest_sha256'))
         quality_scope = media_quality_scope(terminal)
+        imported_source = terminal.get('_imported_source') if terminal else None
+        import_scope = imported_source_scope(imported_source)
+        imported_cache = (validate_import_completion(self.cache_root, {**imported_source, 'terminal': terminal})
+                          if imported_source is not None else None)
+        cache_scope = imported_cache['scope'] if imported_cache else None
+        if meta.get('imported_source') != import_scope or meta.get('imported_cache') != cache_scope:
+            raise RuntimeError('LRS3 publication does not bind its exact imported source/cache closure')
+        self.imported_source_artifact_paths = imported_source_artifacts(imported_source)
+        if imported_cache:self.imported_source_artifact_paths.extend(imported_cache['artifacts'])
         if meta.get('media_quality') != quality_scope:
             raise RuntimeError('LRS3 publication does not bind the fixed media quality closure')
         self.media_quality_exclusions = excluded_map(terminal)
@@ -263,6 +275,9 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
             baseline_meta = _read_json(baseline_dir / 'inventory_meta.json', label='Strict baseline metadata')
             if baseline_meta.get('media_quality') != quality_scope:
                 raise RuntimeError('Strict/pseudo media quality closures differ')
+            if (baseline_meta.get('imported_source') != import_scope
+                    or baseline_meta.get('imported_cache') != cache_scope):
+                raise RuntimeError('Strict/pseudo imported source/cache closures differ')
         for expected, actual, label in (
             (expected_manifest_sha256, digests[self.manifest_path.name], "selected split"),
             (expected_inventory_sha256, digests["inventory.jsonl"], "inventory"),
@@ -300,6 +315,11 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
             source_kinds = Counter()
             for row in _iter_jsonl(manifest_dir / f"{split}.jsonl"):
                 record_count += 1
+                if imported_cache is not None:
+                    import_entry = imported_cache['receipts'].get(row.get('sample_id'))
+                    if (import_entry is None or import_entry['relative_stem'] != row.get('relative_stem')
+                            or import_entry['import_receipt_sha256'] != row.get('import_receipt_sha256')):
+                        raise ValueError('Published LRS3 row differs from its immutable import receipt ledger')
                 if row.get('sample_id') in self.media_quality_exclusions or row.get('relative_stem') in excluded_stems:
                     raise ValueError('Published inventory contains a sealed media quality exclusion')
                 key, text, frames = row.get("utterance_key"), row.get("text"), row.get("latent_frames")
@@ -389,6 +409,8 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
 
         receipt_path = _regular_file(manifest_dir / "cache_completion.json", label="LRS3 cache completion receipt")
         receipt = _read_json(receipt_path, label="LRS3 cache completion receipt")
+        if receipt.get('imported_source') != import_scope or receipt.get('imported_cache') != cache_scope:
+            raise RuntimeError('LRS3 completion receipt differs from imported source/cache provenance')
         if receipt.get('media_quality') != quality_scope:
             raise RuntimeError('LRS3 completion receipt differs from the media quality closure')
         if (receipt.get("schema_version") != 1 or receipt.get("status") != "complete"
@@ -457,6 +479,8 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
             "speaker": self.speaker_embedding_contract,
         }
         if quality_scope is not None:self.data_contract['media_quality'] = quality_scope
+        if import_scope is not None:
+            self.data_contract.update(imported_source=import_scope, imported_cache=cache_scope)
         # The launcher pins every unique evidence file; training constructors
         # verify hashes without retaining full transcript/probability payloads.
         self.text_evidence_artifacts = [

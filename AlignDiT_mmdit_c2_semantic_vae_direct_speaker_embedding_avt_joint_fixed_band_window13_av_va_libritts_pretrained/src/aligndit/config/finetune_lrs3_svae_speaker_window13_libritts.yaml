@@ -6,7 +6,7 @@ defaults:
 # This is a separate input contract; original CelebV-Dub recipes are unchanged.
 datasets:
   name: LRS3
-  default_cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/datasets/LRS3/AlignDiT_SVAE_LRS3_v1
+  default_cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/datasets/LRS3/AlignDiT_SVAE_LRS3_v2_sharded
   cache_root: ${oc.env:LRS3_CACHE_ROOT,${datasets.default_cache_root}}
   manifest_path: ${datasets.cache_root}/manifests/full/train.jsonl
   expected_selection: full

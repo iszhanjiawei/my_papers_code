@@ -134,6 +134,16 @@ def load_terminal(root, *, expected_sha256=None, source_sha256=None):
     exclusion schema; finalizer/loader additionally enforce membership.
     """
     root = Path(root).resolve(strict=True)
+    from aligndit.lrs3_imported_source import CONTRACT, validate_imported_source
+    if (root / CONTRACT).exists() or (root / CONTRACT).is_symlink():
+        imported = validate_imported_source(root)
+        terminal = imported['terminal']
+        if (expected_sha256 is not None and terminal['_sha256'] != expected_sha256
+                or source_sha256 is not None and terminal['source_manifest_sha256'] != source_sha256):
+            raise ValueError('Imported media quality closure differs from explicit source/terminal pins')
+        terminal['_path'] = str(root / TERMINAL)
+        terminal['_imported_source'] = {key: value for key, value in imported.items() if key != 'terminal'}
+        return terminal
     path = root / TERMINAL
     if not path.exists():
         if expected_sha256 is not None or (root / EXCLUSIONS).exists():

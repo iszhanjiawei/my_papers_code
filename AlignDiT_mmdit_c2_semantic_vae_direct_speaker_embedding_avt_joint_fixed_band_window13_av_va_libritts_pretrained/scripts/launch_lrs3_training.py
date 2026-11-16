@@ -142,6 +142,9 @@ def validate_publication(config):
         raise RuntimeError("Readiness split counts differ from validated manifest contents")
     if readiness.get('media_quality') != data.data_contract.get('media_quality'):
         raise RuntimeError('Readiness report differs from the pinned media quality closure')
+    for key in ('imported_source', 'imported_cache'):
+        if readiness.get(key) != data.data_contract.get(key):
+            raise RuntimeError(f'Readiness report differs from the pinned {key} closure')
     quality_path = root / f"reports/{manifest.parent.name}_sample_quality.jsonl"
     source_ids = {}
     for row in _iter_jsonl(source_inventory):
@@ -203,10 +206,22 @@ def validate_publication(config):
     artifact_paths.extend(manifest.parent / name for name in meta["manifests"])
     artifact_paths.extend(data.text_policy_artifact_paths)
     artifact_paths.extend(data.media_quality_artifact_paths)
+    artifact_paths.extend(data.imported_source_artifact_paths)
     artifacts = [snapshot(path) for path in dict.fromkeys(artifact_paths)]
     artifacts.extend(data.text_evidence_artifacts)
     source_pins = {str(source_path.resolve()): source_contract_digest,
                    str(source_inventory.resolve()): source_inventory_digest}
+    if 'imported_source' in data.data_contract:
+        from aligndit.lrs3_imported_source import ARTIFACTS, PLAN
+        imported = data.data_contract['imported_source']
+        cache = data.data_contract['imported_cache']
+        source_pins[str(root / imported['contract_path'])] = imported['contract_sha256']
+        for owner in ('origin_root', 'destination_root'):
+            for key, relative in ARTIFACTS.items():
+                source_pins[str(Path(imported[owner]) / relative)] = imported[key]
+        source_pins[str(root / cache['completion_path'])] = cache['completion_sha256']
+        source_pins[str(root / cache['ledger_path'])] = cache['ledger_sha256']
+        source_pins[str(root / PLAN)] = cache['plan_sha256']
     if any(artifact["sha256"] != source_pins[artifact["path"]]
            for artifact in artifacts if artifact["path"] in source_pins):
         raise RuntimeError("Canonical LRS3 source artifacts changed during launch validation")
@@ -220,6 +235,8 @@ def validate_publication(config):
                "accepted_audio_hours": readiness["audio_hours_by_split"],
                "scope": "All source records audited; training uses the explicitly accepted publication only"}
     if 'media_quality' in data.data_contract:summary['media_quality'] = data.data_contract['media_quality']
+    for key in ('imported_source', 'imported_cache'):
+        if key in data.data_contract:summary[key] = data.data_contract[key]
     return data, artifacts, summary
 
 

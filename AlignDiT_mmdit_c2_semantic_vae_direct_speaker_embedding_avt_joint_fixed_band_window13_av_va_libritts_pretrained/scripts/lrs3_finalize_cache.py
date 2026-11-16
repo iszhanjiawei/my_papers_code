@@ -16,6 +16,10 @@ import numpy as np
 
 from lrs3_build_inventory import clean_text, digest, write_json, write_jsonl
 from aligndit.lrs3_media_quality import evidence_paths, excluded_map, load_terminal, scope as media_quality_scope
+from aligndit.lrs3_imported_source import (
+    CONTRACT as IMPORT_CONTRACT, imported_source_scope, imported_source_artifacts,
+    validate_import_completion, validate_import_receipt,
+)
 
 LATENT_SPEC = {'dimension':64,'dtype':'float32','frame_rate_hz':40.0,
                'hop_length_samples':400,'mode':'fixed_posterior_sample','sample_rate':16000}
@@ -128,7 +132,7 @@ def text_policy_contract(root, policy, baseline):
 
 
 def validate(row, root, vocabulary, recovered, strict_provenance=False, text_policy='source_grounded',
-             media_quality_exclusions=None):
+             media_quality_exclusions=None, imported_source=None, import_receipt_pin=None):
     r = dict(row)
     r['source_kind'] = 'existing_transcript' if r['text'] else 'unresolved'
     reasons = []
@@ -195,8 +199,12 @@ def validate(row, root, vocabulary, recovered, strict_provenance=False, text_pol
     if strict_provenance:
         try:
             audio=root/r['audio_relative_path']
-            if not audio.is_file() or audio.resolve()!=Path(r['audio_path']).resolve():
-                raise ValueError('audio_link_mismatch')
+            if imported_source is None:
+                if not audio.is_file() or audio.resolve()!=Path(r['audio_path']).resolve():
+                    raise ValueError('audio_link_mismatch')
+            elif (audio.is_symlink() or not audio.is_file()
+                    or digest(audio)!=digest(r['audio_path'])):
+                raise ValueError('physical_imported_audio_mismatch')
             receipt=json.loads((root/'state/audio_receipts'/f'{r["relative_stem"]}.json').read_text())
             expected={'audio_sha256':digest(audio),'utterance_key':r['utterance_key'],
                       'posterior_seed':r['posterior_seed'],
@@ -216,6 +224,15 @@ def validate(row, root, vocabulary, recovered, strict_provenance=False, text_pol
             if receipt['identity']!=expected or receipt['outputs']!={'video_40hz':hashes.get('video_40hz')}:
                 raise ValueError('source_or_protocol_mismatch')
         except (OSError,ValueError,KeyError) as error:reasons.append(f'video40_provenance:{error}')
+    if imported_source is not None:
+        try:
+            if import_receipt_pin is None:
+                raise ValueError('Missing canonical import ledger entry')
+            relative_hashes={r[f'{name}_relative_path']:value for name,value in hashes.items()}
+            r['import_receipt_sha256']=validate_import_receipt(root,row,imported_source,import_receipt_pin,
+                exclusion=excluded,local_hashes=relative_hashes)
+        except (OSError,ValueError,KeyError) as error:
+            raise ValueError(f'Immutable imported cache provenance failed for {r["sample_id"]}: {error}') from error
     r['media_preprocessing']={'crop_kind':media.get('crop_kind'),
                               'protocol_sha256':media.get('protocol_sha256'),
                               'source_sha256':media.get('source_sha256')}
@@ -235,6 +252,8 @@ def main():
     p.add_argument('--strict-baseline',type=Path,help='Frozen strict manifest directory, relative to cache root')
     p.add_argument('--workers',type=int,default=8)
     args=p.parse_args()
+    if (args.root/IMPORT_CONTRACT).exists() and args.mode!='full':
+        raise ValueError('Imported pilot shards may be audited individually; publication requires the full merge')
     if '/' in args.name or args.name in {'.','..'}:raise ValueError('Invalid publication name')
     manifest_dir=args.root/'manifests'/args.name
     locks=[]
@@ -281,10 +300,20 @@ def main():
     if not media_exclusions.keys() <= known_source_ids:
         raise ValueError('Media quality exclusions contain noncanonical source IDs')
     quality_scope=media_quality_scope(media_quality)
+    imported_source=media_quality.get('_imported_source') if media_quality else None
+    import_scope=imported_source_scope(imported_source)
+    import_completion=None
+    if imported_source is not None:
+        import_completion=validate_import_completion(args.root,{**imported_source,'terminal':media_quality},rows)
+        for path in imported_source_artifacts(imported_source)+import_completion['artifacts']:
+            input_pins[str(path)]=digest(path)
     if baseline_path is not None:
         baseline_meta=json.loads((baseline_path/'inventory_meta.json').read_text())
         if baseline_meta.get('media_quality') != quality_scope:
             raise ValueError('Pseudo extension and strict baseline have different media quality closures')
+        if (baseline_meta.get('imported_source')!=import_scope
+                or baseline_meta.get('imported_cache')!=(import_completion['scope'] if import_completion else None)):
+            raise ValueError('Strict and pseudo publications must use the same imported source/cache closure')
     missing_pairs=sum(not r['text'] for r in rows)
     missing_groups=len({r['original_clip_id'] for r in rows if not r['text']})
     label_pins=[]
@@ -315,7 +344,8 @@ def main():
     vocabulary={c:i for i,c in enumerate(vocab_path.read_text().splitlines())}
     accepted=[]; quality=[]; reasons_count=collections.Counter(); originals={}
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        results=pool.map(lambda r:validate(r,args.root,vocabulary,recovered,args.mode=='full',args.text_policy,media_exclusions),rows)
+        results=pool.map(lambda r:validate(r,args.root,vocabulary,recovered,args.mode=='full',args.text_policy,
+            media_exclusions,imported_source,import_completion['receipts'].get(r['sample_id']) if import_completion else None),rows)
         for i,(r,reasons) in enumerate(results):
             oid=r['original_clip_id']
             original=originals.setdefault(oid,{'original_clip_id':oid,'split':r['split'],'source_pairs':0,
@@ -349,6 +379,8 @@ def main():
                             'cache_sha256':r['cache_sha256']})
             if 'media_quality_exclusion' in r:
                 quality[-1]['media_quality_exclusion']=r['media_quality_exclusion']
+            if 'import_receipt_sha256' in r:
+                quality[-1]['import_receipt_sha256']=r['import_receipt_sha256']
             if (i+1)%1000==0:print(json.dumps({'audited':i+1,'total':len(rows),'accepted':len(accepted)}),flush=True)
     if not accepted:raise RuntimeError('No training-ready samples; no manifest published')
     if baseline_path is not None:
@@ -387,6 +419,7 @@ def main():
           'source_pairs':len(rows),'training_ready_pairs':len(accepted),'excluded_pairs':len(rows)-len(accepted),
           'all_requested_source_pairs_ready':len(accepted)==len(rows),'vocab_sha256':digest(vocab_path)}
     if quality_scope is not None:meta['media_quality']=quality_scope
+    if import_scope is not None:meta.update(imported_source=import_scope,imported_cache=import_completion['scope'])
     write_json(manifest_dir/'inventory_meta.json',meta)
     speaker_dir=manifest_dir/'speaker_contract'
     speaker={'schema_version':1,'status':'complete','model_id':'iic/speech_campplus_sv_zh_en_16k-common_advanced',
@@ -410,6 +443,7 @@ def main():
              'speaker_metadata_sha256':digest(speaker_dir/'metadata.json'),
              'speaker_coverage_sha256':digest(speaker_dir/'coverage_report.json')}
     if quality_scope is not None:receipt['media_quality']=quality_scope
+    if import_scope is not None:receipt.update(imported_source=import_scope,imported_cache=import_completion['scope'])
     write_jsonl(args.root/f'reports/{args.name}_sample_quality.jsonl',quality)
     for o in originals.values():
         o['fully_covered']=o['source_pairs']==o['ready_pairs']
@@ -450,6 +484,7 @@ def main():
                             'Duration and feature-length agreement alone do not prove lip/audio synchronization.',
                             'Completion receipt covers only the published accepted inventory; exclusions remain explicit.']}
     if quality_scope is not None:summary['media_quality']=quality_scope
+    if import_scope is not None:summary.update(imported_source=import_scope,imported_cache=import_completion['scope'])
     write_json(args.root/f'reports/{args.name}_readiness.json',summary)
     for path,fingerprint in input_pins.items():
         if digest(path)!=fingerprint:raise ValueError('A publication input changed before completion')
