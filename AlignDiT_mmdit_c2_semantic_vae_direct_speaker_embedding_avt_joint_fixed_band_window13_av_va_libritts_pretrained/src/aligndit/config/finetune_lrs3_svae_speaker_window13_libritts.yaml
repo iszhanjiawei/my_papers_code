@@ -1,0 +1,30 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained
+  - _self_
+
+# Preserve the codec, normalization, 159-character mapping, parent and model.
+# This is a separate input contract; original CelebV-Dub recipes are unchanged.
+datasets:
+  name: LRS3
+  default_cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/datasets/LRS3/AlignDiT_SVAE_LRS3_v1
+  cache_root: ${oc.env:LRS3_CACHE_ROOT,${datasets.default_cache_root}}
+  manifest_path: ${datasets.cache_root}/manifests/full/train.jsonl
+  expected_selection: full
+  expected_inventory_meta_sha256: null
+  expected_manifest_sha256: null
+  expected_inventory_sha256: null
+  expected_record_count: null
+  speaker_embedding_cache_dir: ${datasets.cache_root}/speaker_embeddings
+  num_workers: 8
+
+model:
+  name: AlignDiT_LRS3_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts_pretrained
+
+optim:
+  # Baseline schedule; calibrate the final budget using full-cache throughput.
+  # The data preparation pilot overrides this to two verified optimizer updates.
+  run_until_update: 200000
+
+ckpts:
+  logger: tensorboard
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_LRS3_svae_speaker_avt_joint_fixed_band_window13_av_va_libritts
