@@ -1,30 +1,105 @@
 % !TeX root = manuscript.tex
-% Related work draft, 2026-11-06. References use verified primary metadata.
+% Source: ../local_files/related_work/related_work_en.tex; citation keys use references.bib.
+% IEEE TCSVT Related Work -- insert in the main IEEEtran manuscript.
+% Requires no special packages beyond the standard manuscript setup.
+% Use \bibliographystyle{IEEEtran} and \bibliography{references} in the main file.
+% Reuses reference keys from the author's existing Introduction.
+
 \section{Related Work}
 \label{sec:related_work}
 
-\subsection{Visual Speech Generation and Automatic Dubbing}
+\subsection{Text-to-Speech Synthesis}
+\label{subsec:related_tts}
 
-Visual speech generation uses facial motion to constrain the content or timing of synthesized speech. Video-to-speech synthesis typically infers spoken content from silent video, whereas automatic dubbing additionally accepts a target script and may use reference speech to specify a voice. LipVoicer~\cite{yemini2024lipvoicer}, for example, combines a lip-reading model with diffusion-based speech generation and automatic-speech-recognition guidance. This combination illustrates how inferred linguistic content can complement visual conditioning. Script-conditioned dubbing places particular emphasis on satisfying the supplied text while matching the target articulation and reference voice.
+Text-to-speech (TTS) synthesis has progressed from autoregressive (AR)
+sequence modeling to non-autoregressive (NAR) acoustic generation.
+Early AR systems, including Tacotron~\cite{wang2017tacotron} and
+Tacotron~2~\cite{shen2018tacotron2}, adopted attention-based
+sequence-to-sequence architectures to predict acoustic frames
+sequentially from text. More recently, neural speech codecs have enabled
+language-model-based generation of discrete speech representations.
+VALL-E~\cite{wang2025valle} formulates zero-shot TTS as conditional
+codec-token prediction, while VALL-E~2~\cite{chen2024valle2} improves
+generation stability and efficiency through repetition-aware sampling
+and grouped code modeling. Although AR approaches provide expressive
+speech generation and strong in-context conditioning, sequential decoding
+can incur substantial inference latency.
 
-Several dubbing systems address these requirements through explicit prosody and style modeling. V2C~\cite{chen2022v2c} studies visual voice cloning with text, visual information, and a reference voice. HPMDubbing~\cite{cong2023hpmdubbing} models prosody hierarchically using lip, face, and scene information, and associates linguistic and visual representations through text--lip attention followed by learned temporal upsampling. StyleDubber~\cite{cong2024styledubber} develops multiscale style modeling and uses forced-aligned phoneme information to support duration and reference-style processing. These methods highlight the value of visual and vocal cues at different granularities, although their alignment mechanisms should be distinguished: learned temporal upsampling and externally supervised phoneme timing impose different training requirements.
+NAR approaches instead generate acoustic representations without
+autoregressively predicting each output frame or token.
+FastSpeech~2~\cite{ren2021fastspeech2} achieves parallel synthesis
+using explicit duration, pitch, and energy modeling. Subsequently,
+diffusion and flow-based models have enabled expressive speech generation
+by iteratively transforming noise into acoustic representations.
+Grad-TTS~\cite{popov2021gradtts} introduces diffusion-based spectrogram
+generation with monotonic alignment, whereas Voicebox~\cite{le2023voicebox}
+learns versatile speech infilling through conditional flow matching.
+Matcha-TTS~\cite{mehta2024matchatts} employs conditional flow matching
+for efficient acoustic generation. More recent systems seek to reduce
+handcrafted alignment requirements: E2~TTS~\cite{eskimez2024e2tts}
+uses a simple character-and-filler representation without a separate
+phoneme-duration model, and F5-TTS~\cite{chen2025f5tts} incorporates
+ConvNeXt-based text processing into a flow-matching transformer to
+improve text--speech modeling. DiTTo-TTS~\cite{lee2025ditto}
+further explores scalable latent diffusion transformers with
+semantic-aware representations and utterance-length modeling.
+Despite their advances in linguistic fidelity and speech naturalness,
+these systems are primarily designed for text-conditioned speech
+synthesis, rather than generating speech constrained by visible
+articulation in a given video.
 
-Neural codec language models provide another route to automatic dubbing. VoiceCraft-Dub~\cite{sungbin2025voicecraftdub} incorporates visual conditioning into a speech language model through visual adapters and feature fusion, and introduces CelebV-Dub for evaluating dubbing in expressive, real-world videos. Our work instead studies continuous acoustic generation with flow matching, focusing on the interaction of acoustic, visual, and textual representations. We also examine video-to-speech synthesis and visual forced alignment as related applications. The latter aims to localize a supplied transcript in video; it is distinct from using an external forced aligner to prepare dubbing training data.
+\subsection{Visual Voice Cloning}
+\label{subsec:related_v2c}
 
-\subsection{Implicit Alignment in Flow-Based Speech Generation}
+Visual voice cloning (V2C), also referred to as automated video dubbing,
+aims to generate speech consistent with a given script, reference
+speaker, and silent video. Early work primarily incorporated visual
+cues into acoustic or prosodic modeling. Neural
+Dubber~\cite{hu2021neuraldub} exploits lip motion to guide the prosody
+of synthesized speech, while VisualTTS~\cite{lu2022visualtts}
+introduces text--visual attention and visual conditioning during
+acoustic decoding. VDTTS~\cite{hassid2022vdtts} extends visually
+driven synthesis to unconstrained videos, using facial information
+to guide speaking rhythm and prosody. Subsequent approaches improve
+the modeling of speaker style and articulation at multiple levels.
+HPMDubbing~\cite{cong2023hpmdubbing} associates lip, facial, and scene cues
+with different aspects of prosody, while
+StyleDubber~\cite{cong2024styledubber} learns phoneme- and
+utterance-level speaking style with a phoneme-guided lip aligner.
+From Speaker to Dubber~\cite{zhang2024speaker2dubber} transfers
+pronunciation knowledge from text--speech pretraining and then learns
+prosody and duration consistency for dubbing. ProDubber~\cite{zhang2025produbber}
+similarly strengthens acoustic modeling through prosody-enhanced
+pretraining and performs prosody adaptation for video dubbing.
+EmoDubber~\cite{cong2025emodubber} introduces duration-related
+prosody alignment and controllable emotion generation, while
+FlowDubber~\cite{cong2025flowdubber} combines language-model-based
+semantic learning, contrastive alignment, and flow-based voice
+enhancement. More recently, InstructDubber~\cite{zhang2026instructdubber}
+uses multimodal-language-model instructions to infer pronunciation
+durations and emotional prosody. Many methods in this line incorporate explicit duration
+prediction, monotonic alignment, or alignment-related supervision;
+some additionally rely on external forced aligners to obtain
+phoneme-level temporal boundaries.
 
-Flow matching learns a time-dependent vector field that transports a simple distribution toward a target data distribution~\cite{lipman2023flow}. In speech synthesis, F5-TTS~\cite{chen2025f5tts} demonstrates non-autoregressive generation without an explicit duration model or a separate phoneme-alignment stage. Extending this formulation to dubbing requires learning how linguistic units relate to visual articulation as well as to acoustic frames. CTC~\cite{graves2006ctc} provides sequence supervision without predefined token boundaries, but linguistic sequence consistency alone does not specify every aspect of audio--visual synchronization.
-
-AlignDiT~\cite{choi2025aligndit} combines flow matching with CTC-based internal alignment for synchronized speech generation. It fuses acoustic inputs with resampled visual features by channel concatenation, and uses the resulting representation to query encoded text in its transformer blocks. Text thus serves as a conditioning sequence, while acoustic and visual information share the evolving hidden representation. AlignDiT also demonstrates extensions to video-to-speech synthesis and visual forced alignment. Our work builds on its implicit-alignment setting and investigates a different fusion mechanism: separate audio, video, and text states are updated through joint attention, with a soft temporal bias applied to audio--visual interactions.
-
-CoSyncDiT~\cite{cong2026cosyncdit} explicitly controls the order in which conditions enter the generator. Its cognitive synchronous flow separates acoustic-style modeling, visual refinement through gated residual injection, and linguistic integration through time-adaptive cross-attention. Its Joint Semantic and Alignment Regularization (JSAR) combines CTC with frame-level contrastive representation alignment. This design addresses conditional interference through staged integration and auxiliary supervision. Our architecture instead refines the three modality streams jointly and encodes local temporal preference directly in the audio--visual attention logits.
-
-UltraDub~\cite{cong2026ultradub} introduces visually steered flow learning and Rhythm-anchored Trajectory Guidance (RTG). Its text and speaker-style branches use queries that combine the evolving acoustic representation with lip features, while retrieving information from separate condition memories with independently normalized attention. During sampling, trajectory guidance evaluates progressively conditioned predictions at a visually guided midpoint to adjust the generation trajectory. Our approach focuses on interactions within the generator: audio, video, and text participate in jointly normalized attention, and visual and textual hidden states are updated alongside acoustic states. The Gaussian temporal bias specifies a local preference between audio and video frames rather than an inference-time trajectory correction.
-
-\subsection{Multimodal Diffusion Transformers and Temporal Conditioning}
-
-Diffusion transformers replace convolutional denoisers with transformer-based generative backbones~\cite{peebles2023dit}. MM-DiT extends this idea by maintaining modality-specific processing paths and allowing them to communicate through joint attention, as demonstrated in rectified-flow image generation~\cite{esser2024scaling}. This separation preserves distinct representations while permitting cross-modal exchange within each multimodal block. It provides the architectural basis for our generator; our contribution concerns its use for implicitly aligned dubbing and the temporal structure of its attention.
-
-MMAudio~\cite{cheng2025mmaudio} applies joint audio, video, and text modeling to video-to-audio synthesis, followed by audio-only processing. It combines semantic visual features with higher-rate synchronization features and uses frame-aligned conditioning to guide sound generation. ImmersiveTTS~\cite{yun2026immersivetts} uses a multimodal diffusion transformer for environment-aware speech synthesis, together with global environmental conditioning and domain-specific representation alignment. Its content path uses alignment and duration modeling, and its environmental conditions serve a different role from the lip-motion sequence required for dubbing. These studies establish the usefulness of multimodal generative backbones while addressing different conditioning and temporal requirements.
-
-For script-conditioned dubbing, audio and video share a sampled time axis, but text does not have known frame-level boundaries. Our design represents this distinction within joint attention: a Gaussian bias favors temporally neighboring audio--visual pairs in both directions, while within-modality and text-related attention remain global. This soft window does not impose a hard correspondence or remove attention connections outside a prescribed band. It supplies a local temporal prior that complements implicit linguistic alignment and joint multimodal refinement.
+Recent studies explore generating synchronized dubbing without
+externally supplied phoneme-duration alignments.
+VoiceCraft-Dub~\cite{sungbin2025voicecraftdub} incorporates visual
+features into an autoregressive neural codec language model through
+audiovisual fusion modules. AlignDiT~\cite{choi2025aligndit}
+uses a flow-matching diffusion transformer with complementary
+acoustic--visual masking and auxiliary CTC supervision to learn
+implicit multimodal correspondence. CoSyncDiT~\cite{cong2026cosyncdit}
+organizes acoustic-style adaptation, visual calibration, and
+context alignment within the generative backbone, together with
+semantic and temporal regularization. More recently,
+UltraDub~\cite{cong2026ultradub} investigates visually guided
+retrieval of linguistic and speaker information and a rhythm-anchored
+sampling strategy to mitigate interference among conditions.
+These advances highlight that removing explicit duration labels
+does not, by itself, resolve the difficulty of coordinating linguistic
+content, speaker identity, and fine-grained audiovisual timing.
+In this work, we investigate three-stream joint multimodal modeling,
+a Gaussian temporal locality prior for bidirectional audiovisual
+attention, and progressive acoustic--linguistic--visual training
+to jointly address these requirements in the video-dubbing setting.

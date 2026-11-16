@@ -2,6 +2,8 @@
 
 论文主文档：`manuscript.tex`，依次载入 `abstract.tex`、`introduction.tex`、`related_work.tex`、`method.tex`、`experiments.tex`、`conclusion.tex`、`acknowledgment.tex`，使用 `references.bib` 管理参考文献。标题为 **JointDub: Locality-Aware Multimodal Diffusion Transformer for Synchronized Video Dubbing**，作者信息待补充。
 
+`related_work.tex` 已于 2026-11-16 替换为 `../local_files/related_work/related_work_en.tex` 的英文正文，包含 Text-to-Speech Synthesis 和 Visual Voice Cloning 两个小节。保留原文表述及 IEEEtran 的章节排版，仅将 HPMDubbing、Speaker2Dubber 的引用键统一为主文献库现有键。`related_work_references.bib` 与 `combined_introduction_related_work_references.bib` 已交叉核对并与 `references.bib` 去重合并，新增 15 篇文献；相关工作中的 25 篇引用全部对应到主文献库。引言与其他章节所用文献、已有正式发表信息和模板类文件保持不变，主稿继续使用 `IEEEtran.bst` 与统一的 `references.bib`。
+
 `method.tex` 组织为 A. Preliminaries、B. Multimodal Diffusion Transformer for Video Dubbing、C. Gaussian-Windowed Audiovisual Attention 和 D. Acoustic-to-Linguistic-to-Visual Curriculum Learning。A 小节参考 MMAudio 的组织方式，将条件流匹配和音频压缩合并，以段内斜体标题区分两部分。流匹配正文载入 `../local_files/flow_matching_preliminaries.tex`；`../local_files/flow_matching_references.bib` 的三篇配套文献已合并到 `references.bib`，统一通过主稿参考文献库编译。Lipman 等人的 Flow Matching 论文使用 `lipman2023flow` 引用键，避免重复列项。
 
 A 小节中的音频压缩正文载入 `../local_files/audio_compression_revised.tex`，使用波形编码与解码的精简叙述。原流匹配与音频压缩小节的引用标签统一指向合并后的 A 小节。`../local_files/audio_compression_revised_references.bib` 的文献已与主文献库去重合并：MMAudio 复用现有 CVPR 正式发表条目，Semantic-VAE 使用作者提供的 2025 年 v1 预印本及 `niu2025semantic` 引用键。
