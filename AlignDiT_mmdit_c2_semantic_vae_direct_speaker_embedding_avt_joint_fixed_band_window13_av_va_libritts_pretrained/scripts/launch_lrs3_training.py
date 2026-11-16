@@ -23,6 +23,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -86,7 +87,22 @@ def load_config(args):
     if args.epochs is not None:
         overrides.append(f"optim.epochs={args.epochs}")
     with initialize_config_dir(version_base="1.3", config_dir=str(PROJECT / "src/aligndit/config")):
-        return compose(config_name=CONFIG_NAMES[args.variant], overrides=overrides)
+        config = compose(config_name=CONFIG_NAMES[args.variant], overrides=overrides)
+    run_name = getattr(args, "run_name", None)
+    if run_name is not None:
+        from aligndit.model.fixed_temporal_band_contract import EXPERIMENT_MARKER
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", run_name)
+                or EXPERIMENT_MARKER not in run_name):
+            raise ValueError(f"Run name must be a single safe filename containing {EXPERIMENT_MARKER}")
+        config.model.name = run_name
+    return config
+
+
+def training_event_dir(config):
+    # Match the training entry's experiment name, including isolated smoke runs.
+    exp_name = (f"{config.model.name}_{config.model.audio_representation.name}_"
+                f"{config.datasets.name}_{config.model.tokenizer}")
+    return PROJECT / "runs" / exp_name
 
 
 def validate_publication(config):
@@ -332,6 +348,7 @@ def main():
     parser.add_argument("--cache-root", type=Path)
     parser.add_argument("--checkpoint-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--run-name", help="Separate model/run identity and TensorBoard events; retain the fixed-band marker")
     parser.add_argument("--gpus", default="0,1,2,3")
     parser.add_argument("--master-port", type=int, default=29587)
     parser.add_argument("--tensorboard-port", type=int)
@@ -378,10 +395,9 @@ def main():
         command = [sys.executable, "-u", "-m", "torch.distributed.run", "--nproc_per_node=4",
                    f"--master_port={args.master_port}", "--module", "aligndit.script.train.finetune_lrs3_svae_speaker",
                    "--config-path", str(output), "--config-name", frozen_yaml.stem]
-        exp_name = f"{config.model.name}_{config.model.audio_representation.name}_LRS3_char"
         plan = {"schema_version": 1, "variant": args.variant, "cache_root": str(root), "output_dir": str(output), "command": command,
                 "gpus": args.gpus, "master_port": args.master_port, "tensorboard_port": args.tensorboard_port,
-                "event_dir": str(PROJECT / "runs" / exp_name), "scope": scope, "artifacts": artifacts,
+                "event_dir": str(training_event_dir(config)), "scope": scope, "artifacts": artifacts,
                 "data_contract": data.data_contract, "config_sha256": sha256_file(config_path)}
         plan_path = output / "launch_plan.json"
         old_plan = json.loads(plan_path.read_text()) if plan_path.exists() else None
