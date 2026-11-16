@@ -98,9 +98,12 @@ def validate_publication(config):
         raise RuntimeError("Full training requires a finalized full-source publication")
     source_path = root / "reports/source_contract.json"
     source = json.loads(source_path.read_text())
+    source_contract_digest = sha256_file(source_path)
     readiness_path = root / f"reports/{manifest.parent.name}_readiness.json"
     readiness = json.loads(readiness_path.read_text())
     if (meta["source_pairs"] != source["source_media_pairs"]
+            or meta.get("source_original_ids") != source["original_clip_count"]
+            or meta.get("source_contract_sha256") != source_contract_digest
             or readiness["source_pairs"] != source["source_media_pairs"]
             or readiness["original_ids"] != source["original_clip_count"]
             or readiness["ready_pairs"] != meta["training_ready_pairs"]
@@ -108,8 +111,10 @@ def validate_publication(config):
             or readiness["source_manifest_sha256"] != meta["source_manifest_sha256"]):
         raise RuntimeError("Published source coverage is inconsistent with its frozen source contract")
     source_inventory = root / "manifests/source_inventory.jsonl"
-    if sha256_file(source_inventory) != meta["source_manifest_sha256"]:
-        raise RuntimeError("Source inventory changed after publication")
+    source_inventory_digest = sha256_file(source_inventory)
+    if (source_inventory_digest != meta["source_manifest_sha256"]
+            or source_inventory_digest != source.get("source_inventory_sha256")):
+        raise RuntimeError("Canonical source inventory differs from its contract or publication")
     config.datasets.expected_manifest_sha256 = meta["manifests"][manifest.name]["sha256"]
     config.datasets.expected_inventory_sha256 = meta["manifests"]["inventory.jsonl"]["sha256"]
     config.datasets.expected_inventory_meta_sha256 = sha256_file(meta_path)
@@ -176,7 +181,13 @@ def validate_publication(config):
     artifact_paths.extend(data.text_policy_artifact_paths)
     artifacts = [snapshot(path) for path in artifact_paths]
     artifacts.extend(data.text_evidence_artifacts)
+    source_pins = {str(source_path.resolve()): source_contract_digest,
+                   str(source_inventory.resolve()): source_inventory_digest}
+    if any(artifact["sha256"] != source_pins[artifact["path"]]
+           for artifact in artifacts if artifact["path"] in source_pins):
+        raise RuntimeError("Canonical LRS3 source artifacts changed during launch validation")
     summary = {"source_pairs": source["source_media_pairs"], "source_original_ids": source["original_clip_count"],
+               "source_contract_sha256": source_contract_digest, "source_inventory_sha256": source_inventory_digest,
                "text_policy": data.data_contract["text_policy"],
                "source_kind_counts": data.data_contract["source_kind_counts"],
                "strict_baseline": data.data_contract["strict_baseline"],

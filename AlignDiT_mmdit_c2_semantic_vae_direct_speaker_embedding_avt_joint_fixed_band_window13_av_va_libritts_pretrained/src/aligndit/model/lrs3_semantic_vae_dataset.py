@@ -44,6 +44,36 @@ SOURCE_KINDS = {
 TEXT_POLICIES = {"source_grounded", "source_plus_asr_pseudo"}
 
 
+def _source_contract(root, meta):
+    """Bind full-source scope to the canonical inventory, not accepted labels."""
+    if meta["selection"] != {"mode": "full"}:
+        return {}, []
+    contract_path = _regular_file(root / "reports/source_contract.json", label="LRS3 source contract")
+    contract_bytes = contract_path.read_bytes()
+    contract = json.loads(contract_bytes)
+    contract_digest = hashlib.sha256(contract_bytes).hexdigest()
+    inventory_path = _regular_file(root / "manifests/source_inventory.jsonl", label="canonical LRS3 source inventory")
+    inventory_digest = sha256_file(inventory_path)
+    if (contract.get("schema_version") != 1
+            or type(contract.get("source_media_pairs")) is not int or contract["source_media_pairs"] <= 0
+            or type(contract.get("original_clip_count")) is not int
+            or not 0 < contract["original_clip_count"] <= contract["source_media_pairs"]):
+        raise RuntimeError("Invalid full LRS3 source contract")
+    if (contract.get("source_inventory_sha256") != inventory_digest
+            or meta.get("source_manifest_sha256") != inventory_digest
+            or meta.get("source_contract_sha256") != contract_digest):
+        raise RuntimeError("Full LRS3 source contract or canonical inventory hash mismatch")
+    if (type(meta.get("source_pairs")) is not int
+            or meta["source_pairs"] != contract["source_media_pairs"]
+            or type(meta.get("source_original_ids")) is not int
+            or meta["source_original_ids"] != contract["original_clip_count"]):
+        raise RuntimeError("Full LRS3 source scope differs from its canonical source contract")
+    return {
+        "source_contract_sha256": contract_digest, "source_manifest_sha256": inventory_digest,
+        "source_pairs": contract["source_media_pairs"], "source_original_ids": contract["original_clip_count"],
+    }, [contract_path, inventory_path]
+
+
 def _text_policy(root, manifest_dir, meta, expected):
     """Validate the label policy independently of the source-coverage scope."""
     if expected not in TEXT_POLICIES:
@@ -220,6 +250,7 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
         policy, policy_digest, baseline_dir, self.text_policy_artifact_paths = _text_policy(
             self.cache_root, manifest_dir, meta, expected_text_policy,
         )
+        source_contract, self.source_artifact_paths = _source_contract(self.cache_root, meta)
         for expected, actual, label in (
             (expected_manifest_sha256, digests[self.manifest_path.name], "selected split"),
             (expected_inventory_sha256, digests["inventory.jsonl"], "inventory"),
@@ -352,6 +383,11 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
         if policy is not None and (receipt.get("text_policy") != expected_text_policy
                 or receipt.get("text_policy_sha256") != policy_digest):
             raise RuntimeError("LRS3 cache receipt does not certify this text policy")
+        if source_contract and (
+                receipt.get("source_contract_sha256") != source_contract["source_contract_sha256"]
+                or type(receipt.get("source_original_ids")) is not int
+                or receipt["source_original_ids"] != source_contract["source_original_ids"]):
+            raise RuntimeError("LRS3 cache receipt does not certify the canonical source contract")
         features = receipt.get("features", {})
         for name, feature in (("latents", SEMANTIC_VAE_FEATURE), ("video_40hz", VIDEO_40HZ_FEATURE)):
             part = features.get(name, {})
@@ -393,6 +429,7 @@ class SemanticVaeLRS3Dataset(SemanticVaeCelebVDubDataset):
         }
         self.data_contract = {
             "dataset": "LRS3", "selection": meta["selection"], "split": self.split,
+            **source_contract,
             **({"text_policy": expected_text_policy, "text_policy_sha256": policy_digest,
                 "source_kind_counts": kind_counts, "strict_baseline": policy.get("strict_baseline")}
                if policy is not None else {}),

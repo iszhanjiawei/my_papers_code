@@ -83,10 +83,21 @@ class LRS3ContractTests(unittest.TestCase):
             self.write(self.manifests / "text_policy.json", self.policy)
             policy_fields = {"text_policy": self.policy["policy"],
                              "text_policy_sha256": sha256_file(self.manifests / "text_policy.json")}
+        source_fields = {}
+        contract_path = self.root / "reports/source_contract.json"
+        if selection == {"mode": "full"} and contract_path.exists():
+            contract = json.loads(contract_path.read_text())
+            source_fields = {
+                "source_contract_sha256": sha256_file(contract_path),
+                "source_manifest_sha256": contract["source_inventory_sha256"],
+                "source_pairs": contract["source_media_pairs"],
+                "source_original_ids": contract["original_clip_count"],
+            }
         self.write(self.manifests / "inventory_meta.json", {
             "schema_version": 1, "dataset": "LRS3", "status": "complete",
             "selection": selection, "latent_spec": LATENT_SPEC, "manifests": entries,
             **policy_fields,
+            **source_fields,
             **({"source_kind_counts": {split: dict(Counter(row["source_kind"] for row in self.rows if row["split"] == split))
                                      for split in ("train", "valid", "test")}} if policy_fields else {}),
         })
@@ -107,6 +118,7 @@ class LRS3ContractTests(unittest.TestCase):
         self.write(self.manifests / "cache_completion.json", {
             "schema_version": 1, "status": "complete", "selection": selection,
             **policy_fields,
+            **source_fields,
             "inventory_sha256": entries["inventory.jsonl"]["sha256"], "count": len(self.rows),
             "features": {
                 "latents": {"feature": SEMANTIC_VAE_FEATURE, "count": len(self.rows), "total_frames": total},
@@ -135,6 +147,17 @@ class LRS3ContractTests(unittest.TestCase):
                        "pseudo_scope": "none", "strict_baseline": None}
         for row in self.rows:
             row["source_kind"] = "existing_transcript"
+        # The canonical source scope includes a fifth segment whose transcript
+        # is excluded from strict training and may later enter the pseudo set.
+        source_rows = [{"sample_id": row["original_clip_id"], "original_clip_id": row["original_clip_id"],
+                        "split": row["split"], "source_split": row["source_split"]} for row in self.rows]
+        source_rows.append({"sample_id": "five", "original_clip_id": "five", "split": "train", "source_split": "pretrain"})
+        source_path = self.root / "manifests/source_inventory.jsonl"
+        source_path.write_text("".join(json.dumps(row) + "\n" for row in source_rows))
+        self.write(self.root / "reports/source_contract.json", {
+            "schema_version": 1, "source_inventory_sha256": sha256_file(source_path),
+            "source_media_pairs": len(source_rows), "original_clip_count": len(source_rows),
+        })
         self.freeze()
 
     def pseudo_publication(self):
@@ -288,6 +311,62 @@ class LRS3ContractTests(unittest.TestCase):
         self.assertEqual(data.data_contract["text_policy"], "source_grounded")
         self.assertEqual(data.data_contract["source_kind_counts"]["train"], {"existing_transcript": 2})
         self.assertEqual(data.audit_cache()["count"], 2)
+        self.assertEqual(data.data_contract["source_pairs"], 5)
+        self.assertEqual(sum(data.data_contract["split_counts"].values()), 4)
+        self.assertEqual(data.data_contract["source_original_ids"], 5)
+        self.assertEqual(len(data.source_artifact_paths), 2)
+
+    def test_changed_canonical_source_inventory_rejected(self):
+        self.strict_publication()
+        with (self.root / "manifests/source_inventory.jsonl").open("a") as handle:
+            handle.write("\n")
+        with self.assertRaisesRegex(RuntimeError, "canonical inventory hash mismatch"):
+            self.dataset()
+
+    def test_subset_source_manifest_cannot_certify_full_scope(self):
+        self.strict_publication()
+        path = self.manifests / "inventory_meta.json"
+        meta = json.loads(path.read_text())
+        meta["source_manifest_sha256"] = sha256_file(self.manifests / "inventory.jsonl")
+        self.write(path, meta)
+        with self.assertRaisesRegex(RuntimeError, "canonical inventory hash mismatch"):
+            self.dataset()
+
+    def test_changed_source_contract_rejected_even_when_inventory_unchanged(self):
+        self.strict_publication()
+        path = self.root / "reports/source_contract.json"
+        contract = json.loads(path.read_text())
+        contract["source_media_pairs"] += 1
+        self.write(path, contract)
+        with self.assertRaisesRegex(RuntimeError, "source contract or canonical inventory hash mismatch"):
+            self.dataset()
+
+    def test_source_counts_must_match_contract_and_receipt(self):
+        self.strict_publication()
+        for filename, field, wrong, expected in (
+            ("inventory_meta.json", "source_pairs", 4, "source scope"),
+            ("inventory_meta.json", "source_original_ids", 4, "source scope"),
+            ("cache_completion.json", "source_original_ids", 4, "canonical source contract"),
+            ("cache_completion.json", "source_contract_sha256", "stale", "canonical source contract"),
+        ):
+            with self.subTest(filename=filename, field=field):
+                path = self.manifests / filename
+                original = path.read_bytes()
+                value = json.loads(original)
+                value[field] = wrong
+                self.write(path, value)
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    self.dataset()
+                path.write_bytes(original)
+
+    def test_full_requires_source_contract_while_legacy_pilot_does_not(self):
+        pilot = self.dataset()
+        self.assertNotIn("source_contract_sha256", pilot.data_contract)
+        self.assertEqual(pilot.source_artifact_paths, [])
+        self.strict_publication()
+        (self.root / "reports/source_contract.json").unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.dataset()
 
     def test_strict_publication_cannot_relabel_pseudo_as_accepted(self):
         self.strict_publication()
