@@ -21,6 +21,7 @@ import sys
 import time
 from aligndit.lrs3_media_quality import TERMINAL, excluded_map, load_terminal, scope as media_quality_scope
 from lrs3_text_recovery_export import REQUIRED_RELEASE_FILES
+from lrs3_cache_parallel import ChildSupervisor, FINISH_FD_ENV, ShutdownRequested
 
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -90,8 +91,9 @@ def cache_status(summary, stage, manifest, fingerprint, count, quality=None):
 
 
 class Finisher:
-    def __init__(self, args, lock_fd):
+    def __init__(self, args, lock_fd, children=None):
         self.args, self.lock_fd = args, lock_fd
+        self.children = children or ChildSupervisor(isolated_children=True)
         self.root = args.root.resolve(strict=True)
         self.text_release = (getattr(args, 'text_release', None) or self.root / 'text_recovery/release').resolve()
         self.run = self.root / "reports" / args.name
@@ -346,6 +348,7 @@ class Finisher:
         return True
 
     def command(self, key, command, completed):
+        self.children.check()
         previous = self.state["stages"].get(key)
         if completed():
             self.state["stages"][key] = {**(previous or {}), "status": "complete",
@@ -360,18 +363,29 @@ class Finisher:
         self.state["stages"][key] = stage
         self.save()
         environment = dict(os.environ)
-        environment.update(PYTHONPATH=str(PROJECT / "src"), PYTHONUNBUFFERED="1")
+        environment.update(PYTHONPATH=str(PROJECT / "src"), PYTHONUNBUFFERED="1",
+                           **{FINISH_FD_ENV: str(self.lock_fd)})
         for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
             environment.pop(name, None)
-        with log_path.open("ab") as log:
-            process = subprocess.Popen(command, cwd=PROJECT, env=environment, stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT, pass_fds=(self.lock_fd,))
-            stage.update(status="running", pid=process.pid)
-            self.save()
-            while process.poll() is None:
-                self.check_pins()
+        try:
+            with log_path.open("ab") as log:
+                process = self.children.spawn(command, cwd=PROJECT, env=environment, stdin=subprocess.DEVNULL,
+                    stdout=log, stderr=subprocess.STDOUT, pass_fds=(self.lock_fd,))
+                stage.update(status="running", pid=process.pid)
                 self.save()
-                time.sleep(min(10, self.args.poll_seconds))
+                while process.poll() is None:
+                    self.children.check()
+                    self.check_pins()
+                    self.save()
+                    self.children.sleep(min(10, self.args.poll_seconds))
+                self.children.check()
+                if self.children.live():
+                    raise RuntimeError('Stage exited with live descendants; refusing completion/unlock')
+        except BaseException as error:
+            stage.update(status='interrupted' if isinstance(error, (ShutdownRequested, KeyboardInterrupt)) else 'failed',
+                         error=f'{type(error).__name__}: {error}', stopped_unix=time.time())
+            self.save()
+            raise
         stage.update(returncode=process.returncode, finished_unix=time.time())
         if process.returncode != 0:
             stage["status"] = "failed"
@@ -516,6 +530,7 @@ class Finisher:
                 scheduled.add(entry["name"])
         self.save()
         while True:
+            self.children.check()
             self.check_pins()
             audio = self.audio_done()
             media = self.media_done()
@@ -540,7 +555,7 @@ class Finisher:
                 elif time.time() - self.state["last_selection_unix"] >= self.args.wave_seconds:
                     exclusions = [w["manifest"] for w in external + self.state["waves"]]
                     self.select_wave(exclusions)
-            time.sleep(self.args.poll_seconds)
+            self.children.sleep(self.args.poll_seconds)
 
 
 def main():
@@ -563,15 +578,39 @@ def main():
         parser.error("Existing waves must be distinct")
     lock_path = args.root / "state/locks/finish.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        finisher = Finisher(args, lock.fileno())
+    lock = lock_path.open('a')
+    children = ChildSupervisor(isolated_children=True)
+    acquired, finisher = False, None
+    with children.signals():
         try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+            children.check()
+            finisher = Finisher(args, lock.fileno(), children)
             finisher.run_all()
-        except Exception as error:
-            finisher.state.update(status="failed", error=f"{type(error).__name__}: {error}", failed_unix=time.time())
-            finisher.save()
+        except BaseException as error:
+            if finisher is not None:
+                finisher.state.update(
+                    status='interrupted' if isinstance(error, (ShutdownRequested, KeyboardInterrupt)) else 'failed',
+                    error=f"{type(error).__name__}: {error}", failed_unix=time.time())
+                finisher.save()
+            if isinstance(error, ShutdownRequested):
+                raise SystemExit(128 + error.signum) from error
             raise
+        finally:
+            shutdown = children.stop_and_reap()
+            try:
+                if finisher is not None:
+                    finisher.state['shutdown'] = shutdown
+                    returns = {child.pid: child.returncode for child in children.children}
+                    for stage in finisher.state['stages'].values():
+                        if stage.get('pid') in returns:
+                            stage['returncode'] = returns[stage['pid']]
+                    finisher.save()
+            finally:
+                if acquired:
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                lock.close()
 
 
 if __name__ == "__main__":
