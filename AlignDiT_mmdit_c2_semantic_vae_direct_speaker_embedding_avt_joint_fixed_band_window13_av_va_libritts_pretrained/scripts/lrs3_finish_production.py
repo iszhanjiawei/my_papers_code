@@ -19,6 +19,8 @@ import re
 import subprocess
 import sys
 import time
+from aligndit.lrs3_media_quality import TERMINAL, excluded_map, load_terminal, scope as media_quality_scope
+from lrs3_text_recovery_export import REQUIRED_RELEASE_FILES
 
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -58,15 +60,28 @@ def safe_name(value):
     return value
 
 
-def cache_status(summary, stage, manifest, fingerprint, count):
+def cache_status(summary, stage, manifest, fingerprint, count, quality=None):
     """A complete flag alone is never enough to accept a cache coordinator."""
     if (summary.get("stage") != stage or summary.get("manifest_sha256") != fingerprint
             or Path(summary.get("source_manifest", "")).resolve() != manifest.resolve()
             or summary.get("requested") != count):
         raise ValueError("Cache coordinator has another source scope")
+    if quality is not None:
+        if stage != 'video40' or summary.get('media_quality_terminal_sha256') != quality['_sha256']:
+            raise ValueError('Canonical video40 coordinator uses another media quality closure')
+        if summary.get('complete') is True:
+            raise ValueError('A quality exclusion cannot certify complete source caches')
+        if summary.get('processing_complete') is True:
+            if (summary.get('complete') is not False or summary.get('failed') != 0
+                    or summary.get('succeeded') != count - quality['excluded_count']
+                    or summary.get('quality_excluded') != quality['excluded_count']
+                    or not summary.get('finished_unix')):
+                raise ValueError('Quality-scoped video40 completion counts are inconsistent')
+            return True
     if summary.get("complete") is True:
         if (summary.get("succeeded") != count or summary.get("failed") != 0
-                or not summary.get("finished_unix")):
+                or not summary.get("finished_unix") or summary.get('quality_excluded', 0) != 0
+                or summary.get('media_quality_terminal_sha256') is not None):
             raise ValueError("Cache coordinator falsely reports completion")
         return True
     if summary.get("finished_unix") or not alive(summary.get("pid")):
@@ -78,6 +93,7 @@ class Finisher:
     def __init__(self, args, lock_fd):
         self.args, self.lock_fd = args, lock_fd
         self.root = args.root.resolve(strict=True)
+        self.text_release = (getattr(args, 'text_release', None) or self.root / 'text_recovery/release').resolve()
         self.run = self.root / "reports" / args.name
         self.run.mkdir(parents=True, exist_ok=True)
         self.path = self.run / "state.json"
@@ -110,14 +126,18 @@ class Finisher:
         if digest(self.canonical) != source_hash or read(contract_path) != contract:
             raise ValueError("Source inputs changed during coordinator initialization")
         settings = {"existing_waves": args.existing_wave, "audio_run": args.audio_run,
-                    "workers": args.workers, "finalizer_workers": args.finalizer_workers}
+                    "workers": args.workers, "finalizer_workers": args.finalizer_workers,
+                    'text_release': str(self.text_release)}
         self.state = read(self.path) if self.path.exists() else {
             "schema_version": 1, "pins": self.pins, "settings": settings,
             "stages": {}, "waves": [], "selections": [], "last_selection_unix": 0}
+        if 'text_release' not in self.state.get('settings', {}):
+            self.state['settings']['text_release'] = str((self.root / 'text_recovery/release').resolve())
         if self.state.get("pins") != self.pins or self.state.get("settings") != settings:
             raise ValueError("Finisher inputs or run settings changed; use a different coordinator name")
         self.stamps = {path: (Path(path).stat().st_size, Path(path).stat().st_mtime_ns) for path in self.pins}
         self.state.update(pid=os.getpid(), sid=os.getsid(0), status="running")
+        self.quality = None
         self.save()
 
     def save(self):
@@ -129,6 +149,10 @@ class Finisher:
             stat = Path(path).stat()
             if (stat.st_size, stat.st_mtime_ns) != self.stamps[path] or (full and digest(path) != expected):
                 raise ValueError(f"Pinned production input changed: {path}")
+        if self.quality is not None:
+            if digest(self.root / TERMINAL) != self.quality['_sha256']:
+                raise ValueError('Pinned media quality closure changed')
+            if full:load_terminal(self.root, expected_sha256=self.quality['_sha256'], source_sha256=self.source_hash)
 
     def quiet(self, kinds):
         guards = {"audio": ["latents", "speaker_embeddings"], "media": ["video_25hz"],
@@ -146,8 +170,59 @@ class Finisher:
                     if marker.exists() or marker.is_symlink():
                         info = read(marker)
                         if not alive(info.get("pid")):
+                            if kind == 'video40' and self.retire_failed_canonical_guard(marker, info):
+                                continue
                             raise RuntimeError(f"Stale writer guard requires upstream repair: {marker}")
                         return False
+        return True
+
+    def retire_failed_canonical_guard(self, marker, info):
+        """Authorize a new unique final pass, retaining the previous failed guard/evidence.
+
+        Caller holds a shared video40 lock. No file is removed here; the next
+        coordinator replaces its own guard only after acquiring its exclusive
+        lock. Only an exact reviewed failure set from the old canonical pass
+        can use this recovery path.
+        """
+        if self.quality is None:
+            return False
+        expected_run = self.root / 'reports' / (self.args.name + '_canonical_video40')
+        if info.get('stage') != 'video40' or Path(info.get('run', '')).resolve() != expected_run:
+            return False
+        summary_path = expected_run / 'summary.json'
+        summary = read(summary_path)
+        if (summary.get('complete') is not False or not summary.get('finished_unix')
+                or summary.get('manifest_sha256') != self.source_hash or summary.get('requested') != self.count
+                or Path(summary.get('source_manifest', '')).resolve() != self.canonical
+                or alive(summary.get('pid'))):
+            raise ValueError('Old canonical writer lacks a finished failed canonical summary')
+        latest, pins = {}, {str(marker): digest(marker), str(summary_path): digest(summary_path)}
+        for attempt in summary.get('rounds', []):
+            for worker in attempt.get('workers', []):
+                if alive(worker.get('pid')):
+                    raise RuntimeError('Old canonical worker is still active')
+            for path in attempt.get('summaries', []):
+                item = read(path)
+                progress = Path(item['progress_path'])
+                pins[str(path)], pins[str(progress)] = digest(path), digest(progress)
+                with progress.open() as handle:
+                    for line in handle:
+                        result = json.loads(line)
+                        if result['sample_id'] not in self.identities:
+                            raise ValueError('Old canonical progress contains a noncanonical sample')
+                        latest[result['sample_id']] = result['status']
+        failed = {key for key, status in latest.items() if status == 'error'}
+        if (latest.keys() != self.identities.keys() or failed != excluded_map(self.quality).keys()
+                or any(status not in {'ok','error'} for status in latest.values())
+                or summary.get('failed') != len(failed)
+                or summary.get('succeeded') != self.count - len(failed)):
+            raise ValueError('Old canonical failures are not exactly the reviewed media exclusions')
+        record = {'terminal_sha256': self.quality['_sha256'], 'old_guard': info,
+                  'old_evidence_pins': pins, 'action': 'new unique canonical quality pass; old evidence retained'}
+        path = self.run / ('canonical_quality_transition_' + self.quality['_sha256'][:16] + '.json')
+        if path.exists() and read(path) != record:
+            raise ValueError('Old canonical failure evidence changed since transition review')
+        if not path.exists():write(path, record)
         return True
 
     def manifest_scope(self, path):
@@ -163,11 +238,11 @@ class Finisher:
                 seen.add(sample)
         return {"manifest": str(path), "sha256": digest(path), "count": len(seen)}
 
-    def cache_done(self, name, manifest, fingerprint, count, stage="video40"):
+    def cache_done(self, name, manifest, fingerprint, count, stage="video40", quality=None):
         path = self.root / "reports" / name / "summary.json"
         if not path.exists():
             return False
-        return cache_status(read(path), stage, Path(manifest), fingerprint, count)
+        return cache_status(read(path), stage, Path(manifest), fingerprint, count, quality)
 
     def audio_done(self):
         path = self.root / "reports" / self.args.audio_run / "summary.json"
@@ -180,6 +255,22 @@ class Finisher:
         state = read(path)
         if state.get("manifest_sha256") != self.source_hash or Path(state["manifest"]).resolve() != self.canonical:
             raise ValueError("Media pipeline has another canonical source scope")
+        if state.get('status') == 'finished_with_failures':
+            quality = load_terminal(self.root, source_sha256=self.source_hash,
+                                    expected_sha256=self.state.get('media_quality_terminal_sha256'))
+            if quality is None:
+                raise RuntimeError('Media failures require explicit reviewed quality closure or upstream repair')
+            if any(self.identities.get(key) != (row['relative_stem'], row['original_clip_id'])
+                   for key, row in excluded_map(quality).items()):
+                raise ValueError('Media quality closure contains noncanonical identities')
+            if not self.quiet(['media']):return False
+            self.quality = quality
+            self.state['media_quality_terminal_sha256'] = quality['_sha256']
+            self.state['media_quality'] = media_quality_scope(quality)
+            self.save()
+            return True
+        if (self.root / TERMINAL).exists() or self.state.get('media_quality_terminal_sha256'):
+            raise ValueError('Media state changed after a fixed quality closure')
         if state.get("status") == "complete":
             summary = read(path.parent / "summary.json")
             if (state.get("summary") != summary or summary.get("complete") is not True
@@ -211,7 +302,7 @@ class Finisher:
         return False
 
     def text_done(self):
-        release = self.root / "text_recovery/release"
+        release = self.text_release
         path = release / "frozen_export.json"
         if not path.exists():
             # A live export may legitimately still be waiting for ASR/MFA/CTC.
@@ -238,11 +329,16 @@ class Finisher:
                 or summary.get("segments_requested") != self.missing_count
                 or sum(summary.get(key, -1) for key in categories) != self.missing_count):
             raise ValueError("Text recovery freeze is incomplete or belongs to another source scope")
-        for name in ("summary.json", "labels.strict.accepted.jsonl", "labels.pseudo_p1.accepted.jsonl"):
+        required = REQUIRED_RELEASE_FILES
+        if not isinstance(frozen.get('files'), dict) or not required <= frozen['files'].keys():
+            raise ValueError('Frozen text export must pin every required publication file')
+        for name in required:
             if frozen.get("files", {}).get(name) != digest(release / name):
                 raise ValueError(f"Frozen recovery file changed: {name}")
         if read(release / "summary.json") != summary:
             raise ValueError("Frozen recovery summary differs from published summary")
+        if (release / 'labels.pending.jsonl').read_bytes().strip():
+            raise ValueError('Frozen recovery still contains pending labels')
         fingerprint = digest(path)
         if self.state.get("frozen_text_sha256", fingerprint) != fingerprint:
             raise ValueError("Previously observed immutable text freeze changed")
@@ -294,8 +390,12 @@ class Finisher:
         command = [sys.executable, "-u", str(SCRIPTS / "lrs3_cache_parallel.py"), "--root", str(self.root),
                    "--manifest", entry["manifest"], "--stage", "video40", "--gpus", ",".join(["cpu"] * self.args.workers),
                    "--name", entry["name"]]
+        quality = self.quality if entry.get('canonical_quality') else None
+        if quality:
+            command += ['--media-quality-terminal', str(self.root / TERMINAL),
+                        '--media-quality-terminal-sha256', quality['_sha256']]
         self.command(entry["name"], command,
-                     lambda: self.cache_done(entry["name"], entry["manifest"], entry["sha256"], entry["count"]))
+                     lambda: self.cache_done(entry["name"], entry["manifest"], entry["sha256"], entry["count"], quality=quality))
 
     def select_wave(self, exclusions):
         index = len(self.state["selections"]) + 1
@@ -335,6 +435,8 @@ class Finisher:
             return False
         receipt = read(marker)
         meta = read(directory / "inventory_meta.json")
+        if meta.get('media_quality') != media_quality_scope(self.quality) or receipt.get('media_quality') != meta.get('media_quality'):
+            raise ValueError('Publication media quality closure differs from the canonical final pass')
         expected = "source_grounded" if name == "full" else "source_plus_asr_pseudo"
         if (receipt.get("status") != "complete" or receipt.get("selection") != {"mode": "full"}
                 or meta.get("source_manifest_sha256") != self.source_hash or meta.get("source_pairs") != self.count
@@ -350,7 +452,7 @@ class Finisher:
         return True
 
     def publish(self):
-        labels = self.root / "text_recovery/release"
+        labels = self.text_release
         for name in ("full", "full_pseudo"):
             command = [sys.executable, "-u", str(SCRIPTS / "lrs3_finalize_cache.py"), "--root", str(self.root),
                 "--source-manifest", str(self.canonical), "--recovered-labels", str(labels / "labels.strict.accepted.jsonl"),
@@ -372,6 +474,8 @@ class Finisher:
                     return False
                 value = read(plan)
                 scope = value.get("scope", {})
+                if scope.get('media_quality') != media_quality_scope(self.quality):
+                    raise ValueError('Dry-run plan uses another media quality closure')
                 if (value.get("variant") != variant or scope.get("source_inventory_sha256") != self.source_hash
                         or scope.get("source_pairs") != self.count or scope.get("source_original_ids") != self.original_count
                         or not value.get("artifacts")):
@@ -424,8 +528,9 @@ class Finisher:
                 for entry in self.state["waves"]:
                     self.wave(entry)
                 if media:
-                    self.wave({"name": self.args.name + "_canonical_video40", "manifest": str(self.canonical),
-                               "sha256": self.source_hash, "count": self.count})
+                    suffix = '_quality_' + self.quality['_sha256'][:16] if self.quality else ''
+                    self.wave({"name": self.args.name + "_canonical_video40" + suffix, "manifest": str(self.canonical),
+                               "sha256": self.source_hash, "count": self.count, 'canonical_quality': self.quality is not None})
                     if audio and text_ready and self.quiet(["audio", "media", "video40", "publication"]):
                         self.publish()
                         self.check_pins(full=True)
@@ -444,6 +549,8 @@ def main():
     parser.add_argument("--name", type=safe_name, default="finish_production")
     parser.add_argument("--existing-wave", type=safe_name, action="append", default=[])
     parser.add_argument("--audio-run", type=safe_name, default="full_audio_001")
+    parser.add_argument('--text-release', type=Path,
+                        help='Immutable frozen text release directory (default: ROOT/text_recovery/release)')
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--finalizer-workers", type=int, default=16)
     parser.add_argument("--poll-seconds", type=float, default=30)

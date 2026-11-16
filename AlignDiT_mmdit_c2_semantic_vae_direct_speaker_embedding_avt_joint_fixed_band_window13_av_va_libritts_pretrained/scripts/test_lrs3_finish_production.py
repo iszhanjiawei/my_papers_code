@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from lrs3_finish_production import Finisher, PROTOCOL, cache_status, digest, write
+from lrs3_finish_production import Finisher, PROTOCOL, REQUIRED_RELEASE_FILES, cache_status, digest, write
 
 
 class FinishTests(unittest.TestCase):
@@ -119,15 +119,22 @@ class FinishTests(unittest.TestCase):
                    "segments_requested": 1, "strict_segments": 1, "pseudo_p1_segments": 0,
                    "pseudo_p2_candidate_segments": 0, "excluded_segments": 0}
         write(release / "summary.json", summary)
-        for name in ("labels.strict.accepted.jsonl", "labels.pseudo_p1.accepted.jsonl"):
+        for name in REQUIRED_RELEASE_FILES - {'summary.json'}:
             (release / name).write_text("")
         frozen = {"source_manifest_sha256": self.fingerprint, "summary": summary,
                   "files": {p.name: digest(p) for p in release.iterdir()}}
         write(release / "frozen_export.json", frozen)
         self.assertTrue(self.finish.text_done())
-        (release / "labels.strict.accepted.jsonl").write_text("changed")
-        with self.assertRaises(ValueError):
-            self.finish.text_done()
+        for name in REQUIRED_RELEASE_FILES:
+            path = release / name
+            original = path.read_bytes()
+            path.write_bytes(original + b'changed')
+            with self.subTest(tampered=name), self.assertRaises(ValueError):self.finish.text_done()
+            path.write_bytes(original)
+            missing = {**frozen,'files':{key:value for key,value in frozen['files'].items() if key!=name}}
+            write(release / 'frozen_export.json',missing)
+            with self.subTest(missing=name), self.assertRaises(ValueError):self.finish.text_done()
+            write(release / 'frozen_export.json',frozen)
         frozen["summary"]["groups_complete"] = 0
         write(release / "frozen_export.json", frozen)
         with self.assertRaises(ValueError):
@@ -156,6 +163,25 @@ class FinishTests(unittest.TestCase):
         for call in calls:
             self.assertNotIn("--start", call.args[1])
         self.assertIn("--strict-baseline", calls[1].args[1])
+
+    def test_explicit_text_release_is_pinned_and_used_by_both_publications(self):
+        self.args.name = 'finish_v2'
+        self.args.text_release = self.root / 'text_recovery/release_v2'
+        finish = Finisher(self.args, self.lock.fileno())
+        with mock.patch.object(finish, 'command') as command:finish.publish()
+        for call in command.call_args_list[:2]:
+            self.assertIn(str(self.args.text_release / 'labels.strict.accepted.jsonl'),call.args[1])
+            self.assertNotIn(str(self.root / 'text_recovery/release/labels.strict.accepted.jsonl'),call.args[1])
+        self.args.text_release = self.root / 'text_recovery/release_v3'
+        with self.assertRaises(ValueError):Finisher(self.args,self.lock.fileno())
+
+    def test_empty_frozen_file_map_is_rejected(self):
+        release = self.root / 'text_recovery/release'
+        summary = {'processing_complete':True,'asr_and_requested_controls_complete':True,
+            'pending_segments':0,'groups_requested':1,'groups_complete':1,'segments_requested':1,
+            'strict_segments':1,'pseudo_p1_segments':0,'pseudo_p2_candidate_segments':0,'excluded_segments':0}
+        write(release / 'frozen_export.json',{'source_manifest_sha256':self.fingerprint,'summary':summary,'files':{}})
+        with self.assertRaisesRegex(ValueError,'every required'):self.finish.text_done()
 
 
 if __name__ == "__main__":

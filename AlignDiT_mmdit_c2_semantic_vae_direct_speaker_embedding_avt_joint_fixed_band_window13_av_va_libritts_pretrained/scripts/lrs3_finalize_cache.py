@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from lrs3_build_inventory import clean_text, digest, write_json, write_jsonl
+from aligndit.lrs3_media_quality import evidence_paths, excluded_map, load_terminal, scope as media_quality_scope
 
 LATENT_SPEC = {'dimension':64,'dtype':'float32','frame_rate_hz':40.0,
                'hop_length_samples':400,'mode':'fixed_posterior_sample','sample_rate':16000}
@@ -126,10 +127,17 @@ def text_policy_contract(root, policy, baseline):
     return result, path
 
 
-def validate(row, root, vocabulary, recovered, strict_provenance=False, text_policy='source_grounded'):
+def validate(row, root, vocabulary, recovered, strict_provenance=False, text_policy='source_grounded',
+             media_quality_exclusions=None):
     r = dict(row)
     r['source_kind'] = 'existing_transcript' if r['text'] else 'unresolved'
     reasons = []
+    excluded = (media_quality_exclusions or {}).get(r['sample_id'])
+    if excluded is not None:
+        if any(excluded[key] != r[key] for key in ['relative_stem','original_clip_id']):
+            raise ValueError('Media quality exclusion identity differs from the canonical row')
+        reasons.append('media_quality:' + excluded['reason'])
+        r['media_quality_exclusion'] = excluded
     if not r['text'] and r['sample_id'] in recovered:
         label = recovered[r['sample_id']]
         if label.get('original_clip_id') != r['original_clip_id'] or label.get('accepted') is not True:
@@ -243,6 +251,7 @@ def main():
     rows,source_hash=read_rows_snapshot(args.source_manifest)
     input_pins={str(args.source_manifest):source_hash}
     source_contract_hash=None
+    media_quality=None
     if args.mode=='full':
         contract_path=args.root/'reports/source_contract.json'
         contract_bytes=contract_path.read_bytes()
@@ -254,6 +263,9 @@ def main():
             len({r['original_clip_id'] for r in rows})!=contract['original_clip_count']):
             raise ValueError('Full source inventory differs from the canonical source contract')
         input_pins.update({str(contract_path):source_contract_hash,str(canonical):source_hash})
+        media_quality=load_terminal(args.root,source_sha256=source_hash)
+        for path in evidence_paths(media_quality):
+            input_pins[str(path)]=digest(path)
         if any(not r['text'] for r in rows) and not args.recovered_labels:
             raise ValueError('Full publication requires completed text recovery accounting for missing transcripts')
     for key in ['sample_id','utterance_key','relative_stem']:
@@ -265,6 +277,14 @@ def main():
     recovered={}
     checked_evidence=set()
     known_source_ids={r['sample_id'] for r in rows}
+    media_exclusions=excluded_map(media_quality)
+    if not media_exclusions.keys() <= known_source_ids:
+        raise ValueError('Media quality exclusions contain noncanonical source IDs')
+    quality_scope=media_quality_scope(media_quality)
+    if baseline_path is not None:
+        baseline_meta=json.loads((baseline_path/'inventory_meta.json').read_text())
+        if baseline_meta.get('media_quality') != quality_scope:
+            raise ValueError('Pseudo extension and strict baseline have different media quality closures')
     missing_pairs=sum(not r['text'] for r in rows)
     missing_groups=len({r['original_clip_id'] for r in rows if not r['text']})
     label_pins=[]
@@ -295,7 +315,7 @@ def main():
     vocabulary={c:i for i,c in enumerate(vocab_path.read_text().splitlines())}
     accepted=[]; quality=[]; reasons_count=collections.Counter(); originals={}
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        results=pool.map(lambda r:validate(r,args.root,vocabulary,recovered,args.mode=='full',args.text_policy),rows)
+        results=pool.map(lambda r:validate(r,args.root,vocabulary,recovered,args.mode=='full',args.text_policy,media_exclusions),rows)
         for i,(r,reasons) in enumerate(results):
             oid=r['original_clip_id']
             original=originals.setdefault(oid,{'original_clip_id':oid,'split':r['split'],'source_pairs':0,
@@ -310,7 +330,8 @@ def main():
             original['source_kind_counts'][r['source_kind']]+=1
             original['crop_kind_counts'][r['media_preprocessing']['crop_kind'] or 'unknown']+=1
             original['ctc_infeasible_pairs']+=not r['ctc_feasible_40hz']
-            original['cache_ready_pairs']+=len(r['cache_sha256'])==4 and not any('provenance:' in x for x in reasons)
+            original['cache_ready_pairs']+=len(r['cache_sha256'])==4 and not any(
+                'provenance:' in x or x.startswith('media_quality:') for x in reasons)
             original['samples'].append({'sample_id':r['sample_id'],'ready':not reasons,'reasons':reasons})
             if not reasons:
                 accepted.append(r);original['ready_pairs']+=1;original['ready_audio_seconds']+=r['audio_seconds']
@@ -326,6 +347,8 @@ def main():
                             'audio_seconds':r['audio_seconds'],'video_seconds':r['video_seconds'],
                             'ctc_feasible_40hz':r['ctc_feasible_40hz'],'media_preprocessing':r['media_preprocessing'],
                             'cache_sha256':r['cache_sha256']})
+            if 'media_quality_exclusion' in r:
+                quality[-1]['media_quality_exclusion']=r['media_quality_exclusion']
             if (i+1)%1000==0:print(json.dumps({'audited':i+1,'total':len(rows),'accepted':len(accepted)}),flush=True)
     if not accepted:raise RuntimeError('No training-ready samples; no manifest published')
     if baseline_path is not None:
@@ -363,6 +386,7 @@ def main():
           'source_contract_sha256':source_contract_hash,'source_original_ids':len(originals),
           'source_pairs':len(rows),'training_ready_pairs':len(accepted),'excluded_pairs':len(rows)-len(accepted),
           'all_requested_source_pairs_ready':len(accepted)==len(rows),'vocab_sha256':digest(vocab_path)}
+    if quality_scope is not None:meta['media_quality']=quality_scope
     write_json(manifest_dir/'inventory_meta.json',meta)
     speaker_dir=manifest_dir/'speaker_contract'
     speaker={'schema_version':1,'status':'complete','model_id':'iic/speech_campplus_sv_zh_en_16k-common_advanced',
@@ -385,6 +409,7 @@ def main():
              'speaker_metadata_dir':str(speaker_dir),
              'speaker_metadata_sha256':digest(speaker_dir/'metadata.json'),
              'speaker_coverage_sha256':digest(speaker_dir/'coverage_report.json')}
+    if quality_scope is not None:receipt['media_quality']=quality_scope
     write_jsonl(args.root/f'reports/{args.name}_sample_quality.jsonl',quality)
     for o in originals.values():
         o['fully_covered']=o['source_pairs']==o['ready_pairs']
@@ -424,6 +449,7 @@ def main():
              'limitations':['Text consensus is automatic evidence, not human verification.',
                             'Duration and feature-length agreement alone do not prove lip/audio synchronization.',
                             'Completion receipt covers only the published accepted inventory; exclusions remain explicit.']}
+    if quality_scope is not None:summary['media_quality']=quality_scope
     write_json(args.root/f'reports/{args.name}_readiness.json',summary)
     for path,fingerprint in input_pins.items():
         if digest(path)!=fingerprint:raise ValueError('A publication input changed before completion')

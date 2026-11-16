@@ -15,6 +15,7 @@ import sys
 import time
 
 from lrs3_build_inventory import digest, write_json, write_jsonl
+from aligndit.lrs3_media_quality import TERMINAL, excluded_map, load_terminal
 
 
 def rows(path):
@@ -30,6 +31,8 @@ def main():
     parser.add_argument('--gpus', default='0,0,1,1,3,3', help='One entry per worker; CPU stage uses only the count.')
     parser.add_argument('--name', required=True)
     parser.add_argument('--retries', type=int, default=1)
+    parser.add_argument('--media-quality-terminal', type=Path)
+    parser.add_argument('--media-quality-terminal-sha256')
     args = parser.parse_args()
     if '/' in args.name or args.name in {'.', '..'}:
         raise ValueError('Invalid run name')
@@ -47,13 +50,25 @@ def main():
     by_id = {row['sample_id']: row for row in all_rows}
     if len(by_id) != len(all_rows):
         raise ValueError('Duplicate sample identities')
+    quality = load_terminal(args.root) if args.stage == 'video40' else None
+    if quality is not None or args.media_quality_terminal or args.media_quality_terminal_sha256:
+        if (args.stage != 'video40' or quality is None or args.media_quality_terminal is None
+                or args.media_quality_terminal.resolve() != (args.root / TERMINAL).resolve()
+                or args.media_quality_terminal_sha256 != quality['_sha256']
+                or digest(args.manifest) != quality['source_manifest_sha256']
+                or len(all_rows) != quality['requested']):
+            raise ValueError('Media quality exclusions require an explicit canonical full pass with matching hash')
+    quality_excluded = excluded_map(quality)
+    if not quality_excluded.keys() <= by_id.keys():
+        raise ValueError('Quality exclusions are outside canonical video40 scope')
     state = {'stage': args.stage, 'pid': os.getpid(), 'started_unix': time.time(),
              'source_manifest': str(args.manifest), 'manifest_sha256': digest(args.manifest),
-             'requested': len(all_rows), 'succeeded': 0, 'complete': False, 'rounds': []}
+             'requested': len(all_rows), 'succeeded': 0, 'complete': False, 'rounds': [],
+             'media_quality_terminal_sha256': quality['_sha256'] if quality else None}
     for path in active_paths:
         write_json(path, {'pid': os.getpid(), 'run': str(run), 'stage': args.stage})
     write_json(run / 'summary.json', state)
-    succeeded = set()
+    succeeded, excluded = set(), set()
     manifest = args.manifest
     for attempt in range(args.retries + 1):
         round_state = {'attempt': attempt, 'manifest': str(manifest), 'workers': []}
@@ -70,6 +85,9 @@ def main():
             command = [sys.executable, '-u', str(project / 'scripts/lrs3_cache_worker.py'),
                        '--root', str(args.root), '--manifest', str(manifest), '--stage', args.stage,
                        '--rank', str(rank), '--world-size', str(len(devices)), '--threads', '2']
+            if quality:
+                command += ['--media-quality-terminal', str(args.root / TERMINAL),
+                            '--media-quality-terminal-sha256', quality['_sha256']]
             log_path = run / f'round{attempt}.rank{rank}.log'
             log = log_path.open('w')
             process = subprocess.Popen(command, cwd=project, env=environment, stdout=log, stderr=subprocess.STDOUT,
@@ -95,12 +113,18 @@ def main():
                 raise RuntimeError('Unexpected concurrent worker summary')
             for result in rows(Path(summary['progress_path'])):
                 if result['status'] == 'ok':
-                    if result['sample_id'] not in by_id:
+                    if result['sample_id'] not in by_id or result['sample_id'] in quality_excluded:
                         raise RuntimeError('Worker returned an unknown identity')
                     succeeded.add(result['sample_id'])
+                elif result['status'] == 'excluded':
+                    expected = quality_excluded.get(result['sample_id'])
+                    if (expected is None or result.get('reason') != 'media_quality:' + expected['reason']
+                            or result.get('media_quality_terminal_sha256') != quality['_sha256']):
+                        raise RuntimeError('Worker returned an unauthorized quality exclusion')
+                    excluded.add(result['sample_id'])
         round_state['summaries'] = [str(path) for path in sorted(summaries)]
-        pending = [row for row in all_rows if row['sample_id'] not in succeeded]
-        state.update(succeeded=len(succeeded), failed=len(pending))
+        pending = [row for row in all_rows if row['sample_id'] not in succeeded | excluded]
+        state.update(succeeded=len(succeeded), quality_excluded=len(excluded), failed=len(pending))
         write_json(run / 'summary.json', state)
         if not pending:
             break
@@ -108,10 +132,13 @@ def main():
         write_jsonl(manifest, pending)
         print(json.dumps({'stage': args.stage, 'attempt': attempt, 'succeeded': len(succeeded),
                           'remaining': len(pending)}), flush=True)
-    state.update(complete=len(succeeded) == len(all_rows), finished_unix=time.time())
+    if excluded != quality_excluded.keys():
+        raise RuntimeError('Final video40 exclusion set differs from the reviewed quality closure')
+    state.update(complete=len(succeeded) == len(all_rows),
+                 processing_complete=len(succeeded | excluded) == len(all_rows), finished_unix=time.time())
     write_json(run / 'summary.json', state)
     print(json.dumps(state, indent=2), flush=True)
-    if not state['complete']:
+    if not state['processing_complete']:
         raise SystemExit(1)  # Keep WRITE_ACTIVE guards until a successful repair.
     for path in active_paths:
         path.unlink()

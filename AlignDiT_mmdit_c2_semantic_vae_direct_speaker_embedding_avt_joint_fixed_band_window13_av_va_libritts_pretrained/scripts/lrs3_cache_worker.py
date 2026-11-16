@@ -17,6 +17,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from lrs3_build_inventory import digest, write_json
+from aligndit.lrs3_media_quality import TERMINAL, excluded_map, load_terminal
 from aligndit.script.misc.extract_campplus_speaker_embeddings import (
     AudioFeatureDataset, ExtractionItem, EXPECTED_CHECKPOINT_SHA256,
     atomic_save_npy, load_campplus, validate_speaker_embedding_array,
@@ -148,6 +149,8 @@ def main():
     p.add_argument('--device',default='cuda:0')
     p.add_argument('--limit',type=int)
     p.add_argument('--threads',type=int,default=2)
+    p.add_argument('--media-quality-terminal', type=Path)
+    p.add_argument('--media-quality-terminal-sha256')
     args = p.parse_args(); args.prefix=prefix
     assert 0 <= args.rank < args.world_size
     torch.set_num_threads(args.threads)
@@ -160,6 +163,14 @@ def main():
         print('Codec contract initialized',flush=True); return
     rows = read_rows(args.manifest)[args.rank::args.world_size]
     if args.limit is not None:rows=rows[:args.limit]
+    quality = load_terminal(args.root) if args.stage == 'video40' else None
+    if quality is not None or args.media_quality_terminal or args.media_quality_terminal_sha256:
+        if (args.stage != 'video40' or quality is None or args.limit is not None
+                or args.media_quality_terminal is None
+                or args.media_quality_terminal.resolve() != (args.root / TERMINAL).resolve()
+                or args.media_quality_terminal_sha256 != quality['_sha256']):
+            raise ValueError('Quality exclusions require an explicit hash-pinned canonical video40 pass')
+    quality_excluded = excluded_map(quality)
     device = torch.device(args.device)
     model=cam=decoder=None
     if args.stage=='audio':
@@ -175,10 +186,20 @@ def main():
     stamp=datetime.datetime.now().strftime('%Y%m%dT%H%M%S')
     progress=args.root/f'reports/{args.stage}.{stamp}.rank{args.rank}.jsonl'
     progress.parent.mkdir(parents=True,exist_ok=True)
-    started=time.monotonic(); failed=0
+    started=time.monotonic(); failed=0; excluded_count=0
     with progress.open('w',buffering=1) as log:
         for i,r in enumerate(rows):
             result={'sample_id':r['sample_id'],'utterance_key':r['utterance_key'],'stage':args.stage}
+            if r['sample_id'] in quality_excluded:
+                exclusion = quality_excluded[r['sample_id']]
+                if (r['relative_stem'] != exclusion['relative_stem']
+                        or r['original_clip_id'] != exclusion['original_clip_id']):
+                    raise ValueError('Quality-excluded source identity differs')
+                excluded_count += 1
+                result.update(status='excluded', reason='media_quality:' + exclusion['reason'],
+                              media_quality_terminal_sha256=quality['_sha256'])
+                log.write(json.dumps(result,ensure_ascii=False)+'\n')
+                continue
             try:
                 frames=r['latent_frames']
                 if args.stage=='audio':
@@ -244,8 +265,11 @@ def main():
             log.write(json.dumps(result,ensure_ascii=False)+'\n')
             if (i+1)%20==0 or i+1==len(rows):
                 print(json.dumps({'stage':args.stage,'rank':args.rank,'done':i+1,'total':len(rows),'failed':failed,'elapsed_seconds':round(time.monotonic()-started,2)}),flush=True)
-    summary={'stage':args.stage,'rank':args.rank,'requested':len(rows),'succeeded':len(rows)-failed,'failed':failed,
-             'complete':failed==0,'manifest_sha256':digest(args.manifest),'progress_path':str(progress),
+    summary={'stage':args.stage,'rank':args.rank,'requested':len(rows),'succeeded':len(rows)-failed-excluded_count,'failed':failed,
+             'quality_excluded':excluded_count,'processing_complete':failed==0,
+             'complete':failed==0 and excluded_count==0,
+             'media_quality_terminal_sha256':quality['_sha256'] if quality else None,
+             'manifest_sha256':digest(args.manifest),'progress_path':str(progress),
              'elapsed_seconds':time.monotonic()-started,'worker_sha256':digest(__file__)}
     write_json(progress.with_suffix('.summary.json'),summary)
     if failed:raise SystemExit(1)

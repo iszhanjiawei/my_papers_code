@@ -124,6 +124,8 @@ def validate_publication(config):
     data = SemanticVaeLRS3Dataset(**{key: value for key, value in values.items() if key in parameters})
     if data.data_contract["split_counts"] != readiness["split_counts"]:
         raise RuntimeError("Readiness split counts differ from validated manifest contents")
+    if readiness.get('media_quality') != data.data_contract.get('media_quality'):
+        raise RuntimeError('Readiness report differs from the pinned media quality closure')
     quality_path = root / f"reports/{manifest.parent.name}_sample_quality.jsonl"
     source_ids = {}
     for row in _iter_jsonl(source_inventory):
@@ -145,6 +147,11 @@ def validate_publication(config):
             raise RuntimeError(f"Quality report source identity mismatch: {key}")
         if row["ready"] != (key in accepted_ids):
             raise RuntimeError(f"Quality report accepted membership mismatch: {key}")
+        media_exclusion = data.media_quality_exclusions.get(key)
+        if media_exclusion is not None and (row['ready'] or
+                'media_quality:' + media_exclusion['reason'] not in row['reasons'] or
+                row.get('media_quality_exclusion') != media_exclusion):
+            raise RuntimeError('Quality report omits or changes a sealed media exclusion')
         if row["ready"]:
             if row["reasons"]:
                 raise RuntimeError("Accepted quality record contains rejection reasons")
@@ -179,7 +186,8 @@ def validate_publication(config):
                       Path(config.datasets.vocab_path), Path(config.datasets.normalization_path)]
     artifact_paths.extend(manifest.parent / name for name in meta["manifests"])
     artifact_paths.extend(data.text_policy_artifact_paths)
-    artifacts = [snapshot(path) for path in artifact_paths]
+    artifact_paths.extend(data.media_quality_artifact_paths)
+    artifacts = [snapshot(path) for path in dict.fromkeys(artifact_paths)]
     artifacts.extend(data.text_evidence_artifacts)
     source_pins = {str(source_path.resolve()): source_contract_digest,
                    str(source_inventory.resolve()): source_inventory_digest}
@@ -195,6 +203,7 @@ def validate_publication(config):
                "accepted_split_counts": readiness["split_counts"], "exclusion_reasons": reasons,
                "accepted_audio_hours": readiness["audio_hours_by_split"],
                "scope": "All source records audited; training uses the explicitly accepted publication only"}
+    if 'media_quality' in data.data_contract:summary['media_quality'] = data.data_contract['media_quality']
     return data, artifacts, summary
 
 
