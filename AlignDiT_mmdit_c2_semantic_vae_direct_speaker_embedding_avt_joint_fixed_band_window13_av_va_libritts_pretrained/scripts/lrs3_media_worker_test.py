@@ -2,6 +2,7 @@
 import csv
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 import cv2
@@ -10,9 +11,26 @@ import numpy as np
 import lrs3_media_worker as worker
 from lrs3_media_worker import (complete_segment_offsets, crop_mouth, interpolate_landmarks,
                               read_frames, valid_array, verify_original_frame_mapping)
+from lrs3_media_worker_pipeline import Pipeline
 
 
 class MediaWorkerTests(unittest.TestCase):
+    def test_pipeline_decoder_threads_apply_only_to_av_and_preserve_crop_override(self):
+        pipeline = Pipeline.__new__(Pipeline)
+        pipeline.root = Path("/unused/output")
+        pipeline.args = SimpleNamespace(cpu_threads=2, mean_face="mean.npy", checkpoint="model.pt",
+                                        inventory="inventory.tsv", landmark_root="landmarks",
+                                        original_root="original", fairseq_root="fairseq", user_dir="avhubert",
+                                        av_decode_threads=0)
+        self.assertNotIn("--decode-threads", pipeline.command("manifest.jsonl", 0, 1))
+        pipeline.args.av_decode_threads = 4
+        for stage in ("all", "features"):
+            command = pipeline.command("manifest.jsonl", 0, 1, media_stage=stage)
+            self.assertEqual(command[command.index("--decode-threads") + 1], "4")
+        crop = pipeline.command("manifest.jsonl", 0, 1, media_stage="crop", decode_threads=2)
+        self.assertEqual(crop[crop.index("--decode-threads") + 1], "2")
+        self.assertNotIn("--decode-threads", pipeline.command("manifest.jsonl", 0, 1, repair=True))
+
     def test_offsets_include_segments_not_selected_for_training(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "inventory.tsv"

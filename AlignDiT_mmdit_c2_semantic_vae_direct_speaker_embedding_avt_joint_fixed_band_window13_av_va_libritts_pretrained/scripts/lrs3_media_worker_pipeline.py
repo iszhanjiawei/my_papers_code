@@ -119,6 +119,8 @@ class Pipeline:
                         "--original-root", self.args.original_root,
                         "--fairseq-root", self.args.fairseq_root, "--user-dir", self.args.user_dir,
                         "--stage", media_stage]
+            if decode_threads is None and media_stage != "crop":
+                decode_threads = getattr(self.args, "av_decode_threads", 0) or None
             if decode_threads is not None:
                 command += ["--decode-threads", str(decode_threads)]
         return command
@@ -342,6 +344,8 @@ if __name__ == "__main__":
     parser.add_argument("--repair-gpus", default="0,1,3")
     parser.add_argument("--long-gpu", default="0")
     parser.add_argument("--cpu-threads", type=int, default=2)
+    parser.add_argument("--av-decode-threads", type=int, default=0,
+                        help="FFmpeg threads per AV worker video; zero preserves the decoder default")
     parser.add_argument("--crop-workers", type=int, default=0,
                         help="Run a separate CPU face-to-mouth stage before GPU extraction")
     parser.add_argument("--crop-decode-threads", type=int, default=2)
@@ -355,8 +359,8 @@ if __name__ == "__main__":
     parser.add_argument("--fairseq-root", default=prefix + "/zjw524/projects/data/av_hubert/fairseq/fairseq")
     parser.add_argument("--user-dir", default=prefix + "/zjw524/projects/data/av_hubert/avhubert/avhubert")
     arguments = parser.parse_args()
-    if arguments.crop_workers < 0 or arguments.crop_decode_threads < 1:
-        parser.error("crop-workers must be nonnegative and crop-decode-threads positive")
+    if arguments.crop_workers < 0 or arguments.crop_decode_threads < 1 or arguments.av_decode_threads < 0:
+        parser.error("crop-workers and av-decode-threads must be nonnegative; crop-decode-threads must be positive")
     state_root = Path(arguments.output_root) / "state"
     lock_path = state_root / "locks" / "media.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
