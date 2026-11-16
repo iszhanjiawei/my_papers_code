@@ -238,6 +238,7 @@ class Coordinator:
         return summary
 
     def run(self):
+        final_sweep = False
         while True:
             groups = self.groups()
             receipts = self.receipts()
@@ -260,6 +261,9 @@ class Coordinator:
                 continue
             self.status()
             if not running:
+                if not final_sweep:
+                    final_sweep = True
+                    continue
                 break
             time.sleep(10)
         summary = self.aggregate()

@@ -87,6 +87,7 @@ def main():
     rows = {r["sample_id"]: r for r in read_jsonl(args.manifest) if r["original_clip_id"] in wanted}
     process_identity = process_start(args.follow_pid) if args.follow_pid else None
     seen = set()
+    final_sweep = False
     while True:
         for path in sorted((args.evidence_dir / "groups").glob("*.json")):
             if path in seen:
@@ -114,6 +115,9 @@ def main():
         atomic_jsonl(args.output / "segments.jsonl", segments)
         print(json.dumps(summary), flush=True)
         if process_identity is None or process_start(args.follow_pid) != process_identity:
+            if not final_sweep:
+                final_sweep = True
+                continue
             break
         time.sleep(20)
 
