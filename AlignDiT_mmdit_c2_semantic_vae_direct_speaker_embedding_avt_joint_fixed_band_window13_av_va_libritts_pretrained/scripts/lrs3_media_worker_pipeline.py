@@ -123,10 +123,12 @@ class Pipeline:
                 decode_threads = getattr(self.args, "av_decode_threads", 0) or None
             if decode_threads is not None:
                 command += ["--decode-threads", str(decode_threads)]
+            if media_stage != "crop" and getattr(self.args, "av_warmup_frames", 0):
+                command += ["--warmup-frames", str(self.args.av_warmup_frames)]
         return command
 
     def run_stage(self, name, rows, gpu_map, repair=False, media_stage="all", separate_manifests=False,
-                  cpu_threads=None, decode_threads=None):
+                  cpu_threads=None, decode_threads=None, extra_lock_fds=()):
         manifest = self.manifests / (name + ".jsonl")
         save_manifest(manifest, rows)
         fingerprint = sha256(manifest)
@@ -174,7 +176,7 @@ class Pipeline:
             log_path = self.logs / f"{name}_shard{rank}.log"
             log = log_path.open("a")
             process = subprocess.Popen(command, env=env, cwd=SCRIPTS.parent, stdout=log, stderr=subprocess.STDOUT,
-                                       pass_fds=() if self.lock_fd is None else (self.lock_fd,))
+                                       pass_fds=tuple(extra_lock_fds) + (() if self.lock_fd is None else (self.lock_fd,)))
             suffix = f"_shard{child_rank}" if child_count > 1 else ""
             report_name = (f"media_fan_repair_{child_manifest.stem}{suffix}.jsonl" if repair
                            else f"media_{child_manifest.stem}_{media_stage}_shard{child_rank}.jsonl")
@@ -278,7 +280,24 @@ class Pipeline:
                 repair_rows.append(row)
         save_manifest(self.directory / "first_pass_failures.jsonl", failures)
         save_manifest(self.manifests / "first_pass_failed_inputs.jsonl", failed_rows)
-        self.run_stage("full_media_landmark_repair", repair_rows, repair_gpus, repair=True)
+        # Early FAN batches may repair terminal failures while regular AV work
+        # continues. Serialize all landmark writers, including orphaned children.
+        fan_lock_path = self.root / "state" / "locks" / "fan_repair.lock"
+        fan_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with fan_lock_path.open("a") as fan_lock:
+            self.state["active_stage"] = "full_media_landmark_repair_wait"
+            self.state["fan_lock_wait_started_at"] = time.time()
+            while True:
+                self.state["updated_at"] = time.time()
+                atomic_json(self.state_path, self.state)
+                try:
+                    fcntl.flock(fan_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    time.sleep(5)
+            self.state["fan_lock_acquired_at"] = time.time()
+            self.run_stage("full_media_landmark_repair", repair_rows, repair_gpus, repair=True,
+                           extra_lock_fds=(fan_lock.fileno(),))
         # One AV worker per card for retry; longer clips remain strictly serial.
         retry_regular = [row for row in failed_rows if row["video_frames"] <= 750]
         retry_long = [row for row in failed_rows if row["video_frames"] > 750]
@@ -346,6 +365,8 @@ if __name__ == "__main__":
     parser.add_argument("--cpu-threads", type=int, default=2)
     parser.add_argument("--av-decode-threads", type=int, default=0,
                         help="FFmpeg threads per AV worker video; zero preserves the decoder default")
+    parser.add_argument("--av-warmup-frames", type=int, default=0,
+                        help="Discarded evaluation warmup length for AV workers; zero disables")
     parser.add_argument("--crop-workers", type=int, default=0,
                         help="Run a separate CPU face-to-mouth stage before GPU extraction")
     parser.add_argument("--crop-decode-threads", type=int, default=2)
@@ -359,8 +380,9 @@ if __name__ == "__main__":
     parser.add_argument("--fairseq-root", default=prefix + "/zjw524/projects/data/av_hubert/fairseq/fairseq")
     parser.add_argument("--user-dir", default=prefix + "/zjw524/projects/data/av_hubert/avhubert/avhubert")
     arguments = parser.parse_args()
-    if arguments.crop_workers < 0 or arguments.crop_decode_threads < 1 or arguments.av_decode_threads < 0:
-        parser.error("crop-workers and av-decode-threads must be nonnegative; crop-decode-threads must be positive")
+    if (arguments.crop_workers < 0 or arguments.crop_decode_threads < 1
+            or arguments.av_decode_threads < 0 or arguments.av_warmup_frames < 0):
+        parser.error("worker counts, AV decode threads and warmup frames must be nonnegative; crop-decode-threads must be positive")
     state_root = Path(arguments.output_root) / "state"
     lock_path = state_root / "locks" / "media.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)

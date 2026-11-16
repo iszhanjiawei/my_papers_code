@@ -239,6 +239,28 @@ def load_reader(args):
     return AVHubertFeatureReader(args.checkpoint, custom_utils=avhubert_utils)
 
 
+def warmup_reader(reader, frames):
+    """Reserve AV allocator blocks once; never alter a real sample or model state."""
+    if frames == 0:
+        return None
+    if frames < 0 or reader.model.training:
+        raise ValueError("AV warmup requires nonnegative frames and an evaluation-mode model")
+    import torch
+    crop = int(reader.task.cfg.image_crop_size)
+    started = time.monotonic()
+    with torch.no_grad():
+        dummy = torch.zeros((1, 1, frames, crop, crop), device="cuda", dtype=torch.float32)
+        outputs = reader.model.extract_finetune(
+            source={"audio": None, "video": dummy}, padding_mask=None, mask=False)
+        del outputs, dummy
+    torch.cuda.synchronize()
+    if reader.model.training:
+        raise RuntimeError("AV model left evaluation mode during warmup")
+    return {"frames": frames, "elapsed_seconds": time.monotonic() - started,
+            "model_training": False, "allocated_mib": torch.cuda.memory_allocated() / 1024**2,
+            "reserved_mib": torch.cuda.memory_reserved() / 1024**2}
+
+
 def media_protocol(checkpoint, mean_face):
     protocol = {"version": VERSION, "checkpoint": str(Path(checkpoint).resolve()),
                 "checkpoint_sha256": sha256(checkpoint), "mean_face_sha256": sha256(mean_face),
@@ -254,8 +276,8 @@ def media_protocol(checkpoint, mean_face):
 def main(args):
     global DECODE_THREADS
     DECODE_THREADS = getattr(args, "decode_threads", 0)
-    if DECODE_THREADS < 0:
-        raise ValueError("decode_threads must be nonnegative")
+    if DECODE_THREADS < 0 or getattr(args, "warmup_frames", 0) < 0:
+        raise ValueError("decode_threads and warmup_frames must be nonnegative")
     cv2.setNumThreads(args.cpu_threads)
     root = Path(args.output_root)
     all_records = [json.loads(line) for line in Path(args.manifest).read_text().splitlines() if line.strip()]
@@ -358,6 +380,9 @@ def main(args):
                     if not reuse:
                         if reader is None:
                             reader = load_reader(args)
+                            warmup = warmup_reader(reader, getattr(args, "warmup_frames", 0))
+                            if warmup:
+                                atomic_json(report.with_suffix(".warmup.json"), warmup)
                             protocol["checkpoint_image_crop_size"] = int(reader.task.cfg.image_crop_size)
                             protocol["checkpoint_image_mean"] = float(reader.task.cfg.image_mean)
                             protocol["checkpoint_image_std"] = float(reader.task.cfg.image_std)
@@ -412,6 +437,8 @@ if __name__ == "__main__":
     parser.add_argument("--cpu-threads", type=int, default=2)
     parser.add_argument("--decode-threads", type=int, default=0,
                         help="FFmpeg threads per video; zero preserves the decoder default")
+    parser.add_argument("--warmup-frames", type=int, default=0,
+                        help="Optional discarded evaluation forward to reserve allocator blocks; zero disables")
     parser.add_argument("--stage", choices=["all", "crop", "features"], default="all")
     arguments = parser.parse_args()
     if not 0 <= arguments.shard < arguments.num_shards:
