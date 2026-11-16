@@ -6,6 +6,7 @@ import collections
 import csv
 import fcntl
 import json
+import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -17,22 +18,110 @@ from lrs3_build_inventory import clean_text, digest, write_json, write_jsonl
 LATENT_SPEC = {'dimension':64,'dtype':'float32','frame_rate_hz':40.0,
                'hop_length_samples':400,'mode':'fixed_posterior_sample','sample_rate':16000}
 
+SOURCE_KINDS = {'existing_transcript', 'source_asr_consensus', 'source_asr_mfa_consensus',
+                'source_asr_ctc_consensus', 'asr_pseudo'}
+PSEUDO_THRESHOLDS = {
+    'min_word_probability': ('minimum', 0.50),
+    'mean_word_probability': ('minimum', 0.80),
+    'min_segment_avg_logprob': ('minimum', -0.75),
+    'max_no_speech_probability': ('maximum', 0.30),
+    'max_compression_ratio': ('maximum', 2.4),
+    'ctc_min_char_probability': ('minimum', 0.80),
+    'ctc_mean_char_probability': ('minimum', 0.97),
+}
+
+
+def check_pseudo_label(label, row, text_policy):
+    if text_policy != 'source_plus_asr_pseudo' or row['split'] != 'train':
+        raise ValueError('ASR pseudo labels require the explicit training-only extension policy')
+    if (label.get('independent_content_verified') is not False or
+        label.get('acceptance_policy_version') != 'lrs3_asr_pseudo_p1_v1'):
+        raise ValueError('Pseudo label has missing or incompatible policy provenance')
+    confidence = label.get('confidence', {})
+    for key, (bound, threshold) in PSEUDO_THRESHOLDS.items():
+        value = confidence.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f'Missing or nonfinite pseudo confidence: {key}')
+        if (bound == 'minimum' and value < threshold) or (bound == 'maximum' and value > threshold):
+            raise ValueError(f'Pseudo confidence below acceptance policy: {key}')
+    gates = label.get('quality_gates', {})
+    required = ['ctc_text_exact', 'group_contiguous_support', 'word_text_exact',
+                'positive_word_durations', 'within_pcm_bounds', 'group_boundary_consistent']
+    if not all(gates.get(key) is True for key in required):
+        raise ValueError('Pseudo label lacks required independent content and boundary checks')
+    if len(clean_text(label['text']).split()) < 3 or row['audio_seconds'] < 1.0:
+        raise ValueError('Pseudo label is too short for this acceptance policy')
+    refs = label.get('evidence_refs', [])
+    if not refs or any(not ref.get('path') or len(ref.get('sha256', '')) != 64 for ref in refs):
+        raise ValueError('Pseudo label lacks evidence references')
+
 
 def read_rows(path):
     with Path(path).open() as f:
         return [json.loads(l) for l in f if l.strip()]
 
 
-def validate(row, root, vocabulary, recovered, strict_provenance=False):
+def text_policy_contract(root, policy, baseline):
+    result = {'schema_version': 1, 'policy': policy, 'version': 'lrs3_text_policy_v1',
+              'pseudo_scope': 'none' if policy == 'source_grounded' else 'train_only',
+              'strict_baseline': None,
+              'pseudo_acceptance_policy': 'lrs3_asr_pseudo_p1_v1',
+              'pseudo_confidence_thresholds': PSEUDO_THRESHOLDS,
+              'confidence_note': 'Model scores are evidence; they are not calibrated text correctness probabilities.'}
+    if policy == 'source_grounded':
+        if baseline is not None:raise ValueError('A strict baseline is only used for a pseudo extension')
+        return result, None
+    if baseline is None:raise ValueError('The pseudo extension requires a frozen strict baseline')
+    path = root / baseline
+    if path.resolve() == (root / 'manifests/full_pseudo').resolve():
+        raise ValueError('A pseudo extension cannot be its own strict baseline')
+    meta = json.loads((path / 'inventory_meta.json').read_text())
+    receipt = json.loads((path / 'cache_completion.json').read_text())
+    if (meta.get('text_policy') != 'source_grounded' or receipt.get('status') != 'complete' or
+        meta.get('selection', {}).get('mode') != 'full'):
+        raise ValueError('The extension baseline must be a completed strict full publication')
+    for filename, entry in meta['manifests'].items():
+        if digest(path / filename) != entry['sha256']:
+            raise ValueError('Strict baseline manifest hash changed')
+    policy_sha = digest(path / 'text_policy.json')
+    if policy_sha != meta.get('text_policy_sha256') or policy_sha != receipt.get('text_policy_sha256'):
+        raise ValueError('Strict baseline policy hash changed')
+    if digest(path / 'inventory.jsonl') != receipt.get('inventory_sha256'):
+        raise ValueError('Strict baseline completion inventory hash changed')
+    result['strict_baseline'] = {
+        'manifest_dir': str(path.resolve().relative_to(root.resolve())),
+        'inventory_meta_sha256': digest(path / 'inventory_meta.json'),
+        'inventory_sha256': digest(path / 'inventory.jsonl'),
+        'train_sha256': digest(path / 'train.jsonl'),
+        'valid_sha256': digest(path / 'valid.jsonl'),
+        'test_sha256': digest(path / 'test.jsonl'),
+        'text_policy_sha256': policy_sha,
+    }
+    return result, path
+
+
+def validate(row, root, vocabulary, recovered, strict_provenance=False, text_policy='source_grounded'):
     r = dict(row)
+    r['source_kind'] = 'existing_transcript' if r['text'] else 'unresolved'
     reasons = []
     if not r['text'] and r['sample_id'] in recovered:
         label = recovered[r['sample_id']]
         if label.get('original_clip_id') != r['original_clip_id'] or label.get('accepted') is not True:
             raise ValueError('Recovery label identity or acceptance differs')
-        r.update(text=clean_text(label['text']),text_status='recovered_consensus',
+        kind = label.get('source_kind', 'source_asr_consensus')
+        if kind not in SOURCE_KINDS - {'existing_transcript'}:
+            raise ValueError('Unknown recovery source kind')
+        if kind == 'asr_pseudo':
+            check_pseudo_label(label, r, text_policy)
+        if strict_provenance and label.get('source_audio_sha256') != digest(r['audio_path']):
+            raise ValueError('Recovery label does not bind the actual source audio')
+        r.update(text=clean_text(label['text']),
+                 text_status='asr_pseudo' if kind == 'asr_pseudo' else 'recovered_consensus',
+                 source_kind=kind, independent_content_verified=False,
                  label_source=label['source'],label_validation=label['quality'],
                  recovery_evidence=label)
+        for key in ['acceptance_policy_version', 'confidence', 'evidence_refs']:
+            if key in label:r[key]=label[key]
     if not r['text']:reasons.append('text_unresolved')
     r['oov_characters'] = sorted(set(r['text']) - set(vocabulary))
     if r['oov_characters']:reasons.append('text_oov')
@@ -108,6 +197,8 @@ def main():
     p.add_argument('--recovered-labels',type=Path,action='append',default=[])
     p.add_argument('--name',required=True,help='Unique publication directory under manifests/')
     p.add_argument('--mode',choices=['pilot','full'],required=True)
+    p.add_argument('--text-policy',choices=['source_grounded','source_plus_asr_pseudo'],default='source_grounded')
+    p.add_argument('--strict-baseline',type=Path,help='Frozen strict manifest directory, relative to cache root')
     p.add_argument('--workers',type=int,default=8)
     args=p.parse_args()
     if '/' in args.name or args.name in {'.','..'}:raise ValueError('Invalid publication name')
@@ -120,6 +211,9 @@ def main():
         if (args.root/f'state/{feature}/WRITE_ACTIVE.json').exists():
             raise RuntimeError(f'Cache writes are unfinished: {feature}')
     if (manifest_dir/'cache_completion.json').exists():raise FileExistsError('Publication is immutable; choose another name')
+    policy, baseline_path = text_policy_contract(args.root,args.text_policy,args.strict_baseline)
+    if baseline_path is not None and baseline_path.resolve()==manifest_dir.resolve():
+        raise ValueError('An extension cannot overwrite its strict baseline')
     rows=read_rows(args.source_manifest)
     for key in ['sample_id','utterance_key','relative_stem']:
         if len({r[key] for r in rows})!=len(rows):raise ValueError(f'Duplicate source {key}')
@@ -128,28 +222,41 @@ def main():
     if source_videos['test'] & (source_videos['train'] | source_videos['valid']):
         raise ValueError('A test source video also appears in training or validation')
     recovered={}
+    checked_evidence=set()
+    known_source_ids={r['sample_id'] for r in rows}
     for path in args.recovered_labels:
         for r in read_rows(path):
             if r.get('accepted') is True:
+                if r['sample_id'] not in known_source_ids:raise ValueError('Recovery label outside requested source scope')
+                if r.get('source_kind')=='asr_pseudo' and args.text_policy!='source_plus_asr_pseudo':
+                    raise ValueError('Strict publication cannot ingest ASR pseudo labels')
+                for ref in r.get('evidence_refs',[]):
+                    key=(ref['path'],ref['sha256'])
+                    if key not in checked_evidence:
+                        if digest(ref['path'])!=ref['sha256']:raise ValueError('Recovery evidence hash changed')
+                        checked_evidence.add(key)
                 previous=recovered.get(r['sample_id'])
                 if previous and clean_text(previous['text'])!=clean_text(r['text']):
                     raise ValueError(f'Conflicting accepted recovery labels: {r["sample_id"]}')
                 recovered[r['sample_id']]=r
+    policy['recovered_label_files']=[{'path':str(p),'sha256':digest(p)} for p in args.recovered_labels]
     vocab_path=Path(prefix+'/zjw524/projects/data/CelebVDub_char/vocab.txt')
     vocabulary={c:i for i,c in enumerate(vocab_path.read_text().splitlines())}
     accepted=[]; quality=[]; reasons_count=collections.Counter(); originals={}
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        results=pool.map(lambda r:validate(r,args.root,vocabulary,recovered,args.mode=='full'),rows)
+        results=pool.map(lambda r:validate(r,args.root,vocabulary,recovered,args.mode=='full',args.text_policy),rows)
         for i,(r,reasons) in enumerate(results):
             oid=r['original_clip_id']
             original=originals.setdefault(oid,{'original_clip_id':oid,'split':r['split'],'source_pairs':0,
                        'ready_pairs':0,'source_audio_seconds':0.0,'ready_audio_seconds':0.0,
                        'cache_ready_pairs':0,'ctc_infeasible_pairs':0,
-                       'text_status_counts':collections.Counter(),'crop_kind_counts':collections.Counter(),
+                       'text_status_counts':collections.Counter(),'source_kind_counts':collections.Counter(),
+                       'crop_kind_counts':collections.Counter(),
                        'pending_reasons':collections.Counter(),'samples':[]})
             if original['split']!=r['split']:raise ValueError(f'Original clip crosses splits: {oid}')
             original['source_pairs']+=1;original['source_audio_seconds']+=r['audio_seconds']
             original['text_status_counts'][r['text_status']]+=1
+            original['source_kind_counts'][r['source_kind']]+=1
             original['crop_kind_counts'][r['media_preprocessing']['crop_kind'] or 'unknown']+=1
             original['ctc_infeasible_pairs']+=not r['ctc_feasible_40hz']
             original['cache_ready_pairs']+=len(r['cache_sha256'])==4 and not any('provenance:' in x for x in reasons)
@@ -160,12 +267,21 @@ def main():
                 reasons_count.update(reasons);original['pending_reasons'].update(reasons)
             quality.append({'sample_id':r['sample_id'],'original_clip_id':oid,'split':r['split'],
                             'ready':not reasons,'reasons':reasons,'text_status':r['text_status'],
+                            'source_kind':r['source_kind'],
                             'text':r['text'],'label_source':r['label_source'],'label_validation':r['label_validation'],
+                            'independent_content_verified':r.get('independent_content_verified',False),
+                            'acceptance_policy_version':r.get('acceptance_policy_version'),
+                            'confidence':r.get('confidence'), 'evidence_refs':r.get('evidence_refs',[]),
                             'audio_seconds':r['audio_seconds'],'video_seconds':r['video_seconds'],
                             'ctc_feasible_40hz':r['ctc_feasible_40hz'],'media_preprocessing':r['media_preprocessing'],
                             'cache_sha256':r['cache_sha256']})
             if (i+1)%1000==0:print(json.dumps({'audited':i+1,'total':len(rows),'accepted':len(accepted)}),flush=True)
     if not accepted:raise RuntimeError('No training-ready samples; no manifest published')
+    if baseline_path is not None:
+        accepted_by_id={r['sample_id']:r for r in accepted}
+        for previous in read_rows(baseline_path/'inventory.jsonl'):
+            if accepted_by_id.get(previous['sample_id'])!=previous:
+                raise ValueError('Pseudo extension changed or removed a strict baseline record')
     entries={};split_counts={}
     for split in ['train','valid','test']:
         selected=[r for r in accepted if r['split']==split]
@@ -174,9 +290,17 @@ def main():
         split_counts[split]=len(selected)
         entries[path.name]={'count':len(selected),'sha256':digest(path),'size_bytes':path.stat().st_size,
                             'ctc_feasible_count':feasible,'ctc_infeasible_count':len(selected)-feasible}
+        if baseline_path is not None and split in {'valid','test'}:
+            if digest(path)!=digest(baseline_path/path.name):
+                raise ValueError('Pseudo extension changed a validation or test manifest')
     inv=manifest_dir/'inventory.jsonl';write_jsonl(inv,accepted)
     entries[inv.name]={'count':len(accepted),'sha256':digest(inv),'size_bytes':inv.stat().st_size}
+    write_json(manifest_dir/'text_policy.json',policy)
+    policy_sha=digest(manifest_dir/'text_policy.json')
+    source_kind_counts={s:dict(collections.Counter(r['source_kind'] for r in accepted if r['split']==s))
+                        for s in ['train','valid','test']}
     meta={'schema_version':1,'dataset':'LRS3','status':'complete','selection':{'mode':args.mode},
+          'text_policy':args.text_policy,'text_policy_sha256':policy_sha,'source_kind_counts':source_kind_counts,
           'manifests':entries,'latent_spec':LATENT_SPEC,'source_manifest_sha256':digest(args.source_manifest),
           'source_pairs':len(rows),'training_ready_pairs':len(accepted),'excluded_pairs':len(rows)-len(accepted),
           'all_requested_source_pairs_ready':len(accepted)==len(rows),'vocab_sha256':digest(vocab_path)}
@@ -193,6 +317,7 @@ def main():
     write_json(speaker_dir/'metadata.json',speaker);write_json(speaker_dir/'coverage_report.json',coverage)
     total_frames=sum(r['latent_frames'] for r in accepted)
     receipt={'schema_version':1,'status':'complete','selection':{'mode':args.mode},
+             'text_policy':args.text_policy,'text_policy_sha256':policy_sha,
              'inventory_sha256':digest(inv),'count':len(accepted),'features':{
                  'latents':{'feature':'semantic_vae_posterior_sample_v1','count':len(accepted),'total_frames':total_frames},
                  'video_40hz':{'feature':'avhubert_video_25hz_to_40hz_linear_align_corners_false_v1','count':len(accepted),'total_frames':total_frames},
@@ -205,6 +330,7 @@ def main():
         o['fully_covered']=o['source_pairs']==o['ready_pairs']
         o['pending_reasons']=dict(o['pending_reasons'])
         o['text_status_counts']=dict(o['text_status_counts'])
+        o['source_kind_counts']=dict(o['source_kind_counts'])
         o['crop_kind_counts']=dict(o['crop_kind_counts'])
         o['ready_duration_fraction']=o['ready_audio_seconds']/o['source_audio_seconds'] if o['source_audio_seconds'] else 0.0
     write_jsonl(args.root/f'reports/{args.name}_original_coverage.jsonl',originals.values())
@@ -212,13 +338,15 @@ def main():
     with coverage_tsv.with_suffix('.tsv.tmp').open('w') as handle:
         fields=['original_clip_id','split','source_pairs','ready_pairs','cache_ready_pairs',
                 'source_audio_seconds','ready_audio_seconds','ready_duration_fraction',
-                'fully_covered','ctc_infeasible_pairs','text_status_counts','crop_kind_counts','pending_reasons']
+                'fully_covered','ctc_infeasible_pairs','text_status_counts','source_kind_counts',
+                'crop_kind_counts','pending_reasons']
         writer=csv.DictWriter(handle,fieldnames=fields,delimiter='\t');writer.writeheader()
         for original in originals.values():
             writer.writerow({key:json.dumps(original[key],ensure_ascii=False) if isinstance(original[key],dict)
                              else original[key] for key in fields})
     coverage_tsv.with_suffix('.tsv.tmp').replace(coverage_tsv)
     summary={'selection':args.mode,'source_pairs':len(rows),'ready_pairs':len(accepted),
+             'text_policy':args.text_policy,'text_policy_sha256':policy_sha,'source_kind_counts':source_kind_counts,
              'all_requested_source_pairs_ready':len(accepted)==len(rows),'split_counts':split_counts,
              'audio_hours_by_split':{s:sum(r['audio_seconds'] for r in accepted if r['split']==s)/3600 for s in split_counts},
              'text_sources':dict(collections.Counter(r['text_status'] for r in accepted)),

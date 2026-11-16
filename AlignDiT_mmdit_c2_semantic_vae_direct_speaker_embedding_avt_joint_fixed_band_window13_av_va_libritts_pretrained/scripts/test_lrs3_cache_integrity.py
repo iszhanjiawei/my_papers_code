@@ -117,6 +117,91 @@ class PublicationIntegrityTests(unittest.TestCase):
         _, reasons = self.validate()
         self.assertTrue(any(reason.startswith("audio_provenance:") for reason in reasons))
 
+    def recovery_label(self, pseudo=False):
+        label = {'sample_id': self.row['sample_id'], 'original_clip_id': self.row['original_clip_id'],
+                 'text': 'hello hello hello', 'accepted': True, 'source': 'test evidence', 'quality': 'test',
+                 'source_kind': 'asr_pseudo' if pseudo else 'source_asr_consensus',
+                 'source_audio_sha256': digest(self.row['audio_path']),
+                 'independent_content_verified': False, 'acceptance_policy_version': 'lrs3_asr_pseudo_p1_v1',
+                 'confidence': {key: threshold for key, (_, threshold) in finalizer.PSEUDO_THRESHOLDS.items()},
+                 'quality_gates': {key: True for key in ['ctc_text_exact', 'group_contiguous_support',
+                                    'word_text_exact', 'positive_word_durations', 'within_pcm_bounds',
+                                    'group_boundary_consistent']},
+                 'evidence_refs': [{'path': self.row['audio_path'], 'sha256': digest(self.row['audio_path'])}]}
+        self.row['text'] = ''
+        return label
+
+    def validate_label(self, label, policy='source_grounded'):
+        return finalizer.validate(self.row, self.root, {c: i for i, c in enumerate(' helo')},
+                                  {self.row['sample_id']: label}, True, policy)
+
+    def test_recovered_text_must_bind_current_source_audio(self):
+        label = self.recovery_label()
+        label['source_audio_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'actual source audio'):
+            self.validate_label(label)
+
+    def test_strict_policy_rejects_pseudo_even_with_all_checks_passed(self):
+        label = self.recovery_label(pseudo=True)
+        with self.assertRaisesRegex(ValueError, 'explicit training-only extension'):
+            self.validate_label(label)
+
+    def test_pseudo_policy_preserves_explicit_provenance(self):
+        label = self.recovery_label(pseudo=True)
+        checked, reasons = self.validate_label(label, 'source_plus_asr_pseudo')
+        self.assertEqual(reasons, [])
+        self.assertEqual(checked['text_status'], 'asr_pseudo')
+        self.assertEqual(checked['source_kind'], 'asr_pseudo')
+        self.assertFalse(checked['independent_content_verified'])
+        self.assertEqual(checked['confidence'], label['confidence'])
+
+    def test_pseudo_cannot_enter_test_split(self):
+        label = self.recovery_label(pseudo=True)
+        self.row['split'] = 'test'
+        with self.assertRaisesRegex(ValueError, 'explicit training-only extension'):
+            self.validate_label(label, 'source_plus_asr_pseudo')
+
+    def test_pseudo_bad_confidence_and_missing_boundary_check_rejected(self):
+        label = self.recovery_label(pseudo=True)
+        label['confidence']['ctc_min_char_probability'] = float('nan')
+        with self.assertRaisesRegex(ValueError, 'nonfinite'):
+            self.validate_label(label, 'source_plus_asr_pseudo')
+        label['confidence']['ctc_min_char_probability'] = 0.9
+        label['quality_gates']['within_pcm_bounds'] = False
+        with self.assertRaisesRegex(ValueError, 'boundary checks'):
+            self.validate_label(label, 'source_plus_asr_pseudo')
+
+    def run_extension(self):
+        return subprocess.run([sys.executable, str(Path(finalizer.__file__)), '--root', str(self.root),
+                               '--source-manifest', str(self.root / 'source.jsonl'), '--name', 'extension',
+                               '--mode', 'full', '--text-policy', 'source_plus_asr_pseudo',
+                               '--strict-baseline', 'manifests/test_publication'],
+                              capture_output=True, text=True, timeout=30)
+
+    def test_extension_pins_baseline_and_preserves_evaluation_bytes(self):
+        strict = self.run_publication([self.row])
+        self.assertEqual(strict.returncode, 0, strict.stderr)
+        extension = self.run_extension()
+        self.assertEqual(extension.returncode, 0, extension.stderr)
+        old = self.root / 'manifests/test_publication'
+        new = self.root / 'manifests/extension'
+        for name in ['train.jsonl', 'valid.jsonl', 'test.jsonl']:
+            self.assertEqual((old / name).read_bytes(), (new / name).read_bytes())
+        policy = json.loads((new / 'text_policy.json').read_text())
+        self.assertEqual(policy['strict_baseline']['inventory_meta_sha256'], digest(old / 'inventory_meta.json'))
+        receipt = json.loads((new / 'cache_completion.json').read_text())
+        self.assertEqual(receipt['text_policy_sha256'], digest(new / 'text_policy.json'))
+
+    def test_extension_cannot_modify_existing_strict_transcript(self):
+        strict = self.run_publication([self.row])
+        self.assertEqual(strict.returncode, 0, strict.stderr)
+        changed = dict(self.row, text='ello')
+        write_jsonl(self.root / 'source.jsonl', [changed])
+        extension = self.run_extension()
+        self.assertNotEqual(extension.returncode, 0)
+        self.assertIn('changed or removed a strict baseline record', extension.stderr)
+        self.assertFalse((self.root / 'manifests/extension/cache_completion.json').exists())
+
     def test_duplicate_source_identity_rejected_before_publication(self):
         result = self.run_publication([self.row, self.row])
         self.assertNotEqual(result.returncode, 0)
