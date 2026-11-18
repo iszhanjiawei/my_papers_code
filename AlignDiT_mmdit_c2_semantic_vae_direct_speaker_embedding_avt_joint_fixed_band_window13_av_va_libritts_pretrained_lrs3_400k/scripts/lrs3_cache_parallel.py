@@ -32,12 +32,19 @@ class ShutdownRequested(RuntimeError):
 def process_table():
     """Local process identities; start times protect against recycled PIDs."""
     result = {}
-    for path in Path('/proc').glob('[0-9]*/stat'):
-        try:
-            fields = path.read_text().rsplit(')', 1)[1].split()
-            result[int(path.parent.name)] = (int(fields[1]), int(fields[2]), fields[19], fields[0])
-        except (FileNotFoundError, ProcessLookupError):
-            continue
+    # pathlib's nested glob probes PID paths before yielding them. A process
+    # exiting during that probe can raise ESRCH outside the read exception
+    # handler and abort otherwise healthy training. Enumerate only names here;
+    # keep every per-PID filesystem access inside the disappearance handler.
+    with os.scandir('/proc') as entries:
+        for entry in entries:
+            if not entry.name.isascii() or not entry.name.isdecimal():
+                continue
+            try:
+                fields = (Path('/proc') / entry.name / 'stat').read_text().rsplit(')', 1)[1].split()
+                result[int(entry.name)] = (int(fields[1]), int(fields[2]), fields[19], fields[0])
+            except (FileNotFoundError, ProcessLookupError):
+                continue
     return result
 
 

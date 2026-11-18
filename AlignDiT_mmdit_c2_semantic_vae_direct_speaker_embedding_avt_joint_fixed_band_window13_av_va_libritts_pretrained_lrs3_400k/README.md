@@ -65,6 +65,30 @@ The copied CelebV-Dub/Slurm/evaluation scripts and reports below are historical
 references; they are not the entry points or results of this LRS3 experiment.
 Use `train_lrs3_400k.sh` for this run.
 
+## Supervisor process-exit regression
+
+The LRS3 supervisor enumerates `/proc` names with `os.scandir`, and reads each
+PID's stat file inside an ENOENT/ESRCH disappearance handler. Do not replace
+this with a nested `Path.glob('[0-9]*/stat')`: its internal metadata probe can
+raise ESRCH before yielding a path, aborting healthy training and triggering
+child cleanup. Birth-time checks and cleanup-before-unlock remain enabled.
+
+Regression coverage includes the original iterator failure, a disappearing PID
+between enumeration and read, PID reuse, a live supervised child, real process
+churn, and propagation of unexpected I/O failures. Run from this snapshot:
+
+```bash
+PYTHONPATH=src:scripts /zjw524/ENTER/envs/aligndit/bin/python -m unittest discover -s scripts -p test_lrs3_process_table.py -v
+PYTHONPATH=src:scripts /zjw524/ENTER/envs/aligndit/bin/python -m unittest discover -s scripts -p test_lrs3_training_lifecycle.py -v
+```
+
+The 2026-11-18 failure at update 121293 was a supervisor exception; the latest
+saved checkpoint was update 120000. Recovery evidence and checkpoint audit are
+runtime artifacts under `logs/recovery_20261118_proc_race/`. Resume the same
+model/optimizer/EMA/scheduler/configuration from the last saved checkpoint;
+updates after that checkpoint must be recomputed. Checkpoints do not include
+complete RNG state, so recovery is not claimed to be bitwise identical.
+
 # Historical source experiment: 13-frame Gaussian soft core
 
 This independent copy of `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_av_va`
