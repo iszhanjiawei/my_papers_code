@@ -29,8 +29,10 @@ optim:
   run_until_update: 200000
 
 model:
-  name: AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k
+  arch:
+    role_conditioned_text: true
+  name: AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_GRID_role_conditioned_ctc003_warmup10k30k
 
 ckpts:
   logger: tensorboard
-  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_GRID_ctc003_warmup10k30k_40hz_char
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_GRID_role_conditioned_ctc003_warmup10k30k_40hz_char

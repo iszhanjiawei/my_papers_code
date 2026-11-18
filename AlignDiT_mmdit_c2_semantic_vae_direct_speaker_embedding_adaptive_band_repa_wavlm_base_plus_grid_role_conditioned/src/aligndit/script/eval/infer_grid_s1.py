@@ -86,7 +86,7 @@ def args():
     p.add_argument('--step', type=int, default=100000)
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--cache-root', type=Path, default=base/'data/GRID_svae1000k_sample_seed666_fp32')
-    p.add_argument('--config', type=Path, default=Path(__file__).parents[2]/'config/finetune_grid.yaml')
+    p.add_argument('--config', type=Path, default=Path(__file__).parents[2]/'config/finetune_grid_legacy.yaml')
     p.add_argument('--semantic-vae-repo', type=Path, default=base/'alignDiT_idea6/papers_codes/Semantic-VAE')
     p.add_argument('--semantic-vae-checkpoint', type=Path, default=base/'alignDiT_idea6/Semantic-VAE/semantic_vae_1000k')
     p.add_argument('--shard', type=int, default=0)

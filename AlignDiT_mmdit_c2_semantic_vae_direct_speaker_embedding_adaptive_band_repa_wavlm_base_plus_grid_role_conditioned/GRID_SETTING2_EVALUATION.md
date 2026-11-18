@@ -1,5 +1,7 @@
 # GRID Setting2: real-dialogue dubbing, EMA 100k
 
+> 本文记录复制来源 GRID 基线的配置与历史结果。本副本的训练、评测和 checkpoint 约定见 [GRID_ROLE_CONDITIONING.md](GRID_ROLE_CONDITIONING.md)。
+
 The target text is **always the real GRID dialogue**. No lip-reading transcript
 is used. This is Setting2 GTText dubbing, on the same 3,274 audited validation
 targets as Setting1, with a different utterance from the **same speaker** as

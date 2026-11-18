@@ -233,6 +233,17 @@ def migrate_s2c_ema_into_model(
             raise RuntimeError(
                 "S2c REPA migration requires a new finite 768->2048->2048->768 three-layer projector"
             )
+    # The role module starts from its own initialization. The shared text encoder
+    # still obeys the original strict shape/key migration checks.
+    role_keys = set()
+    role_conditioner = getattr(model.transformer, "role_conditioner", None)
+    if role_conditioner is not None:
+        role_keys = {"transformer.role_conditioner." + key for key in role_conditioner.state_dict()}
+        if not role_keys or not role_keys.issubset(new_target):
+            raise RuntimeError("Reference/target role parameters must be newly initialized")
+        for key in role_keys:
+            if not torch.isfinite(target_state[key]).all():
+                raise RuntimeError(f"Non-finite role parameter at initialization: {key}")
     actual_counts = (
         len(source_state),
         len(target_state),
@@ -242,10 +253,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS + int(has_speaker) + len(band_keys) + 6 * int(has_repa),
+        EXPECTED_TARGET_KEYS + int(has_speaker) + len(band_keys) + 6 * int(has_repa) + len(role_keys),
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS + int(has_speaker) + len(band_keys) + 6 * int(has_repa),
+        EXPECTED_NEW_TARGET_KEYS + int(has_speaker) + len(band_keys) + 6 * int(has_repa) + len(role_keys),
     )
     if actual_counts != expected_counts:
         raise RuntimeError(

@@ -1,7 +1,7 @@
 # GRID 独立实验
 
 本目录的目标数据集是 GRID；这是用户指定的 CelebV-Dub 模型的独立副本。
-本目录以 `GRID_TRAINING.md`、`finetune_grid.yaml` 和 GRID 专用入口为准。
+本目录以 `GRID_ROLE_CONDITIONING.md`、`finetune_grid.yaml` 和 GRID 专用入口为准。
 父目录关于源码隔离、Git 跟踪、后台任务、环境及 TensorBoard 的要求继续适用。
 
 - 原模型目录不得随本实验自动修改。所有命令显式使用本目录 `PYTHONPATH=src`。

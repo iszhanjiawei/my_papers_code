@@ -10,8 +10,14 @@ import wave
 from pathlib import Path
 
 PROTOCOL = 'grid_val_setting1_same_clip_prompt_v1'
-TEXT_CONDITIONING = ('reference-target', 'target-only')
+ROLE_MODE = 'role-conditioned'
+TEXT_CONDITIONING = ('reference-target', 'target-only', ROLE_MODE)
 DIGITS = dict(zip('0123456789', 'zero one two three four five six seven eight nine'.split()))
+
+
+def grid_config_path(mode):
+    filename = 'finetune_grid.yaml' if mode == ROLE_MODE else 'finetune_grid_legacy.yaml'
+    return Path(__file__).resolve().parents[2] / 'config' / filename
 
 
 def normalize_text(text):
@@ -67,7 +73,7 @@ def validate_text_conditioning(setting, mode, root=None, *, require_contract=Fal
     if mode not in TEXT_CONDITIONING:
         raise ValueError(f'Unknown text conditioning: {mode}')
     if setting == 's1' and mode != 'reference-target':
-        raise ValueError('--text-conditioning target-only requires --setting s2')
+        raise ValueError(f'--text-conditioning {mode} requires --setting s2')
     if root is not None:
         path = Path(root) / 'protocol.json'
         if require_contract or path.exists():
@@ -76,6 +82,8 @@ def validate_text_conditioning(setting, mode, root=None, *, require_contract=Fal
                 raise RuntimeError('Output directory text conditioning differs from requested mode')
             if mode == 'target-only' and contract.get('reference_transcript_used_for_generation') is not False:
                 raise RuntimeError('Target-only protocol must exclude the reference transcript from model text')
+            if mode == ROLE_MODE and contract.get('reference_transcript_used_for_generation') is not True:
+                raise RuntimeError('Role-conditioned inference requires both reference and target transcripts')
 
 
 def load_rows(cache):
@@ -117,7 +125,7 @@ def identity(row):
     return path.with_suffix('').as_posix()
 
 
-def output_record(root, row, protocol=PROTOCOL):
+def output_record(root, row, protocol=PROTOCOL, *, reference=None):
     path = Path(root) / row['audio_relative_path']
     receipt = read(Path(root) / 'receipts' / (identity(row) + '.json'))
     contract = read(Path(root) / 'protocol.json')
@@ -136,6 +144,15 @@ def output_record(root, row, protocol=PROTOCOL):
         if (contract.get('reference_transcript_used_for_generation') is not False
                 or receipt.get('text_conditioning') != mode or receipt.get('model_text') != row['text']):
             raise RuntimeError(f'Target-only model text differs from target transcript or protocol: {path}')
+    if mode == ROLE_MODE:
+        if (contract.get('reference_transcript_used_for_generation') is not True
+                or receipt.get('text_conditioning') != ROLE_MODE
+                or receipt.get('target_text') != row['text']
+                or not receipt.get('reference_text')):
+            raise RuntimeError(f'Role-conditioned receipt has incorrect transcript fields: {path}')
+        if reference is not None and (receipt['reference_text'] != reference['text']
+                                      or receipt.get('reference_id') != identity(reference)):
+            raise RuntimeError(f'Role-conditioned reference transcript or identity mismatch: {path}')
     return receipt
 
 
@@ -149,7 +166,8 @@ def verify_outputs(cache, root, limit=None, protocol=PROTOCOL):
             raise RuntimeError('Setting2 pairs differ from inference protocol')
     if limit is not None:
         rows = rows[:limit]
-    outputs = [output_record(root, row, protocol) for row in rows]
+    outputs = [output_record(root, row, protocol, reference=reference_rows[identity(row)] if reference_rows else None)
+               for row in rows]
     if pair_map is not None:
         for row, receipt in zip(rows, outputs):
             ref = reference_rows[identity(row)]

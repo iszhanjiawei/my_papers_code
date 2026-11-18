@@ -6,9 +6,13 @@ copied Semantic-VAE dataset, without its CelebV-Dub-specific sample counts.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from hashlib import sha256
 from pathlib import Path
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 from aligndit.model.repa import (
     WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
@@ -348,3 +352,79 @@ class GridDataset(SemanticVaeCelebVDubDataset):
         feature = np.load(path, allow_pickle=False)
         validate_repa_feature_array(feature, expected_dim=self.repa_feature_dim, source=path)
         return feature
+
+
+class PairedGridDataset(GridDataset):
+    """Train on independent same-speaker prompt/target pairs at the GRID 40-Hz timebase."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.split != "train":
+            raise ValueError("Role-conditioned training pairs must use the train manifest")
+        if self.speaker_embedding_cache_dir is None:
+            raise ValueError("Role-conditioned training requires the reference CAM++ cache")
+
+        # Group identical transcripts together in a stable pseudo-random text order.
+        # Rotating by half a speaker's rows gives reciprocal A/B pairs for even
+        # sizes and a permutation for odd sizes. No transcript group may span
+        # more than half the rows for a one-to-one different-text pairing.
+        groups = defaultdict(list)
+        for i, row in enumerate(self.records):
+            speaker = row["utterance_key"].split("/")[1]
+            groups[speaker].append(i)
+        self.reference_indices = [0] * len(self.records)
+        for speaker, indices in groups.items():
+            def order(i):
+                row = self.records[i]
+                return sha256(row["text"].encode()).digest(), row["utterance_key"]
+
+            ordered = sorted(indices, key=order)
+            shift = len(ordered) // 2
+            for target, reference in zip(ordered, ordered[shift:] + ordered[:shift]):
+                if self.records[target]["text"] == self.records[reference]["text"]:
+                    raise ValueError(f"No distinct-text reference permutation for training speaker {speaker}")
+                self.reference_indices[target] = reference
+
+        pair_hash = sha256()
+        for target, ref_index in zip(self.records, self.reference_indices):
+            reference_key = self.records[ref_index]["utterance_key"]
+            pair_hash.update(f"{target['utterance_key']}\t{reference_key}\n".encode())
+        self.pair_contract = {
+            "algorithm": "within_train_speaker_text_sha256_half_rotation_v1",
+            "seed": None,  # deterministic hash ordering
+            "count": len(self.records),
+            "ordered_pairs_sha256": pair_hash.hexdigest(),
+        }
+        self.cache_contract = {**self.cache_contract, "pairing": self.pair_contract}
+
+    def get_frame_len(self, index: int) -> int:
+        return super().get_frame_len(index) + super().get_frame_len(self.reference_indices[index])
+
+    def __getitem__(self, index: int) -> dict:
+        target = self.records[index]
+        reference = self.records[self.reference_indices[index]]
+        result = self._target_item(target)
+        prompt = self._normalized_latent(reference)
+        prompt_len = prompt.shape[1]
+        result.update(
+            mel_spec=torch.cat((prompt, result["mel_spec"]), dim=1),
+            video=F.pad(result["video"], (0, 0, prompt_len, 0)),
+            speaker_embedding=torch.from_numpy(self._load_speaker_embedding_array(reference)),
+            reference_text=reference["text"],
+            reference_utterance_key=reference["utterance_key"],
+            prompt_len=prompt_len,
+        )
+        if self.repa_feature_cache_dir is not None:
+            # WavLM is at its native rate; align only to the synthesized target.
+            result["repa_feature"] = torch.from_numpy(self._load_repa_feature_array(target))
+        return result
+
+    @staticmethod
+    def collate_fn(batch: list[dict]) -> dict:
+        result = GridDataset.collate_fn(batch)
+        result.update(
+            reference_text=[item["reference_text"] for item in batch],
+            reference_utterance_keys=[item["reference_utterance_key"] for item in batch],
+            prompt_lens=torch.tensor([item["prompt_len"] for item in batch], dtype=torch.long),
+        )
+        return result

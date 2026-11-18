@@ -406,7 +406,7 @@ def args():
     parser.add_argument('--nshard', type=int, default=1)
     parser.add_argument('--limit', type=int, help='Inference-only first N selected rows, then shard; use 3 for baseline regeneration')
     parser.add_argument('--variants', nargs='+', choices=[*ALL_VARIANTS, 'all'], default=list(VARIANTS))
-    parser.add_argument('--config', type=Path, default=Path(__file__).parents[2]/'config/finetune_grid.yaml')
+    parser.add_argument('--config', type=Path, default=Path(__file__).parents[2]/'config/finetune_grid_legacy.yaml')
     parser.add_argument('--cache-root', type=Path, default=base/'data/GRID_svae1000k_sample_seed666_fp32')
     parser.add_argument('--semantic-vae-repo', type=Path, default=base/'alignDiT_idea6/papers_codes/Semantic-VAE')
     parser.add_argument('--semantic-vae-checkpoint', type=Path, default=base/'alignDiT_idea6/Semantic-VAE/semantic_vae_1000k')

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import gc
-import inspect
 import json
 import math
 import os
@@ -20,11 +19,10 @@ from unittest.mock import patch
 import hydra
 import torch
 from hydra import compose, initialize_config_dir
-from omegaconf import OmegaConf
 
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
-from aligndit.model.grid_dataset import GridDataset
+from aligndit.script.train.finetune_grid import dataset_from_config
 from aligndit.model.semantic_vae_direct_migration import (
     load_s2c_ema_state,
     migrate_s2c_ema_into_model,
@@ -64,22 +62,24 @@ def main() -> None:
         expected_contract_sha256=ckpts.expected_parent_contract_sha256,
     )
 
-    dataset_config = OmegaConf.to_container(config.datasets, resolve=True)
-    dataset_parameters = inspect.signature(GridDataset).parameters
-    dataset = GridDataset(
-        allow_partial=True,
-        **{key: value for key, value in dataset_config.items() if key in dataset_parameters}
-    )
-    selected = [
-        index for index, record in enumerate(dataset.records)
-        if record["ctc_feasible_40hz"] and 64 <= record["latent_frames"] <= args.max_frames
-    ][:2]
+    dataset = dataset_from_config(config, allow_partial=True)
+    eligible = [i for i, row in enumerate(dataset.records)
+                if row["ctc_feasible_40hz"] and 64 <= row["latent_frames"] <= args.max_frames]
+    # Prefer different reference lengths to exercise per-example P/T boundaries.
+    selected = eligible[:1]
+    if selected:
+        first_prompt = dataset.records[dataset.reference_indices[selected[0]]]["latent_frames"]
+        second = next((i for i in eligible[1:] if
+                       dataset.records[dataset.reference_indices[i]]["latent_frames"] != first_prompt), None)
+        selected += [second] if second is not None else eligible[1:2]
     if len(selected) != 2:
         raise RuntimeError("Need two real CTC-feasible examples between 64 and --max-frames frames")
     selected = [selected[index % len(selected)] for index in range(args.batch_size)]
     batch = dataset.collate_fn([dataset[index] for index in selected])
     print(json.dumps({
         "selected_utterances": batch["utterance_keys"],
+        "reference_ids": batch["reference_utterance_keys"],
+        "prompt_lens": batch["prompt_lens"].tolist(),
         "latent_lengths": batch["mel_lengths"].tolist(),
         "text_lengths": batch["text_lengths"].tolist(),
         "speaker_norms": batch["speaker_embedding"].norm(dim=1).tolist(),
@@ -117,10 +117,12 @@ def main() -> None:
         parent_ema_step=ema_step,
     )
     assert migration.source_key_count == 313
-    assert migration.target_key_count == 714
+    role_keys = set("transformer.role_conditioner." + k for k in model.transformer.role_conditioner.state_dict())
+    assert role_keys and role_keys.issubset(migration.new_target_keys)
+    assert migration.target_key_count == 714 + len(role_keys)
     assert migration.loaded_key_count == 303
     assert len(migration.ignored_source_keys) == 10
-    assert len(migration.new_target_keys) == 411
+    assert len(migration.new_target_keys) == 411 + len(role_keys)
     assert "transformer.speaker_proj.weight" in migration.new_target_keys
     assert not torch.count_nonzero(model.transformer.speaker_proj.weight)
     assert model.transformer.temporal_band is not None and model.transformer.repa_projector is not None
@@ -129,7 +131,7 @@ def main() -> None:
     for key, value in model.state_dict().items():
         if key in source_state:
             assert torch.equal(value, source_state[key]), f"Migration changed parent tensor {key}"
-    print("[OK] strict migration: source=313, target=714, loaded=303, ignored=10, new=411; loaded tensors exact", flush=True)
+    print(f"[OK] strict parent migration, {migration.loaded_key_count} shared tensors exact, {len(role_keys)} new role tensors", flush=True)
     del source_state
     gc.collect()
 
@@ -138,6 +140,8 @@ def main() -> None:
     forward_kwargs = {
         "inp": batch["mel"].permute(0, 2, 1).to(device),
         "text": batch["text"],
+        "reference_text": batch["reference_text"],
+        "prompt_lens": batch["prompt_lens"].to(device),
         "lens": batch["mel_lengths"].to(device),
         "text_lens": batch["text_lengths"].to(device),
         "video": batch["video"].to(device),
@@ -172,6 +176,10 @@ def main() -> None:
         else:
             assert "ctc_loss" not in components
         loss.backward()
+        role_grads = [p.grad for p in model.transformer.role_conditioner.parameters() if p.grad is not None]
+        assert role_grads and all(torch.isfinite(g).all() for g in role_grads)
+        role_norm = float(torch.stack([g.float().norm() for g in role_grads]).norm())
+        assert role_norm > 0
         speaker_grad = model.transformer.speaker_proj.weight.grad
         assert speaker_grad is not None and torch.isfinite(speaker_grad).all()
         speaker_grad_norm = float(speaker_grad.float().norm())
@@ -191,6 +199,7 @@ def main() -> None:
             "ctc_lambda": weight,
             "total_loss": float(loss),
             **components,
+            "role_grad_norm_pre_clip": role_norm,
             "speaker_grad_norm_pre_clip": speaker_grad_norm,
             "temporal_band_output_grad_norm_pre_clip": band_norm,
             "repa_projector_grad_norm_pre_clip": repa_norm,
@@ -200,6 +209,21 @@ def main() -> None:
         results.append(result)
         print(json.dumps(result, sort_keys=True), flush=True)
         del loss, prediction
+    # Smoke-test actual ODE/CFG inference with both transcript roles and a real pair.
+    model.eval()
+    prompt_len = int(batch["prompt_lens"][0])
+    duration = int(batch["mel_lengths"][0])
+    with torch.inference_mode():
+        generated, _ = model.sample(
+            cond=forward_kwargs["inp"][:1, :prompt_len], lens=batch["prompt_lens"][:1].to(device),
+            text=batch["text"][:1], reference_text=batch["reference_text"][:1],
+            duration=duration, video=forward_kwargs["video"][:1, :duration],
+            speaker_embedding=forward_kwargs["speaker_embedding"][:1],
+            seed=0, steps=4, use_epss=False, cfg_strength=5.0, cfg_strength_v=2.0,
+        )
+        target = generated[:, prompt_len:duration]
+        assert target.shape == (1, duration - prompt_len, audio.channels) and torch.isfinite(target).all()
+    print(f"[OK] structured two-text CFG sample, P={prompt_len}, T={target.size(1)}", flush=True)
     del model, forward_kwargs, batch
     gc.collect()
     torch.cuda.empty_cache()

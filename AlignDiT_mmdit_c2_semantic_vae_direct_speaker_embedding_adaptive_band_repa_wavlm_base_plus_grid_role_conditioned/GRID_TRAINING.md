@@ -1,5 +1,7 @@
 # GRID 训练
 
+> 本文记录复制来源 GRID 基线的配置与历史结果。本副本的训练、评测和 checkpoint 约定见 [GRID_ROLE_CONDITIONING.md](GRID_ROLE_CONDITIONING.md)。
+
 本目录是 `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_adaptive_band_repa_wavlm_base_plus`
 的独立源码副本，先逐文件复制并验证一致，再接入 GRID。原目录保持不变。模型仍使用
 Semantic-VAE Direct-C2、CAM++ speaker embedding、adaptive temporal band 和 WavLM-Base+ REPA。

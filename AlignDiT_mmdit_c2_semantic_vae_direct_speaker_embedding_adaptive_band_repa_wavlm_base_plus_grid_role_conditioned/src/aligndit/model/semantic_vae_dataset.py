@@ -430,36 +430,38 @@ class SemanticVaeCelebVDubDataset(Dataset):
     def get_frame_len(self, index: int) -> int:
         return int(self.records[index]["latent_frames"])
 
-    def __getitem__(self, index: int) -> dict:
-        record = self.records[index]
-        frames = int(record["latent_frames"])
-        latent_path = _safe_join(self.cache_root, record["latent_relative_path"], label="Semantic-VAE latent")
-        video_path = _safe_join(self.cache_root, record["video_40hz_relative_path"], label="40 Hz video")
-        for label, path in (("Semantic-VAE latent", latent_path), ("40 Hz video", video_path)):
-            if path.is_symlink() or not path.is_file():
-                raise FileNotFoundError(f"{label} cache is missing for {record['utterance_key']}: {path}")
+    def _load_aligned_array(self, record: dict, path_field: str, dim: int, label: str) -> np.ndarray:
+        path = _safe_join(self.cache_root, record[path_field], label=label)
+        if path.is_symlink() or not path.is_file():
+            raise FileNotFoundError(f"{label} cache is missing for {record['utterance_key']}: {path}")
+        array = np.load(path, allow_pickle=False)
+        if array.shape != (record["latent_frames"], dim) or array.dtype != np.float32:
+            raise ValueError(f"Invalid {label} for {record['utterance_key']}: shape={array.shape}, dtype={array.dtype}")
+        if not np.isfinite(array).all():
+            raise FloatingPointError(f"Non-finite {label} for {record['utterance_key']}")
+        return array
 
-        latent = np.load(latent_path, allow_pickle=False)
-        video = np.load(video_path, allow_pickle=False)
-        if latent.shape != (frames, SEMANTIC_VAE_LATENT_DIM) or latent.dtype != np.float32:
-            raise ValueError(
-                f"Invalid latent for {record['utterance_key']}: shape={latent.shape}, dtype={latent.dtype}"
-            )
-        if video.shape != (frames, CELEBVDUB_VIDEO_DIM) or video.dtype != np.float32:
-            raise ValueError(f"Invalid video for {record['utterance_key']}: shape={video.shape}, dtype={video.dtype}")
-        if not np.isfinite(latent).all() or not np.isfinite(video).all():
-            raise FloatingPointError(f"Non-finite cached feature for {record['utterance_key']}")
-        normalized_latent = (latent - self.latent_mean) / self.latent_std
-        if not np.isfinite(normalized_latent).all():
+    def _normalized_latent(self, record: dict) -> torch.Tensor:
+        latent = self._load_aligned_array(record, "latent_relative_path", SEMANTIC_VAE_LATENT_DIM, "latent")
+        normalized = (latent - self.latent_mean) / self.latent_std
+        if not np.isfinite(normalized).all():
             raise FloatingPointError(f"Non-finite normalized latent for {record['utterance_key']}")
-        result = {
+        return torch.from_numpy(normalized).transpose(0, 1)
+
+    def _target_item(self, record: dict) -> dict:
+        video = self._load_aligned_array(record, "video_40hz_relative_path", CELEBVDUB_VIDEO_DIM, "video")
+        return {
             "ctc_feasible": bool(record["ctc_feasible_40hz"]),
             "ctc_target_length": int(record["ctc_target_length"]),
-            "mel_spec": torch.from_numpy(normalized_latent).transpose(0, 1),
+            "mel_spec": self._normalized_latent(record),
             "text": record["text"],
             "utterance_key": record["utterance_key"],
-            "video": torch.from_numpy(video.copy()),
+            "video": torch.from_numpy(video),
         }
+
+    def __getitem__(self, index: int) -> dict:
+        record = self.records[index]
+        result = self._target_item(record)
         if self.speaker_embedding_cache_dir is not None:
             result["speaker_embedding"] = torch.from_numpy(self._load_speaker_embedding_array(record))
         if self.repa_feature_cache_dir is not None:

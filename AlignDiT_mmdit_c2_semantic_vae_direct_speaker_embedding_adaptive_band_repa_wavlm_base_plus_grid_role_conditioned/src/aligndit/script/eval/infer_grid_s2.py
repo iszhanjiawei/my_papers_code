@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from aligndit.script.eval.grid_s1_common import (
-    TEXT_CONDITIONING, identity, load_rows, output_record, publish, read, sha, ensure_contract,
+    ROLE_MODE, TEXT_CONDITIONING, grid_config_path, identity, load_rows, output_record, publish, read, sha, ensure_contract,
     validate_text_conditioning,
 )
 from aligndit.script.eval.grid_s2_common import PROTOCOL, load_pairs, SELECTION
@@ -25,14 +25,27 @@ from aligndit.model.grid_dataset import NORMALIZATION_SHA256, VOCAB_SHA256
 def sampling_inputs(reference, video, reference_text, target_text, mean, std, mode='reference-target'):
     """Change only model text; preserve the historical S2 prompt and time grid."""
     validate_text_conditioning('s2', mode)
-    combined_text = reference_target_text(reference_text, target_text)
-    inputs = make_sampling_inputs(reference, video, combined_text, mean, std)
-    model_text = target_text if mode == 'target-only' else combined_text
+    if mode == ROLE_MODE:
+        if not reference_text.strip() or not target_text.strip():
+            raise ValueError('Both transcripts are required for role-conditioned GRID')
+        # Length and character positions in the target encoder depend solely on target text.
+        model_text = target_text
+        inputs = make_sampling_inputs(reference, video, target_text, mean, std, exact_duration=True)
+    else:
+        combined_text = reference_target_text(reference_text, target_text)
+        inputs = make_sampling_inputs(reference, video, combined_text, mean, std)
+        model_text = target_text if mode == 'target-only' else combined_text
     return model_text, inputs
+
+def sampler_text_kwargs(text, reference, mode):
+    args = {'text': [text]}
+    if mode == ROLE_MODE:
+        args['reference_text'] = [reference]
+    return args
 
 
 def run(a):
-    mode = getattr(a, 'text_conditioning', 'reference-target')
+    mode = a.text_conditioning
     validate_text_conditioning('s2', mode, a.output_dir)
     rows, done = load_rows(a.cache_root)
     pairs, references = load_pairs(a.cache_root, a.output_dir, rows)
@@ -43,6 +56,8 @@ def run(a):
     if not 0 <= a.shard < a.nshard <= len(rows):
         raise ValueError('Invalid shard')
     config = load_composed_config(a.config.resolve())
+    if bool(config.model.arch.get('role_conditioned_text', False)) != (mode == ROLE_MODE):
+        raise ValueError('GRID text conditioning is incompatible with the checkpoint architecture config')
     normalization = Path(config.datasets.normalization_path)
     if sha(normalization) != NORMALIZATION_SHA256 or sha(config.datasets.vocab_path) != VOCAB_SHA256:
         raise RuntimeError('Pretrained normalization or tokenizer changed')
@@ -61,12 +76,15 @@ def run(a):
     if mode == 'target-only':
         contract.update(text_conditioning=mode, model_text='supplied target GT dialogue only',
                         reference_transcript_used_for_generation=False)
+    if mode == ROLE_MODE:
+        contract.update(text_conditioning=mode, model_text='separate reference transcript and supplied target GT dialogue',
+                        reference_transcript_used_for_generation=True, config_sha256=sha(a.config))
     protocol_path = a.output_dir / 'protocol.json'
-    ensure_contract(protocol_path, contract)
     device = torch.device('cuda:0')
     torch.set_num_threads(4)
     torch.set_float32_matmul_precision('high')
     model = build_model(a.config.resolve(), a.checkpoint.resolve(), a.step, device)
+    ensure_contract(protocol_path, contract)
     decoder, decoder_meta = load_semantic_vae_decoder(repo=a.semantic_vae_repo, checkpoint_root=a.semantic_vae_checkpoint,
                                                      cache_spec=read(a.cache_root / 'state/latents/spec.json'), device=device)
     publish(a.output_dir / f'decoder_shard{a.shard}.json', decoder_meta)
@@ -75,10 +93,10 @@ def run(a):
         for row in tqdm(rows[a.shard::a.nshard], desc=f'GRID S2 shard {a.shard}', mininterval=5):
             out = a.output_dir / row['audio_relative_path']
             receipt = a.output_dir / 'receipts' / (identity(row) + '.json')
-            if out.exists() or receipt.exists():
-                output_record(a.output_dir, row, PROTOCOL)
-                continue
             ref = references[identity(row)]
+            if out.exists() or receipt.exists():
+                output_record(a.output_dir, row, PROTOCOL, reference=ref)
+                continue
             if not validate_receipt(a.cache_root, row, 'video', done['extraction_sha256']):
                 raise RuntimeError('Missing target video receipt')
             for stage in ('audio', 'latent', 'speaker'):
@@ -95,8 +113,9 @@ def run(a):
                 latent, video, ref['text'], row['text'], mean, std, mode)
             if frames != target_frames or row['original_num_samples'] != row['source_video_frames']*640:
                 raise RuntimeError('Target duration differs from video timebase')
+            text_inputs = sampler_text_kwargs(text, ref['text'], mode)
             generated, _ = model.sample(cond=torch.from_numpy(cond)[None].to(device),
-                text=[text], duration=torch.tensor([duration], device=device),
+                **text_inputs, duration=torch.tensor([duration], device=device),
                 video=torch.from_numpy(combined_video)[None].to(device), lens=torch.tensor([prompt_frames], device=device),
                 steps=32, cfg_strength=5, cfg_strength_v=2, sway_sampling_coef=-1, seed=0, use_epss=True,
                 speaker_embedding=speaker[None])
@@ -111,7 +130,10 @@ def run(a):
                               'samples': row['original_num_samples'], 'reference_id': identity(ref), 'prompt_frames': prompt_frames,
                               'target_frames': target_frames, 'sampler_frames': duration, 'protocol_sha256': sha(protocol_path)}
             if mode == 'target-only':
-                record.update(text_conditioning=mode, model_text=text)
+                record.update(text_conditioning=mode, model_text=text_inputs['text'][0])
+            elif mode == ROLE_MODE:
+                record.update(text_conditioning=mode, target_text=text_inputs['text'][0],
+                              reference_text=text_inputs['reference_text'][0])
             publish(receipt, record)
     publish(a.output_dir / f'shard{a.shard}_complete.json', {'count': len(rows[a.shard::a.nshard]), 'shard': a.shard, 'nshard': a.nshard})
 
@@ -122,16 +144,19 @@ def args():
     p.add_argument('--checkpoint', type=Path, required=True)
     p.add_argument('--step', type=int, default=100000)
     p.add_argument('--output-dir', type=Path, required=True)
-    p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING, default='reference-target',
-                   help='target-only changes only model text; retains independent reference latent/CAM++ and the original prompt+target time grid')
+    p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING, default=ROLE_MODE,
+                   help='role-conditioned supplies both transcripts in separate model inputs')
     p.add_argument('--cache-root', type=Path, default=base/'data/GRID_svae1000k_sample_seed666_fp32')
-    p.add_argument('--config', type=Path, default=Path(__file__).parents[2]/'config/finetune_grid.yaml')
+    p.add_argument('--config', type=Path)
     p.add_argument('--semantic-vae-repo', type=Path, default=base/'alignDiT_idea6/papers_codes/Semantic-VAE')
     p.add_argument('--semantic-vae-checkpoint', type=Path, default=base/'alignDiT_idea6/Semantic-VAE/semantic_vae_1000k')
     p.add_argument('--shard', type=int, default=0)
     p.add_argument('--nshard', type=int, default=1)
     p.add_argument('--limit', type=int)
-    return p.parse_args()
+    parsed = p.parse_args()
+    if parsed.config is None:
+        parsed.config = grid_config_path(parsed.text_conditioning)
+    return parsed
 
 
 if __name__ == '__main__':

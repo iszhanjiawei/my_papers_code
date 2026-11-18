@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from aligndit.script.eval.grid_s1_common import (
-    PROTOCOL, TEXT_CONDITIONING, identity, metric_summary, normalize_text, output_record, publish, read, sha,
+    PROTOCOL, ROLE_MODE, TEXT_CONDITIONING, identity, metric_summary, normalize_text, output_record, publish, read, sha,
     validate_text_conditioning, verify_outputs,
 )
 from aligndit.script.eval.eval_celebvdub_grid_reference import word_edit_counts
@@ -209,6 +209,27 @@ def protocol(a):
     return PROTOCOL
 
 
+def reference_word_matches(results, reference_pairs):
+    """Count same-slot reference matches among positions where the two scripts disagree."""
+    from jiwer import process_words
+
+    matches = conflicting = 0
+    for result in results:
+        target = result['truth'].split()
+        reference = normalize_text(reference_pairs[result['id']]['reference_text']).split()
+        hypothesis = result['hypo'].split()
+        if len(target) != 6 or len(reference) != 6:
+            raise ValueError('GRID word-slot comparison requires two six-word transcripts')
+        conflicting += sum(t != r for t, r in zip(target, reference))
+        for chunk in process_words(result['truth'], result['hypo']).alignments[0]:
+            if chunk.type == 'substitute':
+                for t, h in zip(range(chunk.ref_start_idx, chunk.ref_end_idx),
+                                range(chunk.hyp_start_idx, chunk.hyp_end_idx)):
+                    matches += target[t] != reference[t] and hypothesis[h] == reference[t]
+    return {'matching_reference_words': matches, 'conflicting_word_slots': conflicting,
+            'fraction': matches / conflicting if conflicting else None}
+
+
 def merge(a, rows):
     report = {'protocol': protocol(a), 'count': len(rows), 'complete': a.limit is None,
               'partial_smoke_test': a.limit is not None, 'checkpoint': read(a.output_dir/'protocol.json')['checkpoint'],
@@ -250,6 +271,9 @@ def merge(a, rows):
         summary['display_value'] = f'{summary[task]:.5f}'
         if task == 'wer' and summary['reference_word_count'] != 6*len(rows):
             raise RuntimeError('Unexpected GRID corpus WER denominator')
+        if task == 'wer' and a.setting == 's2':
+            reference_pairs = {pair['id']: pair for pair in read(a.output_dir/'reference_pairs.json')['pairs']}
+            report['reference_word_matches'] = reference_word_matches(gathered, reference_pairs)
         report['metrics'][task] = summary
     publish(a.output_dir/'evaluation_summary.json', report)
     print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
@@ -270,10 +294,10 @@ def run(a):
         return
     from aligndit.script.eval.grid_s1_common import load_rows
     rows, _ = load_rows(a.cache_root)
-    pairs = None
+    pairs = references = None
     if a.setting == 's2':
         from aligndit.script.eval.grid_s2_common import load_pairs
-        pairs, _ = load_pairs(a.cache_root, a.output_dir, rows)
+        pairs, references = load_pairs(a.cache_root, a.output_dir, rows)
         if read(a.output_dir/'protocol.json').get('reference_pairs_sha256') != sha(a.output_dir/'reference_pairs.json'):
             raise RuntimeError('Reference pairing differs from inference protocol')
     if a.limit is not None:
@@ -288,7 +312,7 @@ def run(a):
     import torch
     torch.set_num_threads(4)
     for row in rows:
-        output_record(a.output_dir, row, protocol(a))
+        output_record(a.output_dir, row, protocol(a), reference=references[identity(row)] if references else None)
     tests = [(str(a.output_dir/r['audio_relative_path']), str(a.cache_root/'audio'/r['audio_relative_path']), r['text']) for r in rows]
     if a.task == 'sim' and pairs is not None:
         tests = [(wav, str(a.cache_root/'audio'/pairs[identity(row)]['reference_audio_relative_path']), text)
@@ -320,7 +344,7 @@ def args():
     pretrain = Path(prefix+'/zjw524/alignDiT_pretrain_models')
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--setting', choices=['s1', 's2'], default='s1')
-    p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING, default='reference-target')
+    p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING)
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--cache-root', type=Path, default=data/'GRID_svae1000k_sample_seed666_fp32')
     p.add_argument('--task', choices=['audit', 'verify', 'merge', 'sim', 'wer', 'emosim', 'avsync'], required=True)
@@ -334,7 +358,10 @@ def args():
     p.add_argument('--avhubert-checkpoint', type=Path, default=data/'large_vox_iter5.pt')
     p.add_argument('--fairseq-repo', type=Path, default=data/'av_hubert/fairseq/fairseq')
     p.add_argument('--avhubert-user-dir', type=Path, default=data/'av_hubert/avhubert/avhubert')
-    return p.parse_args()
+    parsed = p.parse_args()
+    if parsed.text_conditioning is None:
+        parsed.text_conditioning = ROLE_MODE if parsed.setting == 's2' else 'reference-target'
+    return parsed
 
 
 if __name__ == '__main__':

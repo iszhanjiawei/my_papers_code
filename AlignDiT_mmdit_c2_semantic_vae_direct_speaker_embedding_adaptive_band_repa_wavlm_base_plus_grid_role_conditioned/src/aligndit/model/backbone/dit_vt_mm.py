@@ -370,6 +370,44 @@ class MMDiTBlock_VT(DiTCrossBlock):
         return x, v
 
 
+class RoleConditioner(nn.Module):
+    """Condition reference acoustics on their transcript and export one vector per speaker example."""
+
+    def __init__(self, mel_dim, text_dim, model_dim):
+        super().__init__()
+        self.reference_role = nn.Parameter(torch.empty(text_dim))
+        self.target_role = nn.Parameter(torch.zeros(text_dim))
+        nn.init.normal_(self.reference_role, std=0.02)
+        # Keep lexical values local: reference characters gate the acoustic
+        # features of each prompt frame. Only pooled acoustic features leave.
+        style_dim = 128
+        self.audio_encoder = nn.Sequential(nn.Linear(mel_dim, style_dim), nn.LayerNorm(style_dim))
+        self.reference_attention = nn.MultiheadAttention(
+            style_dim, num_heads=4, kdim=text_dim, vdim=text_dim, batch_first=True
+        )
+        self.style_out = nn.Linear(style_dim, model_dim, bias=False)
+        nn.init.zeros_(self.style_out.weight)
+
+    def forward(self, audio, prompt_mask, reference_context, reference_token_mask):
+        acoustic = self.audio_encoder(audio)
+        context = F.layer_norm(reference_context, (reference_context.size(-1),))
+        aligned, _ = self.reference_attention(
+            acoustic, context, context, key_padding_mask=~reference_token_mask, need_weights=False
+        )
+        style_frames = (acoustic * aligned.sigmoid()).masked_fill(~prompt_mask.unsqueeze(-1), 0.0)
+        pooled = style_frames.sum(dim=1) / prompt_mask.sum(dim=1, keepdim=True).to(style_frames.dtype)
+        return self.style_out(pooled)
+
+
+def gather_target_frames(hidden, generation_mask):
+    """Compact the valid T frames in time order, before the CTC temporal convolutions."""
+    lengths = generation_mask.sum(dim=1)
+    output = hidden.new_zeros(hidden.shape[0], int(lengths.max()), hidden.shape[-1])
+    target_valid = torch.arange(output.size(1), device=hidden.device)[None] < lengths[:, None]
+    output[target_valid] = hidden[generation_mask]
+    return output, lengths
+
+
 class DiT_VT_MMDiT(DiT):
     def __init__(
         self,
@@ -415,6 +453,7 @@ class DiT_VT_MMDiT(DiT):
         repa_layer=None,
         repa_target_dim=None,
         repa_projector_dim=None,
+        role_conditioned_text=False,
     ):
         super().__init__(
             dim=dim,
@@ -426,7 +465,7 @@ class DiT_VT_MMDiT(DiT):
             mel_dim=mel_dim,
             text_num_embeds=text_num_embeds,
             text_dim=text_dim,
-            text_mask_padding=text_mask_padding,
+            text_mask_padding=text_mask_padding or role_conditioned_text,
             text_embedding_average_upsampling=text_embedding_average_upsampling,
             qk_norm=qk_norm,
             conv_layers=conv_layers,
@@ -438,7 +477,10 @@ class DiT_VT_MMDiT(DiT):
         )
         self.audio_video_ratio = audio_video_ratio
         self.video_rope_scaled = video_rope_scaled
-        self.prompt_isolated_ca = prompt_isolated_ca
+        self.role_conditioned_text = bool(role_conditioned_text)
+        self.prompt_isolated_ca = prompt_isolated_ca or self.role_conditioned_text
+        if self.role_conditioned_text and (speaker_dim is None or text_embedding_average_upsampling):
+            raise ValueError("role-conditioned text requires CAM++ conditioning and token-resolution text")
         self.normalize_text_context = bool(normalize_text_context)
         # Runtime-only diagnostics.  These are deliberately not buffers: the
         # repair must remain state-dict compatible with the S2c parent and the
@@ -528,7 +570,7 @@ class DiT_VT_MMDiT(DiT):
         text_block_kwargs = {
             **audio_block_kwargs,
             "text_dim": text_dim,
-            "prompt_isolated_ca": prompt_isolated_ca,
+            "prompt_isolated_ca": self.prompt_isolated_ca,
         }
         self.transformer_blocks = nn.ModuleList(
             [
@@ -617,6 +659,32 @@ class DiT_VT_MMDiT(DiT):
             else None
         )
 
+        self.role_conditioner = (
+            RoleConditioner(mel_dim, self.text_embed.text_embed.embedding_dim, self.dim)
+            if self.role_conditioned_text else None
+        )
+        self._reference_style_cache = None
+
+    def clear_cache(self):
+        super().clear_cache()
+        self._reference_style_cache = None
+
+    def reference_style(self, cond, prompt_mask, reference_text, cache):
+        if cache and self._reference_style_cache is not None:
+            return self._reference_style_cache
+        if reference_text is None or reference_text.ndim != 2 or reference_text.shape[0] != cond.shape[0]:
+            raise ValueError("role conditioning requires a reference transcript for each prompt")
+        token_mask = reference_text != -1
+        if not token_mask.any(dim=1).all() or not prompt_mask.any(dim=1).all():
+            raise ValueError("each reference must have valid audio frames and transcript tokens")
+        context = self.text_embed(
+            reference_text, reference_text.size(1), role_embedding=self.role_conditioner.reference_role
+        )
+        style = self.role_conditioner(cond, prompt_mask, context, token_mask)
+        if cache:
+            self._reference_style_cache = style
+        return style
+
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
             if speaker_embedding is not None:
@@ -653,17 +721,17 @@ class DiT_VT_MMDiT(DiT):
         complementary_mask: bool["b nv"] | None = None,  # noqa: F722
     ):
         seq_len = text_mask.sum(dim=1).max().item()
-        if cache:
-            if drop_text:
-                if self.text_uncond is None:
-                    self.text_uncond = self.text_embed(text, seq_len, drop_text=True, audio_mask=audio_mask)
-                text_embed = self.text_uncond
-            else:
-                if self.text_cond is None:
-                    self.text_cond = self.text_embed(text, seq_len, drop_text=False, audio_mask=audio_mask)
-                text_embed = self.text_cond
-        else:
-            text_embed = self.text_embed(text, seq_len, drop_text=drop_text, audio_mask=audio_mask)
+        text_embed = (self.text_uncond if drop_text else self.text_cond) if cache else None
+        if text_embed is None:
+            role = self.role_conditioner.target_role if self.role_conditioned_text else None
+            text_embed = self.text_embed(
+                text, seq_len, drop_text=drop_text, audio_mask=audio_mask, role_embedding=role
+            )
+            if cache:
+                if drop_text:
+                    self.text_uncond = text_embed
+                else:
+                    self.text_cond = text_embed
 
         x = self.input_embed(x, cond, drop_audio_cond=drop_audio_cond)
         v = self.video_embed(
@@ -743,6 +811,7 @@ class DiT_VT_MMDiT(DiT):
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
         return_repa: bool = False,
+        reference_text: torch.Tensor | None = None,
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
@@ -769,6 +838,22 @@ class DiT_VT_MMDiT(DiT):
             # Keep identity conditioning coupled to prompt-audio dropout.
             drop_speaker = drop_audio_cond
 
+        style_delta = None
+        if self.role_conditioned_text:
+            prompt_mask = ~generation_mask
+            if mask is not None:
+                prompt_mask = prompt_mask & mask
+            style_delta = self.reference_style(cond, prompt_mask, reference_text, cache)
+            # The pooled style and CAM++ are the only paths from the reference
+            # to the target trunk. In particular, training x_t on the P frames
+            # contains noisy GT reference acoustics and must not be a shortcut.
+            x = x.masked_fill(~generation_mask.unsqueeze(-1), 0.0)
+            cond = torch.zeros_like(cond)
+            if drop_audio_cond or drop_text or drop_speaker:
+                style_delta = style_delta * 0.0
+        elif reference_text is not None:
+            raise ValueError("reference_text requires a role-conditioned backbone")
+
         embed_kwargs = {
             "x": x,
             "cond": cond,
@@ -789,6 +874,8 @@ class DiT_VT_MMDiT(DiT):
                 t,
                 drop_speaker=drop_speaker,
             )
+            if style_delta is not None:
+                speaker_delta_cond = speaker_delta_cond + style_delta
             if not (drop_text or drop_video):
                 x_cond, text_embed_cond, v_cond = self.get_input_embed(**embed_kwargs)
                 x_list.append(x_cond)
@@ -863,6 +950,9 @@ class DiT_VT_MMDiT(DiT):
                 drop_speaker=drop_speaker,
             )
 
+            if style_delta is not None:
+                speaker_delta = speaker_delta + style_delta
+
         if self.normalize_text_context:
             text_embed, text_mask = self._stabilize_text_context(text_embed, text_mask)
 
@@ -915,8 +1005,9 @@ class DiT_VT_MMDiT(DiT):
         for layer_i, block in enumerate(self.transformer_blocks):
             is_mm = isinstance(block, MMDiTBlock_VT)
             has_tail_text = isinstance(block, AudioTextDiTBlock)
-            block_mask = None if self.training else mask  # memory issue
-            block_v_mask = None if self.training else v_mask
+            use_mask = self.role_conditioned_text or not self.training
+            block_mask = mask if use_mask else None
+            block_v_mask = v_mask if use_mask else None
             block_t = (
                 t + speaker_delta
                 if speaker_delta is not None and layer_i >= self.speaker_condition_start_layer
@@ -996,7 +1087,10 @@ class DiT_VT_MMDiT(DiT):
 
             if not cache and layer_i in self.layer_map_ctc:  # hack
                 projector = self.projectors_ctc[self.layer_map_ctc[layer_i]]
-                z_tilde, z_lens = projector(x, lens)
+                ctc_input, ctc_lens = (
+                    gather_target_frames(x, generation_mask) if self.role_conditioned_text else (x, lens)
+                )
+                z_tilde, z_lens = projector(ctc_input, ctc_lens)
                 intermediates_ctc[layer_i] = {"z_tilde": z_tilde, "z_lens": z_lens}
             if return_repa and layer_i == self.repa_layer:
                 repa_projection = self.repa_projector(x)

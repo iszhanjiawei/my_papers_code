@@ -86,7 +86,7 @@ class TextEmbedding(nn.Module):
 
         return upsampled_text
 
-    def forward(self, text: int["b nt"], seq_len, drop_text=False, audio_mask: bool["b n"] | None = None):  # noqa: F722
+    def forward(self, text: int["b nt"], seq_len, drop_text=False, audio_mask: bool["b n"] | None = None, *, role_embedding=None):  # noqa: F722
         text = text + 1  # use 0 as filler token. preprocess of batch pad -1, see list_str_to_idx()
         text = text[:, :seq_len]  # curtail if character tokens are more than the mel spec tokens
         batch, text_len = text.shape[0], text.shape[1]
@@ -98,6 +98,11 @@ class TextEmbedding(nn.Module):
             text = torch.zeros_like(text)
 
         text = self.text_embed(text)  # b n -> b n d
+        if role_embedding is not None:
+            # A dropped condition must not depend on its role. Multiplying by
+            # zero keeps the parameter in the autograd graph on DDP dropout steps.
+            text = text + role_embedding.to(text.dtype) * (0.0 if drop_text else 1.0)
+
 
         # possible extra modeling
         if self.extra_modeling: # 如果构造时 conv_layers>0，执行位置编码和 ConvNeXt。

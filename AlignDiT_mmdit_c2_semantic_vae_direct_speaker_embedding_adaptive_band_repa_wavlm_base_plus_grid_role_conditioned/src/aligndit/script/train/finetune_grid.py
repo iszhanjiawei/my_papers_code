@@ -11,7 +11,7 @@ from accelerate.utils import set_seed
 from omegaconf import OmegaConf
 
 from aligndit.model.cfm_vt import CFM_VT
-from aligndit.model.grid_dataset import GridDataset
+from aligndit.model.grid_dataset import PairedGridDataset
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.trainer_semantic_vae_adaptive_band import SemanticVaeAdaptiveBandTrainer
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
@@ -24,7 +24,11 @@ os.chdir(str(files("aligndit").joinpath("../..")))
 def dataset_from_config(model_cfg, *, allow_partial=False):
     """Load and validate GRID data without instantiating the diffusion model."""
     repa_enabled = float(OmegaConf.select(model_cfg, "model.repa_lambda", default=0.0)) > 0
-    return GridDataset(
+    if not model_cfg.model.arch.get("role_conditioned_text", False):
+        raise ValueError("The paired GRID training entry requires model.arch.role_conditioned_text=true")
+    if "role_conditioned" not in Path(model_cfg.ckpts.save_dir).resolve().name or "role_conditioned" not in model_cfg.model.name:
+        raise ValueError("Use a dedicated role_conditioned experiment name and checkpoint directory")
+    return PairedGridDataset(
         manifest_path=model_cfg.datasets.manifest_path,
         cache_root=model_cfg.datasets.cache_root,
         normalization_path=model_cfg.datasets.normalization_path,
@@ -61,7 +65,7 @@ def training_schedule_from_config(model_cfg, dataset, *, world_size=1):
     if model_cfg.datasets.batch_size_type != "frame":
         raise ValueError("The GRID entry requires frame batching to preserve the Direct-C2 experiment")
     budget = int(model_cfg.datasets.batch_size_per_gpu)
-    if budget <= 0 or any(row["latent_frames"] > budget for row in dataset.records):
+    if budget <= 0 or any(dataset.get_frame_len(i) > budget for i in range(len(dataset))):
         raise ValueError("GRID frame budget would silently discard at least one utterance; increase it")
     sampler = DynamicBatchSampler(
         SequentialSampler(dataset),
@@ -237,6 +241,8 @@ def main(model_cfg):
             "project_dir": str(Path.cwd()),
             "config": OmegaConf.to_container(model_cfg, resolve=True),
             "grid_cache": train_dataset.cache_contract,
+            "train_pairing": train_dataset.pair_contract,
+            "text_roles": "independently encoded reference and target dialogue; target-only CTC",
             "batch_and_schedule": schedule,
             "validation": "existing GRID val split is held out; no online validation loop",
             "speaker_cache_metadata": speaker_metadata,
@@ -252,7 +258,7 @@ def main(model_cfg):
                 "schedule": "fixed from the first update",
                 "student_layer_zero_based": int(model_arc.repa_layer),
                 "teacher_layer": int(model_cfg.datasets.repa_teacher_layer),
-                "alignment": "linear interpolation of each unpadded 50-Hz target to valid 40-Hz latent length",
+                "alignment": "linear interpolation of the target teacher to its own target span, excluding the prompt",
                 "loss": "mean 1-cosine on the flow-matching generation mask only",
                 "inference": "projector weights load strictly but the auxiliary head is not called",
             }

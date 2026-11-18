@@ -31,6 +31,31 @@ from f5_tts.model.utils import (
 )
 
 
+def _split_grid_transcripts(combined: list[str]) -> tuple[list[str], list[str]]:
+    """Parse the GRID tagged or historical two-space form before character tokenization."""
+    if not isinstance(combined, list) or not combined:
+        raise ValueError("Pass reference_text and target text separately for token tensors")
+    refs, targets = [], []
+    for line in combined:
+        if not isinstance(line, str):
+            raise TypeError("Combined GRID transcripts must be strings")
+        line = line.strip()
+        if "[REF]" in line or "[TGT]" in line:
+            if not line.startswith("[REF]") or line.count("[REF]") != 1 or line.count("[TGT]") != 1:
+                raise ValueError("Expected exactly one ordered [REF] transcript [TGT] transcript")
+            ref, target = (part.strip() for part in line[len("[REF]"):].split("[TGT]"))
+        else:
+            parts = line.split("  ")
+            if len(parts) != 2 or "   " in line:
+                raise ValueError("Pass both reference_text and target text, or use [REF] A [TGT] B or A  B")
+            ref, target = parts
+        if not ref or not target:
+            raise ValueError("Both reference and target transcripts must be nonempty")
+        refs.append(ref)
+        targets.append(target)
+    return refs, targets
+
+
 class CFM_VT(CFM):
     def __init__(
         self,
@@ -56,6 +81,29 @@ class CFM_VT(CFM):
             raise ValueError(f"repa_lambda must be finite and non-negative, got {repa_lambda}")
         self.repa_lambda = float(repa_lambda)
 
+    def _reference_condition(self, reference_text, batch: int, device) -> dict:
+        paired = getattr(self.transformer, "role_conditioned_text", False)
+        if paired != (reference_text is not None):
+            raise ValueError("role-conditioned models require both reference_text and target text; "
+                             "legacy models accept only text")
+        if not paired:
+            return {}
+        if isinstance(reference_text, list):
+            if len(reference_text) != batch or any(not isinstance(t, str) or not t.strip() for t in reference_text):
+                raise ValueError("Expected a nonempty reference transcript per utterance")
+            if exists(self.vocab_char_map):
+                reference_text = list_str_to_idx(reference_text, self.vocab_char_map)
+            else:
+                reference_text = list_str_to_tensor(reference_text)
+        if (not isinstance(reference_text, torch.Tensor) or reference_text.ndim != 2
+                or reference_text.shape[0] != batch or reference_text.dtype != torch.long):
+            raise ValueError("reference_text must be strings or a [batch, tokens] LongTensor padded with -1")
+        reference_text = reference_text.to(device)
+        valid = reference_text != -1
+        if not valid.any(dim=1).all() or not torch.equal(valid, lens_to_mask(valid.sum(-1), length=valid.size(1))):
+            raise ValueError("Reference token sequences must be nonempty and right padded")
+        return {"reference_text": reference_text}
+
     @torch.no_grad()
     def sample(
         self,
@@ -66,6 +114,7 @@ class CFM_VT(CFM):
         speaker_embedding: float["b ds"] | None = None,  # noqa: F722
         *,
         lens: int["b"] | None = None,  # noqa: F821
+        reference_text: torch.Tensor | list[str] | None = None,
         steps=32,
         cfg_strength=1.0,
         sway_sampling_coef=None,
@@ -92,6 +141,19 @@ class CFM_VT(CFM):
         video = video.to(next(self.parameters()).dtype)
 
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
+        if getattr(self.transformer, "role_conditioned_text", False):
+            if reference_text is None:
+                reference_text, text = _split_grid_transcripts(text)
+            else:
+                # A separate reference plus a combined target would assign the same
+                # transcript to two roles and reintroduce reference K/V into target CA.
+                for transcripts in (reference_text, text):
+                    if isinstance(transcripts, list) and any(
+                        not isinstance(t, str) or not t.strip() or "[REF]" in t or "[TGT]" in t or "  " in t
+                        for t in transcripts
+                    ):
+                        raise ValueError("When reference_text is explicit, pass one plain transcript per role")
+        reference_kwargs = self._reference_condition(reference_text, batch, device)
         if speaker_embedding is not None:
             speaker_embedding = speaker_embedding.to(device=device, dtype=torch.float32)
         if not exists(lens):
@@ -117,10 +179,17 @@ class CFM_VT(CFM):
             duration = duration.expand(batch)
 
         text_lens = (text != -1).sum(dim=-1)
-        duration = torch.maximum(
-            torch.maximum(text_lens, lens) + 1, duration
-        )  # duration at least text/audio prompt length plus one token, so something is generated
-        duration = duration.clamp(max=max_duration)
+        if reference_kwargs:
+            if (edit_mask is not None or duration.shape != (batch,) or lens.shape != (batch,)
+                    or (lens < 1).any() or (lens > cond_seq_len).any() or (duration <= lens).any()
+                    or (duration > max_duration).any() or (text_lens == 0).any()):
+                raise ValueError("Role-conditioned sampling needs nonempty prompt, target window and transcripts "
+                                 "with the explicit requested duration inside max_duration")
+            if self.audio_video_ratio != 1 or video.shape[1] != duration.max().item():
+                raise ValueError("Role-conditioned GRID video must cover the full P+T layout at 40 Hz")
+        else:
+            duration = torch.maximum(torch.maximum(text_lens, lens) + 1, duration)
+            duration = duration.clamp(max=max_duration)
         max_duration = duration.amax()
         duration_mask = lens_to_mask(duration, length=max_duration)
 
@@ -184,6 +253,7 @@ class CFM_VT(CFM):
                     speaker_embedding=speaker_embedding,
                     drop_speaker=no_ref_audio,
                     cache=True,
+                    **reference_kwargs,
                 )
                 return pred
 
@@ -205,6 +275,7 @@ class CFM_VT(CFM):
                 drop_speaker=no_ref_audio,
                 cfg_infer=True,
                 cache=True,
+                **reference_kwargs,
             )
             if ignore_modality is None:
                 pred, tts_pred, null_pred = torch.chunk(pred_cfg, 3, dim=0)
@@ -243,8 +314,10 @@ class CFM_VT(CFM):
         if sway_sampling_coef is not None:
             t = t + sway_sampling_coef * (torch.cos(torch.pi / 2 * t) - 1 + t)
 
-        trajectory = odeint(fn, y0, t, **self.odeint_kwargs)
-        self.transformer.clear_cache()
+        try:
+            trajectory = odeint(fn, y0, t, **self.odeint_kwargs)
+        finally:
+            self.transformer.clear_cache()
 
         sampled = trajectory[-1]
         out = sampled
@@ -269,6 +342,8 @@ class CFM_VT(CFM):
         repa_features: float["b nr dr"] | None = None,  # noqa: F722
         repa_feature_lens: int["b"] | None = None,  # noqa: F821
         noise_scheduler: str | None = None,
+        reference_text: torch.Tensor | list[str] | None = None,
+        prompt_lens: torch.Tensor | None = None,
     ):
         # handle raw wave
         if inp.ndim == 2:
@@ -277,6 +352,10 @@ class CFM_VT(CFM):
             assert inp.shape[-1] == self.num_channels
 
         batch, seq_len, dtype, device, _σ1 = *inp.shape[:2], inp.dtype, self.device, self.sigma
+
+        reference_kwargs = self._reference_condition(reference_text, batch, device)
+        if bool(reference_kwargs) != (prompt_lens is not None):
+            raise ValueError("Paired training requires reference_text and prompt_lens together")
 
         # handle text as string
         if isinstance(text, list):
@@ -293,7 +372,9 @@ class CFM_VT(CFM):
         mask = lens_to_mask(lens, length=seq_len)  # useless here, as collate_fn will pad to max length in batch
 
         if not exists(text_lens):
-            text_lens = torch.full((batch,), text.size(1), device=device)
+            text_lens = (text != -1).sum(dim=-1) if reference_kwargs else torch.full(
+                (batch,), text.size(1), device=device
+            )
         text_mask = lens_to_mask(text_lens)
 
         if not exists(video_lens):
@@ -307,13 +388,18 @@ class CFM_VT(CFM):
                 f"video_lens*{self.audio_video_ratio}: {(video_lens * self.audio_video_ratio).tolist()}"
             )
 
-        # get a random span to mask out for training conditionally
-        frac_lengths = torch.zeros((batch,), device=self.device).float().uniform_(*self.frac_lengths_mask)
-        rand_span_video_mask = mask_from_frac_lengths(video_lens, frac_lengths)
-        rand_span_mask = rand_span_video_mask.repeat_interleave(self.audio_video_ratio, dim=-1)
-
-        if exists(mask):
-            rand_span_mask &= mask
+        if prompt_lens is not None:
+            if self.audio_video_ratio != 1 or not torch.equal(lens, video_lens):
+                raise ValueError("Paired GRID batches need aligned 40 Hz video and audio")
+            prompt_lens = prompt_lens.to(device)
+            if (prompt_lens.shape != (batch,) or prompt_lens.dtype != torch.long or (prompt_lens <= 0).any()
+                    or (prompt_lens >= lens).any() or (lens > seq_len).any() or (text_lens <= 0).any()):
+                raise ValueError("Expected nonempty valid prompt, target and transcript in every paired example")
+            generation_mask = mask & ~lens_to_mask(prompt_lens, length=seq_len)
+        else:
+            frac_lengths = torch.zeros((batch,), device=self.device).float().uniform_(*self.frac_lengths_mask)
+            rand_span_video_mask = mask_from_frac_lengths(video_lens, frac_lengths)
+            generation_mask = rand_span_video_mask.repeat_interleave(self.audio_video_ratio, dim=-1) & mask
 
         # mel is x1
         x1 = inp
@@ -331,10 +417,10 @@ class CFM_VT(CFM):
         flow = x1 - x0
 
         # only predict what is within the random mask span for infilling
-        cond = torch.where(rand_span_mask[..., None], torch.zeros_like(x1), x1)
+        cond = torch.where(generation_mask[..., None], torch.zeros_like(x1), x1)
 
         # complementary masking
-        complementary_mask = ~rand_span_mask[:, :: self.audio_video_ratio]
+        complementary_mask = ~generation_mask[:, :: self.audio_video_ratio]
         if exists(video_mask):
             complementary_mask &= video_mask
 
@@ -376,11 +462,12 @@ class CFM_VT(CFM):
             text_mask=text_mask,
             video_mask=video_mask,
             complementary_mask=complementary_mask,
-            generation_mask=rand_span_mask,
+            generation_mask=generation_mask,
             speaker_embedding=speaker_embedding,
             # Use the final prompt dropout, including all-condition dropout.
             drop_speaker=drop_audio_cond,
             return_repa=use_repa,
+            **reference_kwargs,
         )
         if use_repa:
             pred, intermediates_ctc, repa_projection = transformer_outputs
@@ -389,17 +476,23 @@ class CFM_VT(CFM):
 
         # flow matching loss
         loss = F.mse_loss(pred, flow, reduction="none")
-        loss = loss[rand_span_mask]
+        loss = loss[generation_mask]
         loss = loss.mean()
         component_losses = {"diff_loss": loss.item()}
 
         if use_repa:
+            student_lens = lens
+            repa_mask = generation_mask
+            if prompt_lens is not None:
+                # The teacher covers only the target in its native 50-Hz timebase.
+                # First remove the varying 40-Hz prompt lengths, then interpolate.
+                student_lens = lens - prompt_lens
+                positions = torch.arange(student_lens.max(), device=device)
+                indices = (prompt_lens[:, None] + positions).clamp_max(seq_len - 1)
+                repa_projection = repa_projection[torch.arange(batch, device=device)[:, None], indices]
+                repa_mask = lens_to_mask(student_lens, length=positions.numel())
             repa_loss = masked_repa_cosine_loss(
-                repa_projection,
-                repa_features,
-                repa_feature_lens,
-                lens,
-                rand_span_mask,
+                repa_projection, repa_features, repa_feature_lens, student_lens, repa_mask
             )
             loss = loss + repa_loss * self.repa_lambda
             component_losses["repa_loss"] = repa_loss.item()

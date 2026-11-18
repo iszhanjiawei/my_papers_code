@@ -13,6 +13,7 @@ from aligndit.model.grid_dataset import (
     SPEAKER_MODEL_ID,
     VAE_CHECKPOINT_SHA256,
     GridDataset,
+    PairedGridDataset,
 )
 from aligndit.model.repa import (
     WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
@@ -146,8 +147,8 @@ class GridFixture:
             },
         )
 
-    def load(self, split="train", **kwargs):
-        return GridDataset(
+    def load(self, split="train", dataset_cls=GridDataset, **kwargs):
+        return dataset_cls(
             self.root / f"manifests/{split}.jsonl",
             self.root,
             self.normalization,
@@ -262,6 +263,45 @@ class GridDatasetTests(unittest.TestCase):
         self.fixture.publish()
         with self.assertRaisesRegex(RuntimeError, "vocab_sha256"):
             self.fixture.load()
+
+
+class PairedGridDatasetTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="grid-role-pair-test-")
+        self.addCleanup(temporary.cleanup)
+        self.fixture = GridFixture(Path(temporary.name))
+
+    def test_role_pair_reads_source_specific_features_and_uses_real_lengths(self):
+        row = self.fixture.rows[1]
+        row["text"] = row["text"].replace("two", "six")
+        self.fixture.publish()
+        dataset = self.fixture.load(dataset_cls=PairedGridDataset)
+        self.assertEqual(dataset.reference_indices, [1, 0])
+        self.assertEqual(dataset.get_frame_len(0), 132)
+        self.assertEqual(dataset.get_frame_len(1), 132)
+        # Neither side is permitted to silently borrow the other utterance's
+        # inputs/supervision. Removing unused features should still allow item 0.
+        (self.fixture.root / "speakers/train/s1/clip0.npy").unlink()
+        (self.fixture.root / "video_40hz/train/s1/clip1.npy").unlink()
+        (self.fixture.root / "repa/train/s1/clip1.npy").unlink()
+        np.save(self.fixture.root / row["latent_relative_path"], np.full((12, 64), 9.0, dtype=np.float32))
+        item = dataset[0]
+        batch = dataset.collate_fn([item])
+        self.assertEqual(batch["reference_text"], [row["text"]])
+        self.assertEqual(batch["text"], [self.fixture.rows[0]["text"]])
+        self.assertEqual(batch["prompt_lens"].tolist(), [12])
+        self.assertTrue((batch["video"][:, :12] == 0).all())
+        self.assertTrue((batch["video"][:, 12:] == 1).all())
+        self.assertTrue((batch["mel"][:, :, :12] == 4).all())
+        self.assertTrue((batch["mel"][:, :, 12:] == 1).all())
+        self.assertEqual(batch["repa_features"].size(1), 125)
+        self.assertEqual(batch["reference_utterance_keys"], [row["utterance_key"]])
+
+    def test_held_out_or_same_text_cannot_be_a_training_pair(self):
+        with self.assertRaisesRegex(ValueError, "distinct-text"):
+            self.fixture.load(dataset_cls=PairedGridDataset)
+        with self.assertRaisesRegex(ValueError, "train manifest"):
+            self.fixture.load(split="val", dataset_cls=PairedGridDataset)
 
 
 class GridScheduleTests(unittest.TestCase):

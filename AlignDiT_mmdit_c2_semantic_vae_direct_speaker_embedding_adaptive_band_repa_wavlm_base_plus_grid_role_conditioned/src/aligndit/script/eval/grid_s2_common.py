@@ -50,9 +50,11 @@ def prepare_pairs(cache, root):
     path = root/'reference_pairs.json'
     contents = {'protocol': PROTOCOL, 'selection': SELECTION, 'seed': 0, 'count': len(rows),
                 'target_manifest_sha256': sha(cache/'manifests/val.jsonl'), 'pairs': pairs}
-    if path.exists() and read(path) != contents:
-        raise RuntimeError('Reference assignments changed; use a new output directory')
-    publish(path, contents)
+    if path.exists():
+        if read(path) != contents:
+            raise RuntimeError('Reference assignments changed; use a new output directory')
+    else:
+        publish(path, contents)
     return pairs
 
 

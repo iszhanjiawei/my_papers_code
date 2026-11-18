@@ -1,10 +1,8 @@
-# Current experiment: GRID
+# GRID 参考台词与目标台词分路训练
 
-本目录是原 adaptive-band + CAM++ + Semantic-VAE + WavLM-Base+ REPA 模型的独立 GRID 训练副本。
-数据准备、训练命令、协议和验证说明见 **[GRID_TRAINING.md](GRID_TRAINING.md)**。
-GRID 入口为 `scripts/prepare_grid.sh` 和 `src/aligndit/run/train/finetune_grid.sh`。
+该实验从 GRID adaptive-band + CAM++ + WavLM-Base+ REPA 快照独立复制，在推理中同时接收参考台词和目标台词。运行方法、模型输入、训练监督与评测口径见 [角色条件实验说明](GRID_ROLE_CONDITIONING.md)。
 
-下方保留上游说明；原模型的结构说明见 [ADAPTIVE_BAND_WAVLM_REPA.md](ADAPTIVE_BAND_WAVLM_REPA.md)。
+下文保留上游项目的通用说明。
 
 # AlignDiT
 
