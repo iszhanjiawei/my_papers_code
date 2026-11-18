@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import gc
-import inspect
 import json
 import math
 import os
@@ -20,16 +19,15 @@ from unittest.mock import patch
 import hydra
 import torch
 from hydra import compose, initialize_config_dir
-from omegaconf import OmegaConf
 
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
-from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.semantic_vae_direct_migration import (
     load_s2c_ema_state,
     migrate_s2c_ema_into_model,
     validate_parent_artifacts,
 )
+from aligndit.script.train.finetune_semantic_vae_c2_direct_speaker import dataset_from_config
 from f5_tts.model.utils import get_tokenizer
 
 
@@ -59,15 +57,24 @@ def main() -> None:
         expected_contract_sha256=ckpts.expected_parent_contract_sha256,
     )
 
-    dataset_config = OmegaConf.to_container(config.datasets, resolve=True)
-    dataset_parameters = inspect.signature(SemanticVaeCelebVDubDataset).parameters
-    dataset = SemanticVaeCelebVDubDataset(
-        **{key: value for key, value in dataset_config.items() if key in dataset_parameters}
-    )
-    selected = [
-        index for index, record in enumerate(dataset.records)
-        if record["ctc_feasible_40hz"] and 64 <= record["latent_frames"] <= args.max_frames
-    ][:2]
+    dataset = dataset_from_config(config)
+    roles = bool(config.model.arch.get("role_conditioned_text", False))
+    selected = []
+    used_prompt_lengths = set()
+    base = dataset.base_dataset if roles else dataset
+    for index in range(len(dataset)):
+        target_index = dataset.indices[index][0] if roles else index
+        target = base.records[target_index]
+        if not target["ctc_feasible_40hz"] or not 64 <= target["latent_frames"] <= args.max_frames:
+            continue
+        if roles:
+            ref_length = base.get_frame_len(dataset.indices[index][1])
+            if ref_length in used_prompt_lengths or ref_length > args.max_frames:
+                continue
+            used_prompt_lengths.add(ref_length)
+        selected.append(index)
+        if len(selected) == 2:
+            break
     if len(selected) != 2:
         raise RuntimeError("Need two real CTC-feasible examples between 64 and --max-frames frames")
     batch = dataset.collate_fn([dataset[index] for index in selected])
@@ -80,6 +87,22 @@ def main() -> None:
     assert batch["mel"].shape[1] == 64
     assert batch["speaker_embedding"].shape == (2, 192)
     assert torch.equal(batch["mel_lengths"], batch["video_lengths"])
+
+    if roles:
+        for n, index in enumerate(selected):
+            t, r = (base.records[i] for i in dataset.indices[index])
+            p, duration = int(batch["prompt_lens"][n]), int(batch["mel_lengths"][n])
+            assert p == r["latent_frames"] and duration - p == t["latent_frames"]
+            assert batch["reference_text"][n] == r["text"] and batch["text"][n] == t["text"]
+            assert torch.equal(batch["speaker_embedding"][n], torch.from_numpy(base._load_speaker_embedding_array(r)))
+            assert torch.equal(batch["mel"][n, :, :p], base._normalized_latent(r))
+            assert torch.equal(batch["mel"][n, :, p:duration], base._normalized_latent(t))
+            teacher = torch.from_numpy(base._load_repa_feature_array(t))
+            assert torch.equal(batch["repa_features"][n, :teacher.shape[0]], teacher)
+            assert not batch["video"][n, :p].any()
+            assert torch.equal(batch["video"][n, p:duration], base._target_item(t)["video"])
+            print(json.dumps({"target": t["utterance_key"], "target_text": t["text"], "T": duration - p,
+                              "reference": r["utterance_key"], "reference_text": r["text"], "P": p}), flush=True)
 
     vocab_char_map, vocab_size = get_tokenizer(config.datasets.vocab_path, "custom")
     model_cls = hydra.utils.get_class(f"aligndit.model.{config.model.backbone}")
@@ -108,10 +131,13 @@ def main() -> None:
         parent_ema_step=ema_step,
     )
     assert migration.source_key_count == 313
-    assert migration.target_key_count == 714
+    role_keys = ({f"transformer.role_conditioner.{k}" for k in model.transformer.role_conditioner.state_dict()}
+                 if roles else set())
+    assert role_keys.issubset(migration.new_target_keys)
+    assert migration.target_key_count == 714 + len(role_keys)
     assert migration.loaded_key_count == 303
     assert len(migration.ignored_source_keys) == 10
-    assert len(migration.new_target_keys) == 411
+    assert len(migration.new_target_keys) == 411 + len(role_keys)
     assert "transformer.speaker_proj.weight" in migration.new_target_keys
     assert not torch.count_nonzero(model.transformer.speaker_proj.weight)
     assert model.transformer.temporal_band is not None and model.transformer.repa_projector is not None
@@ -120,7 +146,7 @@ def main() -> None:
     for key, value in model.state_dict().items():
         if key in source_state:
             assert torch.equal(value, source_state[key]), f"Migration changed parent tensor {key}"
-    print("[OK] strict migration: source=313, target=714, loaded=303, ignored=10, new=411; loaded tensors exact", flush=True)
+    print(f"[OK] strict migration, 303 shared tensors exact, {len(role_keys)} new role tensors", flush=True)
     del source_state
     gc.collect()
 
@@ -136,6 +162,8 @@ def main() -> None:
         "repa_features": batch["repa_features"].to(device),
         "repa_feature_lens": batch["repa_feature_lengths"].to(device),
     }
+    if roles:
+        forward_kwargs.update(reference_text=batch["reference_text"], prompt_lens=batch["prompt_lens"].to(device))
     assert not forward_kwargs["repa_features"].requires_grad
     assert not forward_kwargs["speaker_embedding"].requires_grad
     results = []
@@ -162,6 +190,10 @@ def main() -> None:
         else:
             assert "ctc_loss" not in components
         loss.backward()
+        if roles:
+            style_grad = model.transformer.role_conditioner.style_out.weight.grad
+            assert style_grad is not None and torch.isfinite(style_grad).all() and style_grad.norm() > 0
+            components["style_projection_grad_norm"] = float(style_grad.norm())
         speaker_grad = model.transformer.speaker_proj.weight.grad
         assert speaker_grad is not None and torch.isfinite(speaker_grad).all()
         speaker_grad_norm = float(speaker_grad.float().norm())

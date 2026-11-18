@@ -1,9 +1,6 @@
-# Current experiment
+# CelebV-Dub 双台词条件训练
 
-This independent copy of the adaptive-band speaker experiment adds WavLM-Base+
-REPA with fixed weight 0.1. The adaptive temporal band and delayed CTC schedule
-remain enabled. See [ADAPTIVE_BAND_WAVLM_REPA.md](ADAPTIVE_BAND_WAVLM_REPA.md)
-for the combined experiment's configuration, validation and launch commands.
+本实验用源视频、片段名前缀、CAM++ 声纹和转录构造同声异句候选对。参考和目标均保留台词，模型从参考侧提取全局风格，用目标台词和嘴部视频决定目标段内容。配对方法、覆盖率、验证和训练命令见 [CelebV-Dub 双台词训练说明](CELEB_ROLE_CONDITIONING.md)。
 
 # AlignDiT
 

@@ -23,6 +23,81 @@ from f5_tts.model.utils import get_tokenizer
 os.chdir(str(files("aligndit").joinpath("../..")))
 
 
+def dataset_from_config(model_cfg):
+    repa_enabled = float(model_cfg.model.get("repa_lambda", 0.0)) > 0
+    paired = bool(model_cfg.model.arch.get("role_conditioned_text", False))
+    if bool(model_cfg.datasets.get("pairing_path")) != paired:
+        raise ValueError("Role-conditioned CelebV-Dub training requires both paired data and a role-aware model")
+    if paired:
+        if "celeb_role_conditioned" not in Path(model_cfg.ckpts.save_dir).name or (
+            "celeb_role_conditioned" not in model_cfg.model.name
+        ):
+            raise ValueError("Paired CelebV-Dub requires its own model name and checkpoint directory")
+        if model_cfg.datasets.name != "CelebVDub" or model_cfg.ckpts.logger != "tensorboard":
+            raise ValueError("Role-conditioned CelebV-Dub runs require the CelebVDub split and TensorBoard")
+    base = SemanticVaeCelebVDubDataset(
+        manifest_path=model_cfg.datasets.manifest_path,
+        cache_root=model_cfg.datasets.cache_root,
+        normalization_path=model_cfg.datasets.normalization_path,
+        vocab_path=model_cfg.datasets.vocab_path,
+        expected_manifest_sha256=model_cfg.datasets.expected_manifest_sha256,
+        expected_inventory_sha256=model_cfg.datasets.expected_inventory_sha256,
+        expected_normalization_sha256=model_cfg.datasets.expected_normalization_sha256,
+        expected_vocab_sha256=model_cfg.datasets.expected_vocab_sha256,
+        expected_record_count=model_cfg.datasets.expected_record_count,
+        speaker_embedding_cache_dir=model_cfg.datasets.speaker_embedding_cache_dir,
+        speaker_embedding_dim=int(model_cfg.model.arch.speaker_dim),
+        speaker_embedding_model_id=model_cfg.datasets.speaker_embedding_model_id,
+        speaker_embedding_checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
+        repa_feature_cache_dir=(model_cfg.datasets.repa_feature_cache_dir if repa_enabled else None),
+        repa_feature_dim=(int(model_cfg.datasets.repa_feature_dim) if repa_enabled else 768),
+        repa_model_id=(model_cfg.datasets.repa_model_id if repa_enabled else None),
+        repa_model_revision=(model_cfg.datasets.repa_model_revision if repa_enabled else None),
+        repa_checkpoint_sha256=(model_cfg.datasets.repa_checkpoint_sha256 if repa_enabled else None),
+        repa_teacher_layer=(int(model_cfg.datasets.repa_teacher_layer) if repa_enabled else None),
+    )
+    if paired:
+        from aligndit.model.celeb_role_dataset import PairedCelebVDubDataset
+
+        return PairedCelebVDubDataset(base, model_cfg.datasets.pairing_path)
+    return base
+
+
+def paired_schedule(model_cfg, dataset, world_size):
+    """Match the trainer's frame batching, DDP tail handling and LR scheduler."""
+    from torch.utils.data import SequentialSampler
+    from f5_tts.model.dataset import DynamicBatchSampler
+
+    budget = int(model_cfg.datasets.batch_size_per_gpu)
+    accumulation = int(model_cfg.optim.grad_accumulation_steps)
+    epochs = int(model_cfg.optim.epochs)
+    if world_size < 1 or accumulation < 1 or model_cfg.datasets.batch_size_type != "frame":
+        raise ValueError("Paired training requires frame batching and positive DDP size and accumulation")
+    sampler = DynamicBatchSampler(
+        SequentialSampler(dataset), budget, max_samples=int(model_cfg.datasets.max_samples),
+        random_seed=int(model_cfg.seed), drop_residual=False,
+    )
+    if sum(map(len, sampler.batches)) != len(dataset):
+        longest = max(dataset.get_frame_len(i) for i in range(len(dataset)))
+        raise ValueError(f"Per-GPU budget {budget} would omit pairs (longest P+T is {longest})")
+    batches = len(sampler)
+    per_rank = batches // world_size
+    available_updates = math.ceil(per_rank / accumulation) * epochs
+    run_until = int(model_cfg.optim.run_until_update)
+    warmup_steps = int(model_cfg.optim.num_warmup_updates) * world_size
+    scheduler_steps = math.ceil(batches / accumulation) * epochs
+    if not 0 < run_until <= available_updates:
+        raise ValueError(f"Requested {run_until} updates, sampler permits {available_updates}; adjust optim.epochs")
+    if not 0 < warmup_steps < scheduler_steps:
+        raise ValueError(f"LR schedule requires positive warmup and decay, got {warmup_steps=} {scheduler_steps=}")
+    return {
+        "world_size": world_size, "frame_budget_per_gpu": budget, "pairs": len(dataset),
+        "batches_per_epoch": batches, "batches_per_rank": per_rank, "dropped_tail_batches": batches % world_size,
+        "available_updates": available_updates, "run_until_update": run_until,
+        "lr_warmup_steps": warmup_steps, "lr_total_steps": scheduler_steps,
+    }
+
+
 @hydra.main(version_base="1.3", config_path=str(files("aligndit").joinpath("config")), config_name=None)
 def main(model_cfg):
     set_seed(int(model_cfg.seed))
@@ -84,6 +159,10 @@ def main(model_cfg):
         raise RuntimeError("Direct-C2 CTC-warmup experiment requires a finite positive ctc_lambda")
     if int(model_cfg.model.ctc_warmup_start) != 10_000 or int(model_cfg.model.ctc_warmup_end) != 30_000:
         raise RuntimeError("Direct-C2 CTC-warmup experiment requires start=10000 and end=30000")
+
+    train_dataset = dataset_from_config(model_cfg)
+    paired = bool(model_arc.get("role_conditioned_text", False))
+    schedule = paired_schedule(model_cfg, train_dataset, int(os.environ.get("WORLD_SIZE", 1))) if paired else None
 
     vocab_char_map, vocab_size = get_tokenizer(model_cfg.datasets.vocab_path, "custom")
     exp_name = f"{model_cfg.model.name}_{audio_cfg.name}_{model_cfg.datasets.name}_{model_cfg.model.tokenizer}"
@@ -157,13 +236,20 @@ def main(model_cfg):
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
+        if paired:
+            contract["train_pairing"] = train_dataset.pairing_contract
+            contract["batch_and_schedule"] = schedule
+            contract["text_roles"] = "separate reference style and target lexical streams; target-only FM, CTC and REPA"
         if repa_enabled:
             contract["repa"] = {
                 "lambda": repa_lambda,
                 "schedule": "fixed from the first update",
                 "student_layer_zero_based": int(model_arc.repa_layer),
                 "teacher_layer": int(model_cfg.datasets.repa_teacher_layer),
-                "alignment": "linear interpolation of each unpadded 50-Hz target to valid 40-Hz latent length",
+                "alignment": (
+                    "linear interpolation of the target 50-Hz teacher to its target-only 40-Hz span"
+                    if paired else "linear interpolation of each unpadded 50-Hz target to valid 40-Hz latent length"
+                ),
                 "loss": "mean 1-cosine on the flow-matching generation mask only",
                 "inference": "projector weights load strictly but the auxiliary head is not called",
             }
@@ -189,33 +275,16 @@ def main(model_cfg):
             if previous != contract:
                 raise RuntimeError(f"Refusing to reuse a checkpoint directory with a different contract: {save_dir}")
         else:
-            contract_path.write_text(json.dumps(contract, indent=2, ensure_ascii=False) + "\n")
+            if paired and any(save_dir.glob("model_*.pt")):
+                raise RuntimeError(f"Existing checkpoint has no source pairing/training contract: {save_dir}")
+            temporary = contract_path.with_suffix(f".{os.getpid()}.tmp")
+            temporary.write_text(json.dumps(contract, indent=2, ensure_ascii=False) + "\n")
+            os.replace(temporary, contract_path)
 
-    train_dataset = SemanticVaeCelebVDubDataset(
-        manifest_path=model_cfg.datasets.manifest_path,
-        cache_root=model_cfg.datasets.cache_root,
-        normalization_path=model_cfg.datasets.normalization_path,
-        vocab_path=model_cfg.datasets.vocab_path,
-        expected_manifest_sha256=model_cfg.datasets.expected_manifest_sha256,
-        expected_inventory_sha256=model_cfg.datasets.expected_inventory_sha256,
-        expected_normalization_sha256=model_cfg.datasets.expected_normalization_sha256,
-        expected_vocab_sha256=model_cfg.datasets.expected_vocab_sha256,
-        expected_record_count=model_cfg.datasets.expected_record_count,
-        speaker_embedding_cache_dir=model_cfg.datasets.speaker_embedding_cache_dir,
-        speaker_embedding_dim=speaker_dim,
-        speaker_embedding_model_id=model_cfg.datasets.speaker_embedding_model_id,
-        speaker_embedding_checkpoint_sha256=model_cfg.datasets.speaker_embedding_checkpoint_sha256,
-        repa_feature_cache_dir=(model_cfg.datasets.repa_feature_cache_dir if repa_enabled else None),
-        repa_feature_dim=(int(model_cfg.datasets.repa_feature_dim) if repa_enabled else 768),
-        repa_model_id=(model_cfg.datasets.repa_model_id if repa_enabled else None),
-        repa_model_revision=(model_cfg.datasets.repa_model_revision if repa_enabled else None),
-        repa_checkpoint_sha256=(model_cfg.datasets.repa_checkpoint_sha256 if repa_enabled else None),
-        repa_teacher_layer=(int(model_cfg.datasets.repa_teacher_layer) if repa_enabled else None),
-    )
     if trainer.is_main:
         print(
             "Direct-C2 CAM++ speaker CTC-warmup dataset validated: "
-            f"records={len(train_dataset)}, CTC feasible={train_dataset.ctc_feasible_count}, "
+            f"records={len(train_dataset)}, paired_roles={paired}, CTC feasible={train_dataset.ctc_feasible_count}, "
             f"CTC zero_infinity-only={train_dataset.ctc_infeasible_count}; "
             f"ctc_lambda=0 through update {model_cfg.model.ctc_warmup_start}, "
             f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}; "

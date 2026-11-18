@@ -306,6 +306,7 @@ def run(args: argparse.Namespace) -> None:
     mean, std, normalization = load_normalization(args.normalization.resolve(strict=True))
     cache_spec = read_json_object(cache_root / "state/latents/spec.json")
     config = load_composed_config(args.config.resolve(strict=True))
+    role_conditioned = bool(config.model.arch.get("role_conditioned_text", False))
     speaker_embeddings, speaker_metadata = load_setting1_speaker_embeddings(config, records)
 
     output_dir = args.output_dir.resolve()
@@ -338,9 +339,15 @@ def run(args: argparse.Namespace) -> None:
                 speaker_kwargs["speaker_embedding"] = speaker_embedding.unsqueeze(0).to(
                     device=device, dtype=torch.float32
                 )
+            # In S1 the audio prompt is the target clip, so both roles have the same transcript.
+            transcript = str(row["text"])
+            text_inputs = (
+                {"reference_text": [transcript], "text": [transcript]}
+                if role_conditioned else {"text": [historical_setting1_text(transcript)]}
+            )
             generated, _ = model.sample(
                 cond=cond,
-                text=[historical_setting1_text(str(row["text"]))],
+                **text_inputs,
                 duration=torch.tensor([2 * frames], device=device),
                 video=total_video,
                 lens=torch.tensor([frames], device=device),
@@ -373,6 +380,13 @@ def run(args: argparse.Namespace) -> None:
                 {
                     "utterance_key": row["utterance_key"],
                     "relative_path": output_path.relative_to(output_dir).as_posix(),
+                    **({
+                        "model_reference_text": transcript,
+                        "model_text": transcript,
+                        "prompt_frames": frames,
+                        "target_frames": frames,
+                        "sampler_frames": generated.size(1),
+                    } if role_conditioned else {}),
                     "samples": original_samples,
                     "sha256": sha256_file(output_path),
                 }
@@ -411,7 +425,10 @@ def run(args: argparse.Namespace) -> None:
             "ode_method": "euler",
             "seed": args.seed,
             "sway": args.sway,
-            "text_protocol": "historical CelebV-Dub Setting 1 prompt + two spaces + target",
+            "text_protocol": (
+                "separate reference_text and target text, both from the same S1 clip"
+                if role_conditioned else "historical CelebV-Dub Setting 1 prompt + two spaces + target"
+            ),
             "use_epss": True,
         },
         "normalization_contract": {

@@ -43,7 +43,7 @@ def reference_target_text(reference: str, target: str) -> str:
     return reference + " " + target
 
 
-def make_sampling_inputs(reference: np.ndarray, video: np.ndarray, text: str, mean, std):
+def make_sampling_inputs(reference: np.ndarray, video: np.ndarray, text: str, mean, std, *, exact_duration=False):
     """Align both modalities on one 40-Hz grid, including any sampler text tail."""
     if reference.ndim != 2 or reference.shape[1] != LATENT_DIM or len(reference) == 0:
         raise ValueError("Expected nonempty GRID latent [P,64]")
@@ -55,7 +55,7 @@ def make_sampling_inputs(reference: np.ndarray, video: np.ndarray, text: str, me
     # The char tokenizer emits one token per character, including unknown chars.
     # Match CFM_VT.sample's max(text length, prompt length)+1 lower bound exactly.
     requested_duration = prompt_frames + target_frames
-    effective_duration = max(requested_duration, len(text) + 1, prompt_frames + 1)
+    effective_duration = requested_duration if exact_duration else max(requested_duration, len(text) + 1, prompt_frames + 1)
     if effective_duration > 4096:
         raise ValueError("The combined prompt/target exceeds the sampler's 4096-frame limit")
     combined_video = np.zeros((effective_duration, 1024), dtype=np.float32)

@@ -254,6 +254,10 @@ class Trainer_VT(Trainer):
                         else {}
                     )
 
+                    role_kwargs = (
+                        {"reference_text": batch["reference_text"], "prompt_lens": batch["prompt_lens"]}
+                        if "reference_text" in batch else {}
+                    )
                     loss, loss_components, cond, pred = self.model(
                         mel_spec,
                         text=text_inputs,
@@ -264,6 +268,7 @@ class Trainer_VT(Trainer):
                         noise_scheduler=self.noise_scheduler,
                         **speaker_kwargs,
                         **repa_kwargs,
+                        **role_kwargs,
                     )
                     diagnostics = self._forward_diagnostics(loss, loss_components)
                     self.accelerator.backward(loss)

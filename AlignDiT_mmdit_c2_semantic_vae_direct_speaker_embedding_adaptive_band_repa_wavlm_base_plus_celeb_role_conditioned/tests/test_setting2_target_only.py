@@ -1,5 +1,6 @@
 """Text ablation and actual generated-entry regression checks."""
 import sys
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -41,6 +42,30 @@ class TargetOnlyTests(unittest.TestCase):
         target_only = make_sampling_inputs(reference, video, "target", mean, std)
         for before, after in zip(combined, target_only):
             np.testing.assert_array_equal(before, after)
+
+    def test_role_config_requires_reference_and_target_at_the_dubbing_entry(self):
+        source = adapter.build_source()
+        namespace = {"__file__": adapter.__file__, "__name__": "adapter_test",
+                     "select_model_text": adapter.select_model_text}
+        exec(compile(source, adapter.__file__, "exec"), namespace)
+        config = Path(adapter.__file__).parents[2] / "config/finetune_celebvdub_role_conditioned.yaml"
+        with patch.object(sys, "argv", ["inference", "--config", str(config), "--checkpoint", "/tmp/model.pt",
+                                       "--text-input-mode", "target-only", "--dry-run"]):
+            args = namespace["parse_args"]()
+        with self.assertRaisesRegex(ValueError, "requires reference and target transcripts"):
+            namespace["run"](args)
+
+    def test_role_geometry_ignores_text_length_and_preserves_target_video(self):
+        reference = np.ones((3, 64), np.float32)
+        target = np.full((5, 1024), 7, np.float32)
+        mean, std = np.zeros(64, np.float32), np.ones(64, np.float32)
+        cond, video, p, t, duration = make_sampling_inputs(
+            reference, target, "a much longer reference transcript", mean, std, exact_duration=True
+        )
+        self.assertEqual((p, t, duration), (3, 5, 8))
+        np.testing.assert_array_equal(cond, reference)
+        np.testing.assert_array_equal(video[:p], np.zeros_like(video[:p]))
+        np.testing.assert_array_equal(video[p:], target)
 
     def test_independent_word_distance_counts_all_error_types(self):
         self.assertEqual(word_edits("one two three", "one four three five"), (2, 3))
