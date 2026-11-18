@@ -8,7 +8,7 @@ import torch
 import torchaudio
 import wandb
 from accelerate import Accelerator
-from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs
+from accelerate.utils import DistributedDataParallelKwargs
 from ema_pytorch import EMA
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LinearLR, SequentialLR
@@ -54,10 +54,7 @@ class Trainer:
         local_vocoder_path: str = "",  # local vocoder path
         model_cfg_dict: dict = dict(),  # training config
     ):
-        shared_gpu = os.environ.get("ALIGNDIT_SHARE_CUDA_DEVICE") == "1"
-        handlers = [DistributedDataParallelKwargs(find_unused_parameters=True, gradient_as_bucket_view=shared_gpu)]
-        if shared_gpu:
-            handlers.append(InitProcessGroupKwargs(backend="gloo"))
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
         if logger == "wandb" and not wandb.api.api_key:
             logger = None
@@ -65,7 +62,7 @@ class Trainer:
 
         self.accelerator = Accelerator(
             log_with=logger if logger == "wandb" else None,
-            kwargs_handlers=handlers,
+            kwargs_handlers=[ddp_kwargs],
             gradient_accumulation_steps=grad_accumulation_steps,
             **accelerate_kwargs,
         )
@@ -142,13 +139,6 @@ class Trainer:
         else:
             self.optimizer = AdamW(model.parameters(), lr=learning_rate)
         self.model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
-        if shared_gpu:
-            print(
-                f"Shared-GPU DDP rank={self.accelerator.process_index}/{self.accelerator.num_processes} "
-                f"pid={os.getpid()} device={next(self.model.parameters()).device} "
-                f"backend={torch.distributed.get_backend()}",
-                flush=True,
-            )
 
     @property
     def is_main(self):

@@ -14,20 +14,7 @@ export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 gpu_count="$("$python_bin" -c 'import torch; print(torch.cuda.device_count())')"
 num_processes="${NUM_PROCESSES:-$gpu_count}"
-if [[ ! "$num_processes" =~ ^[1-9][0-9]*$ ]]; then
-    echo "Invalid process count: $num_processes" >&2
-    exit 1
-fi
-if [[ "${ALIGNDIT_SHARE_CUDA_DEVICE:-0}" == 1 ]]; then
-    if (( gpu_count != 1 || num_processes < 2 )); then
-        echo "Shared-GPU DDP requires one visible GPU and at least two workers" >&2
-        exit 1
-    fi
-    # DDP uses each model's existing cuda:0 placement. Keep distinct ranks for data sharding.
-    export ACCELERATE_BYPASS_DEVICE_MAP=true
-    export GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-lo}"
-    echo "Launching $num_processes training ranks on one GPU with Gloo gradient synchronization"
-elif (( num_processes > gpu_count )); then
+if [[ ! "$num_processes" =~ ^[1-9][0-9]*$ ]] || (( num_processes > gpu_count )); then
     echo "Requested $num_processes workers with $gpu_count visible GPUs" >&2
     exit 1
 fi

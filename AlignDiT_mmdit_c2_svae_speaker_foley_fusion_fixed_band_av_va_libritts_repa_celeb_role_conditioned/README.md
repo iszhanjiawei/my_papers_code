@@ -15,15 +15,6 @@ setsid env CUDA_VISIBLE_DEVICES=0,1,2,3 PYTHONUNBUFFERED=1 \
 
 [训练配置](src/aligndit/config/finetune_celebvdub_role_conditioned.yaml) · [固定带宽与权重配置](src/aligndit/config/foley_fixed_band_libritts_repa.yaml) · [MM-DiT](src/aligndit/model/backbone/dit_vt_mm.py) · [LibriTTS 权重迁移](src/aligndit/model/libritts_pretrained_migration.py) · [原实验的数据配对与监督](CELEB_ROLE_CONDITIONING.md)
 
-单张 A100 80 GB 也可以承载四个 DDP 训练进程。每个进程使用同一张卡，读取独立的动态批次，每步通过 Gloo 同步梯度。每个进程的上限为 2,400 帧，合计每次更新最多 9,600 帧。以下命令为每个进程分配两个数据加载 worker。
-
-```bash
-mkdir -p logs
-setsid env CUDA_VISIBLE_DEVICES=0 NUM_PROCESSES=4 ALIGNDIT_SHARE_CUDA_DEVICE=1 \
-  bash src/aligndit/run/train/finetune_celebvdub_role_conditioned.sh datasets.num_workers=2 \
-  >> logs/train_celeb_foley_a100.log 2>&1 < /dev/null &
-```
-
 # AlignDiT
 
 Official PyTorch implementation for the following paper:
