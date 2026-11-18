@@ -1,4 +1,4 @@
-"""Validate S2c migration and real adaptive-band + REPA batches on one GPU.
+"""Validate LibriTTS migration and real fixed-band Foley fusion + REPA batches on one GPU.
 
 This is a forward/backward integration test only: it does not update weights,
 write checkpoints, or start a training job. Select the GPU with
@@ -22,11 +22,7 @@ from hydra import compose, initialize_config_dir
 
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
-from aligndit.model.semantic_vae_direct_migration import (
-    load_s2c_ema_state,
-    migrate_s2c_ema_into_model,
-    validate_parent_artifacts,
-)
+from aligndit.model.libritts_pretrained_migration import load_libritts_ema_into_model
 from aligndit.script.train.finetune_semantic_vae_c2_direct_speaker import dataset_from_config
 from f5_tts.model.utils import get_tokenizer
 
@@ -34,7 +30,7 @@ from f5_tts.model.utils import get_tokenizer
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--config-name", default="finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus"
+        "--config-name", default="finetune_celebvdub_role_conditioned"
     )
     parser.add_argument("--max-frames", type=int, default=160)
     args = parser.parse_args()
@@ -48,14 +44,6 @@ def main() -> None:
         config = compose(config_name=args.config_name)
     torch.manual_seed(int(config.seed))
     ckpts = config.ckpts
-    print("Validating real S2c 70k parent artifact hashes...", flush=True)
-    validate_parent_artifacts(
-        ckpts.pretrained_path,
-        ckpts.parent_contract_path,
-        expected_checkpoint_sha256=ckpts.expected_parent_sha256,
-        expected_checkpoint_size=ckpts.expected_parent_size,
-        expected_contract_sha256=ckpts.expected_parent_contract_sha256,
-    )
 
     dataset = dataset_from_config(config)
     roles = bool(config.model.arch.get("role_conditioned_text", False))
@@ -116,38 +104,14 @@ def main() -> None:
         ctc_lambda=config.model.ctc_lambda,
         repa_lambda=config.model.repa_lambda,
     )
-    source_state, ema_step = load_s2c_ema_state(
-        ckpts.pretrained_path,
-        expected_parent_contract_sha256=ckpts.expected_parent_contract_sha256,
-        expected_parent_update=ckpts.expected_parent_update,
-    )
-    migration = migrate_s2c_ema_into_model(
-        model,
-        source_state,
-        parent_path=ckpts.pretrained_path,
-        parent_sha256=ckpts.expected_parent_sha256,
-        parent_size=ckpts.expected_parent_size,
-        parent_contract_sha256=ckpts.expected_parent_contract_sha256,
-        parent_ema_step=ema_step,
-    )
-    assert migration.source_key_count == 313
-    role_keys = ({f"transformer.role_conditioner.{k}" for k in model.transformer.role_conditioner.state_dict()}
-                 if roles else set())
-    assert role_keys.issubset(migration.new_target_keys)
-    assert migration.target_key_count == 714 + len(role_keys)
-    assert migration.loaded_key_count == 303
-    assert len(migration.ignored_source_keys) == 10
-    assert len(migration.new_target_keys) == 411 + len(role_keys)
-    assert "transformer.speaker_proj.weight" in migration.new_target_keys
-    assert not torch.count_nonzero(model.transformer.speaker_proj.weight)
-    assert model.transformer.temporal_band is not None and model.transformer.repa_projector is not None
-    assert len([k for k in migration.new_target_keys if k.startswith("transformer.temporal_band.")]) == 4
-    assert len([k for k in migration.new_target_keys if k.startswith("transformer.repa_projector.")]) == 6
-    for key, value in model.state_dict().items():
-        if key in source_state:
-            assert torch.equal(value, source_state[key]), f"Migration changed parent tensor {key}"
-    print(f"[OK] strict migration, 303 shared tensors exact, {len(role_keys)} new role tensors", flush=True)
-    del source_state
+    migration = load_libritts_ema_into_model(model, ckpts.pretrained_path, config)
+    assert migration["loaded_key_count"] == 608 and len(migration["row_remappings"]) == 5
+    assert migration["new_target_key_count"] == 223 and len(migration["ignored_source_keys"]) == 194
+    assert "transformer.speaker_proj.weight" in migration["loaded_keys"]
+    parent_speaker_projection = model.transformer.speaker_proj.weight.detach().clone()
+    assert parent_speaker_projection.count_nonzero() > 0
+    assert model.transformer.temporal_band is not None and not list(model.transformer.temporal_band.parameters())
+    print("[OK] strict LibriTTS EMA migration, including semantic mapping of the five vocabulary tensors", flush=True)
     gc.collect()
 
     model.to(device).train()
@@ -198,23 +162,25 @@ def main() -> None:
         assert speaker_grad is not None and torch.isfinite(speaker_grad).all()
         speaker_grad_norm = float(speaker_grad.float().norm())
         assert speaker_grad_norm > 0
-        band_gradient = model.transformer.temporal_band.net[2].weight.grad
-        assert band_gradient is not None and torch.isfinite(band_gradient).all()
-        assert band_gradient[0].float().norm() > 0 and band_gradient[1].float().norm() > 0
+        fusion_grads = [module.weight.grad for module in (
+            model.transformer.transformer_blocks[0].cross_attn_ada,
+            model.transformer.transformer_blocks[0].v_cross_attn_ada,
+        )]
+        assert all(g is not None and torch.isfinite(g).all() and g.norm() > 0 for g in fusion_grads)
         repa_gradients = [p.grad for p in model.transformer.repa_projector.parameters()]
         assert all(g is not None and torch.isfinite(g).all() for g in repa_gradients)
         repa_norm = float(torch.stack([g.float().norm() for g in repa_gradients]).norm())
         assert repa_norm > 0
-        band_norm = float(band_gradient.float().norm())
+        fusion_norm = float(torch.stack([g.float().norm() for g in fusion_grads]).norm())
         global_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), config.optim.max_grad_norm))
         assert math.isfinite(global_norm) and global_norm > 0
-        assert not torch.count_nonzero(model.transformer.speaker_proj.weight), "test must not update weights"
+        assert torch.equal(model.transformer.speaker_proj.weight.detach().cpu(), parent_speaker_projection)
         result = {
             "ctc_lambda": weight,
             "total_loss": float(loss),
             **components,
             "speaker_grad_norm_pre_clip": speaker_grad_norm,
-            "temporal_band_output_grad_norm_pre_clip": band_norm,
+            "joint_text_gate_grad_norm_pre_clip": fusion_norm,
             "repa_projector_grad_norm_pre_clip": repa_norm,
             "global_grad_norm_pre_clip": global_norm,
             "cuda_peak_allocated_gib": torch.cuda.max_memory_allocated(device) / 1024**3,

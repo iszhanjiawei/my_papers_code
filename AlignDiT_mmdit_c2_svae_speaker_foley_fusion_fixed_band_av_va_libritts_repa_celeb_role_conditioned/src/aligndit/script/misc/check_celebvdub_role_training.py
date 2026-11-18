@@ -7,7 +7,7 @@ from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 import torch
 
-from aligndit.model.semantic_vae_direct_migration import validate_parent_artifacts
+from aligndit.model.libritts_pretrained_migration import validate_libritts_checkpoint_artifact
 from aligndit.script.train.finetune_semantic_vae_c2_direct_speaker import dataset_from_config, paired_schedule
 
 
@@ -25,12 +25,7 @@ def main():
     paired = dataset_from_config(cfg)
     schedule = paired_schedule(cfg, paired, args.num_processes)
     ckpt = cfg.ckpts
-    validate_parent_artifacts(
-        ckpt.pretrained_path, ckpt.parent_contract_path,
-        expected_checkpoint_sha256=ckpt.expected_parent_sha256,
-        expected_checkpoint_size=ckpt.expected_parent_size,
-        expected_contract_sha256=ckpt.expected_parent_contract_sha256,
-    )
+    validate_libritts_checkpoint_artifact(ckpt.pretrained_path, cfg)
     # Exercise the same item loader and collation path used inside DDP.
     batch = paired.collate_fn([paired[i] for i in range(min(2, len(paired)))])
     p = batch["prompt_lens"]

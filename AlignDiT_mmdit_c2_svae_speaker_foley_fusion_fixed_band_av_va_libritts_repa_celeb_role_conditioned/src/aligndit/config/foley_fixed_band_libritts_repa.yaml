@@ -1,0 +1,39 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+# Reuse the pinned, complete-utterance WavLM-Base+ cache read-only.
+datasets:
+  repa_feature_cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/wavlm_base_plus_repa_final_fp16
+  repa_feature_dim: 768
+  repa_model_id: microsoft/wavlm-base-plus
+  repa_model_revision: 4c66d4806a428f2e922ccfa1a962776e232d487b
+  repa_checkpoint_sha256: 3bb273a6ace99408b50cfc81afdbb7ef2de02da2eab0234e18db608ce692fe51
+  repa_teacher_layer: 12
+
+model:
+  repa_lambda: 0.1
+  arch:
+    joint_av_text_ca: true
+    role_conditioned_text: true
+    temporal_band_enabled: true
+    temporal_band_mode: fixed
+    temporal_band_bidirectional: true
+    temporal_band_audio_fps: 40.0
+    temporal_band_video_fps: 40.0
+    temporal_band_fixed_offset_seconds: 0.0
+    # The fixed_band_av_va donor uses four 40-Hz frames per sigma, with Gaussian tails.
+    temporal_band_fixed_sigma_seconds: 0.100
+    # Zero-based 9: audio output of the 10th MM-DiT block, with the band active.
+    repa_layer: 9
+    repa_target_dim: 768
+    repa_projector_dim: 2048
+
+ckpts:
+  initialization_mode: libritts_text_audio
+  pretrained_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/alignDiT_idea6/libriSpeech_LibriTTS_pretrained_models/model_00050000.pt
+  expected_parent_sha256: 4ee7dd9e1377728a042e75ebbbe70c2a12cd830c9b078afe13ebca289d03503c
+  expected_parent_size: 5048750348
+  expected_parent_update: 50000
+  parent_contract_path: null
+  expected_parent_contract_sha256: 88e16bfe6a0c393bd4236e70a1bebd824713cc00c06bbb709e3a530d433f236f

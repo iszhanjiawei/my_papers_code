@@ -1,4 +1,4 @@
-"""Train GRID with the copied Direct-C2, adaptive-band, speaker and REPA model."""
+"""Train GRID with paired role inputs, shared audio/video text attention and fixed AV/VA bias."""
 
 import json
 import math
@@ -21,9 +21,28 @@ from f5_tts.model.utils import get_tokenizer
 os.chdir(str(files("aligndit").joinpath("../..")))
 
 
+def check_role_training_config(cfg):
+    """Reject accidental training with a mismatched parent or local-attention recipe."""
+    arch = cfg.model.arch
+    expected = {
+        "joint_av_text_ca": True, "role_conditioned_text": True, "temporal_band_enabled": True,
+        "temporal_band_mode": "fixed", "temporal_band_bidirectional": True,
+        "temporal_band_audio_fps": 40.0, "temporal_band_video_fps": 40.0,
+        "temporal_band_fixed_offset_seconds": 0.0, "temporal_band_fixed_sigma_seconds": 0.1,
+    }
+    for name, value in expected.items():
+        if arch.get(name) != value:
+            raise ValueError(f"This Foley role experiment requires {name}={value!r}")
+    if cfg.ckpts.get("initialization_mode") != "libritts_text_audio":
+        raise ValueError("The fixed AV/VA role experiment requires the LibriTTS text/audio parent")
+    if any("foley_fixed_band_av_va_libritts" not in name for name in (cfg.model.name, Path(cfg.ckpts.save_dir).name)):
+        raise ValueError("Use the dedicated Foley fixed-band LibriTTS model name and checkpoint directory")
+
+
 def dataset_from_config(model_cfg, *, allow_partial=False):
     """Load and validate GRID data without instantiating the diffusion model."""
     repa_enabled = float(OmegaConf.select(model_cfg, "model.repa_lambda", default=0.0)) > 0
+    check_role_training_config(model_cfg)
     if not model_cfg.model.arch.get("role_conditioned_text", False):
         raise ValueError("The paired GRID training entry requires model.arch.role_conditioned_text=true")
     if "role_conditioned" not in Path(model_cfg.ckpts.save_dir).resolve().name or "role_conditioned" not in model_cfg.model.name:
@@ -114,9 +133,10 @@ def main(model_cfg):
     model_arc = model_cfg.model.arch
     audio_cfg = model_cfg.model.audio_representation
     temporal_band_enabled = bool(model_arc.get("temporal_band_enabled", False))
+    fixed_band = temporal_band_enabled and model_arc.get("temporal_band_mode", "adaptive") == "fixed"
     if temporal_band_enabled:
         if int(model_arc.n_mm_layers) != 12 or int(model_arc.audio_video_ratio) != 1:
-            raise ValueError("This adaptive-band experiment retains 12 MM layers and aligned input rates")
+            raise ValueError("The temporal band requires 12 MM layers and aligned input rates")
         if any(
             float(model_arc[key]) != float(audio_cfg.frame_rate)
             for key in ("temporal_band_audio_fps", "temporal_band_video_fps")
@@ -124,7 +144,7 @@ def main(model_cfg):
             raise ValueError("Temporal-band rates must match the already-interpolated 40-Hz cache")
         # Never allow an enabled experiment to write into an inherited baseline
         # checkpoint directory, even when a caller selects the wrong YAML.
-        if "adaptive_band" not in str(model_cfg.ckpts.save_dir) or "adaptive_band" not in str(model_cfg.model.name):
+        if not fixed_band and ("adaptive_band" not in str(model_cfg.ckpts.save_dir) or "adaptive_band" not in str(model_cfg.model.name)):
             raise ValueError("Adaptive-band runs require dedicated model.name and ckpts.save_dir")
     if model_cfg.ckpts.log_samples:
         raise ValueError(
@@ -194,7 +214,7 @@ def main(model_cfg):
         repa_lambda=repa_lambda,
     )
 
-    trainer_cls = SemanticVaeAdaptiveBandTrainer if temporal_band_enabled else SemanticVaeDirectC2SpeakerTrainer
+    trainer_cls = SemanticVaeAdaptiveBandTrainer if temporal_band_enabled and not fixed_band else SemanticVaeDirectC2SpeakerTrainer
     trainer = trainer_cls(
         model,
         epochs=model_cfg.optim.epochs,
@@ -225,6 +245,7 @@ def main(model_cfg):
         expected_parent_size=model_cfg.ckpts.expected_parent_size,
         expected_parent_contract_sha256=model_cfg.ckpts.expected_parent_contract_sha256,
         expected_parent_update=model_cfg.ckpts.expected_parent_update,
+        initialization_mode=model_cfg.ckpts.get("initialization_mode", "s2c"),
         ctc_target_lambda=model_cfg.model.ctc_lambda,
         ctc_warmup_start=model_cfg.model.ctc_warmup_start,
         ctc_warmup_end=model_cfg.model.ctc_warmup_end,
@@ -247,8 +268,14 @@ def main(model_cfg):
             "validation": "existing GRID val split is held out; no online validation loop",
             "speaker_cache_metadata": speaker_metadata,
             "repa_cache_metadata": repa_metadata,
-            "initialization": "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter",
-            "speaker_condition": "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17",
+            "initialization": (
+                "LibriTTS 50k text/audio EMA, adapted vocabulary and CTC rows, downstream optimizer/update start at zero"
+                if fixed_band else "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter"
+            ),
+            "speaker_condition": (
+                "L2 CAM++ -> pretrained bias-free Linear(192,768), blocks 12..17"
+                if fixed_band else "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17"
+            ),
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
@@ -262,7 +289,15 @@ def main(model_cfg):
                 "loss": "mean 1-cosine on the flow-matching generation mask only",
                 "inference": "projector weights load strictly but the auxiliary head is not called",
             }
-        if temporal_band_enabled:
+        if fixed_band:
+            contract["temporal_band"] = {
+                "mode": "fixed Gaussian", "offset_seconds": model_arc.temporal_band_fixed_offset_seconds,
+                "sigma_seconds": model_arc.temporal_band_fixed_sigma_seconds,
+                "scope": "AV and VA logit blocks with transposed bias; AA and VV unmodified",
+                "trainable_parameters": 0,
+            }
+            contract["text_cross_attention"] = "both video and audio queries attend to target text, with modality-specific outputs"
+        elif temporal_band_enabled:
             contract["temporal_band"] = {
                 "formula": "B[i,j] = -(t_video[j] - t_audio[i] - delta[i])**2 / (2*sigma[i]**2)",
                 "predictor_input": "branch-specific video embedding before all joint audio/video attention",
@@ -287,7 +322,11 @@ def main(model_cfg):
             if previous != contract:
                 raise RuntimeError(f"Refusing to reuse a checkpoint directory with a different contract: {save_dir}")
         else:
-            contract_path.write_text(json.dumps(contract, indent=2, ensure_ascii=False) + "\n")
+            if any(save_dir.glob("model_*.pt")):
+                raise RuntimeError(f"Existing checkpoint has no training contract: {save_dir}")
+            temporary = contract_path.with_suffix(f".{os.getpid()}.tmp")
+            temporary.write_text(json.dumps(contract, indent=2, ensure_ascii=False) + "\n")
+            os.replace(temporary, contract_path)
 
     if trainer.is_main:
         print(

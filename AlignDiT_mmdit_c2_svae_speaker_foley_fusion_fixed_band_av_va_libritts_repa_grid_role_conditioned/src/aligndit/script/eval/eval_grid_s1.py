@@ -360,7 +360,7 @@ def args():
     p.add_argument('--avhubert-user-dir', type=Path, default=data/'av_hubert/avhubert/avhubert')
     parsed = p.parse_args()
     if parsed.text_conditioning is None:
-        parsed.text_conditioning = ROLE_MODE if parsed.setting == 's2' else 'reference-target'
+        parsed.text_conditioning = ROLE_MODE
     return parsed
 
 

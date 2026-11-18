@@ -1,5 +1,5 @@
 defaults:
-  - finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus
+  - foley_fixed_band_libritts_repa
   - _self_
 
 datasets:
@@ -10,9 +10,8 @@ datasets:
   num_workers: 8
 
 model:
-  name: AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_celeb_role_conditioned_ctc003_warmup10k30k
+  name: AlignDiT_foley_fixed_band_av_va_libritts_repa_wavlm_base_plus_celeb_role_conditioned_ctc003_warmup10k30k
   arch:
-    role_conditioned_text: true
     checkpoint_activations: true
 
 ckpts:

@@ -1,17 +1,17 @@
 """
 ein notation:
 b - batch
-n - sequence (audio, 100 Hz)
+n - audio latent sequence (40 Hz for role-conditioned dubbing)
 nt - text sequence
-nv - video sequence (native 25 Hz, NOT upsampled)
+nv - input video feature sequence (already aligned to 40 Hz for role-conditioned dubbing)
 nw - raw wave length
 d - dimension
 
 MM-DiT backbone for multimodal dubbing:
 - dual-stream (audio latent stream + video stream) joint attention in the first
   `n_mm_layers` blocks, with aligned RoPE across the two frame rates
-- text is injected via cross-attention in the first `n_text_layers` blocks;
-  `prompt_isolated_ca` controls whether only synthesized frames receive it
+- `joint_av_text_ca` lets both MM streams query target text after AV joint attention;
+  `prompt_isolated_ca` restricts text updates to the target region
 - blocks after `n_mm_layers` stop video interaction; blocks after
   `n_text_layers` are text-free audio-only DiT blocks
 - audio-stream parameter names are kept identical to DiTBlock so
@@ -26,6 +26,7 @@ import torch.nn.functional as F
 from x_transformers.x_transformers import apply_rotary_pos_emb
 
 from aligndit.model.adaptive_temporal_band import AdaptiveTemporalBand
+from aligndit.model.fixed_temporal_band import FixedTemporalBand
 from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
@@ -153,6 +154,96 @@ class AudioTextDiTBlock(DiTCrossBlock):
         return x
 
 
+class HunyuanDualTextCrossAttention(nn.Module):
+    """Hunyuan-style independent A/V queries over shared text keys and values.
+
+    The one-dimensional CA RoPE matches Hunyuan's ``build_rope_for_text``
+    and real-valued ``apply_rotary_emb``: adjacent channel pairs, theta=10000,
+    float32 rotation, all heads, and positions starting at zero independently
+    for each sequence. This is deliberately separate from AV joint attention's
+    frame-rate-scaled RoPE, and does not perform AV interleaving.
+
+    Unlike the fixed-length Foley text interface, dubbing batches contain
+    padded character sequences, so ``text_mask`` explicitly masks text keys.
+    Modulation, residual gating and query masks belong to the parent block.
+    """
+
+    def __init__(self, dim, heads, text_dim):
+        super().__init__()
+        if dim % heads != 0 or (dim // heads) % 2 != 0:
+            raise ValueError("dual text CA requires dim divisible by heads and an even head dimension")
+        self.heads = heads
+        self.head_dim = dim // heads
+        text_dim = dim if text_dim is None else text_dim
+        # Official Hunyuan XL/XXL configs use qkv_bias=True. Keep stream
+        # projections independent and share only the text K/V projections.
+        self.audio_cross_q = nn.Linear(dim, dim)
+        self.v_cond_cross_q = nn.Linear(dim, dim)
+        self.text_cross_kv = nn.Linear(text_dim, dim * 2)
+        self.audio_cross_q_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
+        self.v_cond_cross_q_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
+        self.text_cross_k_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
+        self.audio_cross_proj = nn.Linear(dim, dim)
+        self.v_cond_cross_proj = nn.Linear(dim, dim)
+
+    @staticmethod
+    def apply_rope(x):
+        """Rotate B,H,N,D Q/K tensors using Hunyuan's adjacent-pair layout."""
+        seq_len, head_dim = x.shape[-2:]
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            positions = torch.arange(seq_len, device=x.device, dtype=torch.float32)
+            inv_freq = 1.0 / (
+                10000.0 ** (torch.arange(0, head_dim, 2, device=x.device, dtype=torch.float32) / head_dim)
+            )
+            angles = torch.outer(positions, inv_freq)
+            cos = angles.cos().repeat_interleave(2, dim=-1)[None, None]
+            sin = angles.sin().repeat_interleave(2, dim=-1)[None, None]
+            x_float = x.float()
+            real, imag = x_float.reshape(*x.shape[:-1], -1, 2).unbind(-1)
+            rotated_pairs = torch.stack((-imag, real), dim=-1).flatten(-2)
+            return (x_float * cos + rotated_pairs * sin).to(x.dtype)
+
+    def _split_heads(self, x):
+        return x.reshape(x.shape[0], x.shape[1], self.heads, self.head_dim).transpose(1, 2)
+
+    def forward(self, audio, video, text, text_mask=None):
+        if text.shape[1] == 0:
+            raise ValueError("dual text CA requires at least one text token, including for dropped text")
+        if text_mask is not None:
+            if text_mask.dtype != torch.bool or text_mask.shape != text.shape[:2]:
+                raise ValueError("text_mask must be bool with shape [batch, text_length]")
+            # Do not let arbitrary padded text values enter the projections.
+            text = text.masked_fill(~text_mask.unsqueeze(-1), 0.0)
+
+        q_a = self.audio_cross_q_norm(self._split_heads(self.audio_cross_q(audio)))
+        q_v = self.v_cond_cross_q_norm(self._split_heads(self.v_cond_cross_q(video)))
+        key, value = self.text_cross_kv(text).chunk(2, dim=-1)
+        key = self.text_cross_k_norm(self._split_heads(key))
+        value = self._split_heads(value)
+        q_a = self.apply_rope(q_a).to(value.dtype)
+        q_v = self.apply_rope(q_v).to(value.dtype)
+        key = self.apply_rope(key).to(value.dtype)
+
+        # Query order does not mix streams: each query independently attends
+        # to the same text keys/values, then receives its own output projection.
+        query = torch.cat((q_v, q_a), dim=2)
+        attn_mask = text_mask[:, None, None, :] if text_mask is not None else None
+        output = F.scaled_dot_product_attention(
+            query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False
+        )
+        output = output.transpose(1, 2).reshape(audio.shape[0], -1, self.heads * self.head_dim)
+        video_output, audio_output = torch.split(output, (video.shape[1], audio.shape[1]), dim=1)
+        video_output = self.v_cond_cross_proj(video_output)
+        audio_output = self.audio_cross_proj(audio_output)
+        if text_mask is not None:
+            # SDPA returns zero for an all-masked row; also suppress the output
+            # projection bias, so an empty condition supplies no CA residual.
+            empty_text = ~text_mask.any(dim=-1)
+            audio_output = audio_output.masked_fill(empty_text[:, None, None], 0.0)
+            video_output = video_output.masked_fill(empty_text[:, None, None], 0.0)
+        return audio_output, video_output
+
+
 class MMDiTBlock_VT(DiTCrossBlock):
     """Dual-stream MM-DiT block.
 
@@ -174,6 +265,8 @@ class MMDiTBlock_VT(DiTCrossBlock):
         attn_mask_enabled=True,
         text_dim=512,
         prompt_isolated_ca=True,
+        joint_av_text_ca=False,
+        temporal_band_bidirectional=False,
     ):
         super().__init__(
             dim=dim,
@@ -193,6 +286,8 @@ class MMDiTBlock_VT(DiTCrossBlock):
         self.pe_attn_head = pe_attn_head
         self.attn_mask_enabled = attn_mask_enabled
         self.prompt_isolated_ca = prompt_isolated_ca
+        self.joint_av_text_ca = joint_av_text_ca
+        self.temporal_band_bidirectional = temporal_band_bidirectional
 
         # video stream 视频流独立参数
         self.v_attn_norm = AdaLayerNorm(dim)
@@ -211,11 +306,14 @@ class MMDiTBlock_VT(DiTCrossBlock):
         self.v_ff_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
         self.v_ff = FeedForward(dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh")
 
-        # text cross-attention AdaLN modulation + gate (audio stream only)
-        # 文本 cross-attention 的 AdaLN 调制(shift/scale) + 门控(gate)，条件于时间步 t
-        # 与 HunyuanVideo-Foley 的 cross-attn 一致：调制输入、门控输出，训练更稳定
+        # Separate timestep-conditioned modulation and gates for the CA residuals.
         self.cross_attn_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
         self.cross_attn_ada = nn.Linear(dim, dim * 3)  # -> shift_ca, scale_ca, gate_ca
+
+        if joint_av_text_ca:
+            self.cross_attn = HunyuanDualTextCrossAttention(dim, heads, text_dim)
+            self.v_cross_attn_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+            self.v_cross_attn_ada = nn.Linear(dim, dim * 3)
 
     def _qkv(self, attn, x):
         batch_size = x.shape[0]
@@ -275,9 +373,10 @@ class MMDiTBlock_VT(DiTCrossBlock):
                 )
                 key_mask = torch.cat([audio_key_mask, video_key_mask], dim=1)[:, None, None, :]
 
-            # Only audio queries receive the AV prior. Splitting queries keeps
-            # VA/VV on the original SDPA path and avoids a full joint-square
-            # additive mask or materializing one copy for every head. Keep
+            # Split queries to avoid a full joint-square additive mask or a
+            # materialized copy for every head. The fixed AV+VA experiment
+            # transposes the same pairwise prior onto VA; AA and VV stay zero.
+            # Legacy AV-only mode retains the original video SDPA path. Keep
             # this independent of padding-mask enablement: training deliberately
             # passes block_mask=None, but the temporal prior must stay active.
             audio_bias = F.pad(temporal_band_bias.to(q_a.dtype), (n_a, 0))[:, None]
@@ -286,8 +385,15 @@ class MMDiTBlock_VT(DiTCrossBlock):
             out_a = F.scaled_dot_product_attention(
                 q_a, key, value, attn_mask=audio_bias, dropout_p=0.0, is_causal=False
             )
+            video_bias = key_mask
+            if self.temporal_band_bidirectional:
+                # Keys are [audio, video], so pad on the RIGHT for video queries.
+                # Transpose, do not recompute with exchanged time/offset signs.
+                video_bias = F.pad(temporal_band_bias.transpose(-1, -2).to(q_v.dtype), (0, n_v))[:, None]
+                if key_mask is not None:
+                    video_bias = video_bias.masked_fill(~key_mask, float("-inf"))
             out_v = F.scaled_dot_product_attention(
-                q_v, key, value, attn_mask=key_mask, dropout_p=0.0, is_causal=False
+                q_v, key, value, attn_mask=video_bias, dropout_p=0.0, is_causal=False
             )
             out = torch.cat([out_a, out_v], dim=2)
         elif self.attn_mask_enabled and mask is not None:
@@ -330,6 +436,7 @@ class MMDiTBlock_VT(DiTCrossBlock):
         text_mask=None,
         generation_mask=None,
         temporal_band_bias=None,
+        video_generation_mask=None,
     ):
         if self.prompt_isolated_ca:
             _validate_generation_mask(x, generation_mask)
@@ -346,16 +453,23 @@ class MMDiTBlock_VT(DiTCrossBlock):
         x = x + x_gate_msa.unsqueeze(1) * attn_x # gate 控制音频流接受的信息量
         v = v + v_gate_msa.unsqueeze(1) * attn_v # gate 控制视频流接受的信息量
 
-        # text cross attention (audio stream as query) 3、文本 cross-attention 只有音频流作为query，文本不进入视频流
-        # 3.1 用时间步 t 生成 cross-attn 专属的 shift/scale/gate（AdaLN-zero，零初始化）
-        ca_shift, ca_scale, ca_gate = self.cross_attn_ada(F.silu(t)).chunk(3, dim=-1)
-        # 3.2 调制 cross-attn 的输入
+        # After joint AV self-attention, both streams query the same target text.
+        # Output projections, AdaLN gates and residual streams remain independent.
+        modulation = F.silu(t)
+        ca_shift, ca_scale, ca_gate = self.cross_attn_ada(modulation).chunk(3, dim=-1)
         norm_ca = self.cross_attn_norm(x) * (1 + ca_scale[:, None]) + ca_shift[:, None]
-        ca_output, _ = self.cross_attn(
-            norm_ca, text, text, key_padding_mask=~text_mask if text_mask is not None else None, need_weights=False
-        )
-        # 3.3 In the isolated variants, only synthesized audio queries receive
-        # the text residual; C2 deliberately leaves the residual global.
+        if self.joint_av_text_ca:
+            v_shift, v_scale, v_gate = self.v_cross_attn_ada(modulation).chunk(3, dim=-1)
+            norm_v_ca = self.v_cross_attn_norm(v) * (1 + v_scale[:, None]) + v_shift[:, None]
+            ca_output, v_ca_output = self.cross_attn(norm_ca, norm_v_ca, text, text_mask=text_mask)
+            if self.prompt_isolated_ca:
+                _validate_generation_mask(v, video_generation_mask)
+                v_ca_output = v_ca_output.masked_fill(~video_generation_mask.unsqueeze(-1), 0.0)
+            v = v + v_gate.unsqueeze(1) * v_ca_output
+        else:
+            ca_output, _ = self.cross_attn(
+                norm_ca, text, text, key_padding_mask=~text_mask if text_mask is not None else None, need_weights=False
+            )
         if self.prompt_isolated_ca:
             ca_output = ca_output.masked_fill(~generation_mask.unsqueeze(-1), 0.0)
         x = x + ca_gate.unsqueeze(1) * ca_output
@@ -454,7 +568,18 @@ class DiT_VT_MMDiT(DiT):
         repa_target_dim=None,
         repa_projector_dim=None,
         role_conditioned_text=False,
+        joint_av_text_ca=False,
+        temporal_band_mode="adaptive",
+        temporal_band_fixed_offset_seconds=0.0,
+        temporal_band_fixed_sigma_seconds=0.100,
+        temporal_band_bidirectional=False,
     ):
+        if type(temporal_band_bidirectional) is not bool or type(joint_av_text_ca) is not bool:
+            raise TypeError("temporal_band_bidirectional and joint_av_text_ca must be boolean")
+        if temporal_band_bidirectional and (not temporal_band_enabled or temporal_band_mode != "fixed"):
+            raise ValueError("temporal_band_bidirectional requires an enabled fixed temporal band")
+        self.joint_av_text_ca = joint_av_text_ca
+        self.temporal_band_bidirectional = temporal_band_bidirectional
         super().__init__(
             dim=dim,
             depth=depth,
@@ -574,7 +699,11 @@ class DiT_VT_MMDiT(DiT):
         }
         self.transformer_blocks = nn.ModuleList(
             [
-                MMDiTBlock_VT(**text_block_kwargs)
+                MMDiTBlock_VT(
+                    **text_block_kwargs,
+                    temporal_band_bidirectional=temporal_band_bidirectional,
+                    joint_av_text_ca=joint_av_text_ca,
+                )
                 if i < self.n_mm_layers
                 else AudioTextDiTBlock(**text_block_kwargs)
                 if i < self.n_text_layers
@@ -608,6 +737,9 @@ class DiT_VT_MMDiT(DiT):
             # cross_attn.out_proj and v_attn.to_out normally initialized.
             nn.init.constant_(block.cross_attn_ada.weight, 0)
             nn.init.constant_(block.cross_attn_ada.bias, 0)
+            if joint_av_text_ca:
+                nn.init.zeros_(block.v_cross_attn_ada.weight)
+                nn.init.zeros_(block.v_cross_attn_ada.bias)
             nn.init.constant_(block.v_attn_norm.linear.weight, 0)
             nn.init.constant_(block.v_attn_norm.linear.bias, 0)
         for block in self.transformer_blocks[self.n_mm_layers : self.n_text_layers]:
@@ -623,8 +755,12 @@ class DiT_VT_MMDiT(DiT):
 
         # Construct only after all inherited parameter initialization. Disabled
         # runs retain exactly the parent's state-dict keys and RNG behavior;
-        # enabling the feature adds just the shared two-layer predictor.
+        # adaptive mode adds just the shared two-layer predictor. Fixed mode
+        # has no parameters/buffers and also preserves inherited RNG behavior.
         self.temporal_band_enabled = bool(temporal_band_enabled)
+        if temporal_band_mode not in ("adaptive", "fixed"):
+            raise ValueError("temporal_band_mode must be 'adaptive' or 'fixed'")
+        self.temporal_band_mode = temporal_band_mode
         self.temporal_band = None
         self.last_temporal_band_offset_seconds = None
         self.last_temporal_band_sigma_seconds = None
@@ -632,16 +768,25 @@ class DiT_VT_MMDiT(DiT):
         if self.temporal_band_enabled:
             if self.n_mm_layers == 0:
                 raise ValueError("temporal_band_enabled requires at least one multimodal block")
-            self.temporal_band = AdaptiveTemporalBand(
-                dim=dim,
-                hidden_dim=temporal_band_hidden_dim,
-                audio_fps=temporal_band_audio_fps,
-                video_fps=temporal_band_video_fps,
-                max_offset_seconds=temporal_band_max_offset_seconds,
-                min_sigma_seconds=temporal_band_min_sigma_seconds,
-                max_sigma_seconds=temporal_band_max_sigma_seconds,
-                init_sigma_seconds=temporal_band_init_sigma_seconds,
-            )
+            if self.temporal_band_mode == "fixed":
+                self.temporal_band = FixedTemporalBand(
+                    dim=dim,
+                    audio_fps=temporal_band_audio_fps,
+                    video_fps=temporal_band_video_fps,
+                    offset_seconds=temporal_band_fixed_offset_seconds,
+                    sigma_seconds=temporal_band_fixed_sigma_seconds,
+                )
+            else:
+                self.temporal_band = AdaptiveTemporalBand(
+                    dim=dim,
+                    hidden_dim=temporal_band_hidden_dim,
+                    audio_fps=temporal_band_audio_fps,
+                    video_fps=temporal_band_video_fps,
+                    max_offset_seconds=temporal_band_max_offset_seconds,
+                    min_sigma_seconds=temporal_band_min_sigma_seconds,
+                    max_sigma_seconds=temporal_band_max_sigma_seconds,
+                    init_sigma_seconds=temporal_band_init_sigma_seconds,
+                )
             if abs(self.temporal_band.audio_fps / self.temporal_band.video_fps - self.audio_video_ratio) > 1e-6:
                 raise ValueError("temporal-band audio/video frame-rate ratio must match audio_video_ratio")
 
@@ -997,6 +1142,15 @@ class DiT_VT_MMDiT(DiT):
         else:
             v_mask = None
 
+        # Map the target audio region onto the video grid before updating video
+        # queries from text. Respect each item's prompt length and padded tail.
+        video_generation_mask = None
+        if self.joint_av_text_ca and self.prompt_isolated_ca:
+            audio_index = (torch.arange(video_len, device=x.device) * self.audio_video_ratio).long()
+            video_generation_mask = generation_mask[:, audio_index.clamp(max=seq_len - 1)] & (audio_index < seq_len)
+            if v_mask is not None:
+                video_generation_mask = video_generation_mask & v_mask
+
         if self.long_skip_connection is not None:
             residual = x
 
@@ -1029,6 +1183,7 @@ class DiT_VT_MMDiT(DiT):
                         text_mask,
                         generation_mask,
                         temporal_band_bias,
+                        video_generation_mask,
                         use_reentrant=False,
                     )
                 elif has_tail_text:
@@ -1066,6 +1221,7 @@ class DiT_VT_MMDiT(DiT):
                         text_mask=text_mask,
                         generation_mask=generation_mask,
                         temporal_band_bias=temporal_band_bias,
+                        video_generation_mask=video_generation_mask,
                     )
                 elif has_tail_text:
                     x = block(

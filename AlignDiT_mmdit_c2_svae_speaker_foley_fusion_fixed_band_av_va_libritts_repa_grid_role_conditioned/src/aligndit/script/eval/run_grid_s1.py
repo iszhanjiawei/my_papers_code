@@ -91,7 +91,7 @@ def main():
     p.add_argument('--start-stage', choices=['infer', 'sim', 'wer', 'emosim', 'avsync', 'merge'], default='infer')
     a = p.parse_args()
     if a.text_conditioning is None:
-        a.text_conditioning = ROLE_MODE if a.setting == 's2' else 'reference-target'
+        a.text_conditioning = ROLE_MODE
     validate_text_conditioning(a.setting, a.text_conditioning, a.output_dir, require_contract=a.start_stage != 'infer')
     if a.workers_per_gpu < 1 or (a.limit and a.limit < len(a.gpus.split(','))*a.workers_per_gpu):
         raise ValueError('Too few clips for worker count')

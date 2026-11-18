@@ -8,7 +8,7 @@ import torch
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from aligndit.script.eval.grid_s1_common import PROTOCOL, identity, load_rows, output_record, publish, read, sha, ensure_contract
+from aligndit.script.eval.grid_s1_common import PROTOCOL, ROLE_MODE, identity, load_rows, output_record, publish, read, sha, ensure_contract
 from aligndit.script.eval.infer_celebvdub_semantic_vae_s1 import (
     atomic_save_waveform, build_model, historical_setting1_text, load_composed_config, load_normalization,
 )
@@ -26,6 +26,7 @@ def run(a):
     if not 0 <= a.shard < a.nshard <= len(rows):
         raise ValueError('Invalid shard')
     config = load_composed_config(a.config.resolve())
+    roles = bool(config.model.arch.get("role_conditioned_text", False))
     normalization = Path(config.datasets.normalization_path)
     if sha(normalization) != NORMALIZATION_SHA256 or sha(config.datasets.vocab_path) != VOCAB_SHA256:
         raise RuntimeError('Pretrained normalization or tokenizer changed')
@@ -38,6 +39,9 @@ def run(a):
                 'generation': {'seed': 0, 'nfe': 32, 'ode': 'euler', 'epss': True, 'sway': -1, 'cfg_text': 5, 'cfg_video': 2, 'batch_size': 1},
                 'reference': 'same target clip complete canonical MPG audio; GT latent prompt plus same-clip CAM++',
                 'output': 'only target continuation; prompt removed; exact original duration; 16k mono PCM16'}
+    if roles:
+        contract.update(text_conditioning=ROLE_MODE, reference_transcript_used_for_generation=True,
+                        config_sha256=sha(a.config))
     protocol_path = a.output_dir / 'protocol.json'
     ensure_contract(protocol_path, contract)
     device = torch.device('cuda:0')
@@ -62,8 +66,10 @@ def run(a):
             video = torch.from_numpy(np.load(artifact_path(a.cache_root, row, 'video'))).to(device)
             speaker = torch.from_numpy(np.load(artifact_path(a.cache_root, row, 'speaker'))).to(device)
             frames = row['latent_frames']
+            text_inputs = (dict(text=[row['text']], reference_text=[row['text']]) if roles
+                           else dict(text=[historical_setting1_text(row['text'])]))
             generated, _ = model.sample(cond=torch.from_numpy((latent-mean)/std)[None].to(device),
-                text=[historical_setting1_text(row['text'])], duration=torch.tensor([2*frames], device=device),
+                **text_inputs, duration=torch.tensor([2*frames], device=device),
                 video=torch.cat((torch.zeros_like(video), video))[None], lens=torch.tensor([frames], device=device),
                 steps=32, cfg_strength=5, cfg_strength_v=2, sway_sampling_coef=-1, seed=0, use_epss=True,
                 speaker_embedding=speaker[None])
@@ -74,7 +80,9 @@ def run(a):
             if waveform.shape != (1, frames*400) or not torch.isfinite(waveform).all():
                 raise RuntimeError('Invalid decoded waveform')
             atomic_save_waveform(out, waveform[:, :row['original_num_samples']])
-            publish(receipt, {'id': identity(row), 'relative_path': row['audio_relative_path'], 'sha256': sha(out),
+            role_fields = {'text_conditioning': ROLE_MODE, 'reference_id': identity(row), 'reference_text': row['text'],
+                           'target_text': row['text']} if roles else {}
+            publish(receipt, {**role_fields, 'id': identity(row), 'relative_path': row['audio_relative_path'], 'sha256': sha(out),
                               'samples': row['original_num_samples'], 'protocol_sha256': sha(protocol_path)})
     publish(a.output_dir / f'shard{a.shard}_complete.json', {'count': len(rows[a.shard::a.nshard]), 'shard': a.shard, 'nshard': a.nshard})
 
@@ -86,7 +94,7 @@ def args():
     p.add_argument('--step', type=int, default=100000)
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--cache-root', type=Path, default=base/'data/GRID_svae1000k_sample_seed666_fp32')
-    p.add_argument('--config', type=Path, default=Path(__file__).parents[2]/'config/finetune_grid_legacy.yaml')
+    p.add_argument('--config', type=Path, default=Path(__file__).parents[2]/'config/finetune_grid.yaml')
     p.add_argument('--semantic-vae-repo', type=Path, default=base/'alignDiT_idea6/papers_codes/Semantic-VAE')
     p.add_argument('--semantic-vae-checkpoint', type=Path, default=base/'alignDiT_idea6/Semantic-VAE/semantic_vae_1000k')
     p.add_argument('--shard', type=int, default=0)

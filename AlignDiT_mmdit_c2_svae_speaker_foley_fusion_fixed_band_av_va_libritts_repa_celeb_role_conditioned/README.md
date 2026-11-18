@@ -1,6 +1,19 @@
-# CelebV-Dub 双台词条件训练
+# CelebV-Dub 双台词训练：Foley 双流文本交叉注意力与双向固定带宽
 
-本实验用源视频、片段名前缀、CAM++ 声纹和转录构造同声异句候选对。参考和目标均保留台词，模型从参考侧提取全局风格，用目标台词和嘴部视频决定目标段内容。配对方法、覆盖率、验证和训练命令见 [CelebV-Dub 双台词训练说明](CELEB_ROLE_CONDITIONING.md)。
+本副本保留 CelebV-Dub 已验证的参考和目标台词配对、CAM++、语义 VAE、CTC 与 WavLM-Base+ REPA。在 12 个多模态块中，音视频先通过 Joint Attention 交换信息；随后拼接两路查询，共同读取目标文本的键和值，再拆回音视频残差。参考台词仍通过参考声学风格分支输入。最后 6 个音频块接收音频流。
+
+局部先验沿用 `fixed_band_av_va`。在 40 Hz 时间轴上，音频查视频和视频查音频分别加同一个高斯 logit 偏置及其转置，中心偏移为零，标准差 100 ms（4 帧），带外保留连续衰减。预训练单独采用 `avt_joint_fixed_band_window13_av_va_libritts_pretrained` 使用的 LibriTTS 50k EMA。迁移器核对父权重、内部训练契约和字符映射，并为不同架构的新模块保留独立初始化。下游优化器和训练计数从头开始。
+
+从本副本启动默认四卡 BF16 训练，目标为 200k 次更新。使用独立权重目录和本副本的日志目录。
+
+```bash
+mkdir -p logs
+setsid env CUDA_VISIBLE_DEVICES=0,1,2,3 PYTHONUNBUFFERED=1 \
+  bash src/aligndit/run/train/finetune_celebvdub_role_conditioned.sh \
+  > logs/train_celeb_foley.log 2>&1 < /dev/null &
+```
+
+[训练配置](src/aligndit/config/finetune_celebvdub_role_conditioned.yaml) · [固定带宽与权重配置](src/aligndit/config/foley_fixed_band_libritts_repa.yaml) · [MM-DiT](src/aligndit/model/backbone/dit_vt_mm.py) · [LibriTTS 权重迁移](src/aligndit/model/libritts_pretrained_migration.py) · [原实验的数据配对与监督](CELEB_ROLE_CONDITIONING.md)
 
 # AlignDiT
 

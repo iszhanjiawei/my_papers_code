@@ -72,7 +72,7 @@ def validate_text_conditioning(setting, mode, root=None, *, require_contract=Fal
     """
     if mode not in TEXT_CONDITIONING:
         raise ValueError(f'Unknown text conditioning: {mode}')
-    if setting == 's1' and mode != 'reference-target':
+    if setting == 's1' and mode == 'target-only':
         raise ValueError(f'--text-conditioning {mode} requires --setting s2')
     if root is not None:
         path = Path(root) / 'protocol.json'
@@ -150,6 +150,9 @@ def output_record(root, row, protocol=PROTOCOL, *, reference=None):
                 or receipt.get('target_text') != row['text']
                 or not receipt.get('reference_text')):
             raise RuntimeError(f'Role-conditioned receipt has incorrect transcript fields: {path}')
+        if protocol == PROTOCOL and (receipt['reference_text'] != row['text']
+                                     or receipt.get('reference_id') != identity(row)):
+            raise RuntimeError(f'Setting 1 requires the same utterance for both roles: {path}')
         if reference is not None and (receipt['reference_text'] != reference['text']
                                       or receipt.get('reference_id') != identity(reference)):
             raise RuntimeError(f'Role-conditioned reference transcript or identity mismatch: {path}')

@@ -8,7 +8,7 @@ from pathlib import Path
 from hydra import compose, initialize_config_dir
 import torch
 
-from aligndit.model.semantic_vae_direct_migration import validate_parent_artifacts
+from aligndit.model.libritts_pretrained_migration import validate_libritts_checkpoint_artifact
 from aligndit.script.train.finetune_grid import dataset_from_config, training_schedule_from_config
 
 
@@ -29,12 +29,7 @@ def main() -> None:
         raise ValueError("GRID training must use train.jsonl; val is held out")
     schedule = training_schedule_from_config(config, dataset, world_size=args.num_processes)
     ckpt = config.ckpts
-    validate_parent_artifacts(
-        ckpt.pretrained_path, ckpt.parent_contract_path,
-        expected_checkpoint_sha256=ckpt.expected_parent_sha256,
-        expected_checkpoint_size=ckpt.expected_parent_size,
-        expected_contract_sha256=ckpt.expected_parent_contract_sha256,
-    )
+    validate_libritts_checkpoint_artifact(ckpt.pretrained_path, config)
     # Decode a real cached batch, checking lengths, dimensions, finite values
     # and speaker normalization before committing GPU memory to the full model.
     batch = dataset.collate_fn([dataset[i] for i in range(min(2, len(dataset)))])

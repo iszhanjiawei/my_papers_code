@@ -1,5 +1,11 @@
+import tempfile
 import unittest
-from aligndit.script.eval.grid_s1_common import identity, metric_summary, normalize_text
+import wave
+from pathlib import Path
+
+from aligndit.script.eval.grid_s1_common import (
+    PROTOCOL, ROLE_MODE, identity, metric_summary, normalize_text, output_record, publish, sha,
+)
 from aligndit.script.eval.eval_celebvdub_grid_reference import word_edit_counts
 
 
@@ -30,6 +36,29 @@ class GridS1EvaluationTests(unittest.TestCase):
             self.assertEqual(identity(row), f'val/{speaker}/same')
         with self.assertRaises(ValueError):
             identity({'audio_relative_path': '../bad.wav', 'utterance_key': 'grid/bad'})
+
+    def test_role_receipt_binds_both_roles_to_same_s1_clip(self):
+        row = {"audio_relative_path": "val/s1/line.wav", "utterance_key": "grid/s1/line",
+               "original_num_samples": 320, "text": "bin white by a two again"}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / row["audio_relative_path"]
+            path.parent.mkdir(parents=True)
+            with wave.open(str(path), "wb") as f:
+                f.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                f.writeframes(bytes(640))
+            contract = root / "protocol.json"
+            publish(contract, {"protocol": PROTOCOL, "text_conditioning": ROLE_MODE,
+                               "reference_transcript_used_for_generation": True})
+            key = identity(row)
+            receipt = {"text_conditioning": ROLE_MODE, "protocol_sha256": sha(contract), "id": key, "sha256": sha(path),
+                       "target_text": row["text"], "reference_text": row["text"], "reference_id": key}
+            destination = root / "receipts" / (key + ".json")
+            publish(destination, receipt)
+            self.assertEqual(output_record(root, row), receipt)
+            publish(destination, dict(receipt, reference_id="val/s1/another"))
+            with self.assertRaisesRegex(RuntimeError, "same utterance"):
+                output_record(root, row)
 
     def test_incomplete_or_duplicate_metric_results_fail(self):
         with self.assertRaises(ValueError):
