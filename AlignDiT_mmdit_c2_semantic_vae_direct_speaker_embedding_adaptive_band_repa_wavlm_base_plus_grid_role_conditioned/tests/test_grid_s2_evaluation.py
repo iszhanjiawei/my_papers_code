@@ -8,9 +8,8 @@ import wave
 from unittest.mock import patch
 
 import numpy as np
-from aligndit.script.eval.eval_grid_s1 import reference_word_matches
 
-from aligndit.script.eval.eval_grid_s1 import whisper_model_slot
+from aligndit.script.eval.eval_grid_s1 import reference_word_matches, whisper_model_slot
 from aligndit.script.eval.grid_s1_common import (
     identity, normalize_text, ensure_contract, read, sha, publish, output_record, verify_outputs,
     validate_text_conditioning,
