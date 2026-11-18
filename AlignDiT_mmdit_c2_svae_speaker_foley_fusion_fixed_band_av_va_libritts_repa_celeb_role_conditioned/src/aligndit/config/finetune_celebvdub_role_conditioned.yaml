@@ -1,0 +1,19 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus
+  - _self_
+
+datasets:
+  pairing_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub_role_pairs_v1/pairs.jsonl
+  # Frame batching uses reference + target length. The underlying clips each
+  # have at most 1199 frames; 2400 fits even the longest two-utterance pair.
+  batch_size_per_gpu: 2400
+  num_workers: 8
+
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_celeb_role_conditioned_ctc003_warmup10k30k
+  arch:
+    role_conditioned_text: true
+    checkpoint_activations: true
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_40hz_CelebVDub_char
