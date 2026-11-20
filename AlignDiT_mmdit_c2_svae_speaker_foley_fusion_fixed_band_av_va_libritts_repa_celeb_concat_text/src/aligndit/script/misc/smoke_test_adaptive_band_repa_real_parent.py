@@ -30,7 +30,7 @@ from f5_tts.model.utils import get_tokenizer
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--config-name", default="finetune_celebvdub_role_conditioned"
+        "--config-name", default="finetune_celebvdub_concat_text"
     )
     parser.add_argument("--max-frames", type=int, default=160)
     args = parser.parse_args()
@@ -46,23 +46,8 @@ def main() -> None:
     ckpts = config.ckpts
 
     dataset = dataset_from_config(config)
-    roles = bool(config.model.arch.get("role_conditioned_text", False))
-    selected = []
-    used_prompt_lengths = set()
-    base = dataset.base_dataset if roles else dataset
-    for index in range(len(dataset)):
-        target_index = dataset.indices[index][0] if roles else index
-        target = base.records[target_index]
-        if not target["ctc_feasible_40hz"] or not 64 <= target["latent_frames"] <= args.max_frames:
-            continue
-        if roles:
-            ref_length = base.get_frame_len(dataset.indices[index][1])
-            if ref_length in used_prompt_lengths or ref_length > args.max_frames:
-                continue
-            used_prompt_lengths.add(ref_length)
-        selected.append(index)
-        if len(selected) == 2:
-            break
+    selected = [i for i, row in enumerate(dataset.records)
+                if row["ctc_feasible_40hz"] and 64 <= row["latent_frames"] <= args.max_frames][:2]
     if len(selected) != 2:
         raise RuntimeError("Need two real CTC-feasible examples between 64 and --max-frames frames")
     batch = dataset.collate_fn([dataset[index] for index in selected])
@@ -72,25 +57,10 @@ def main() -> None:
         "text_lengths": batch["text_lengths"].tolist(),
         "speaker_norms": batch["speaker_embedding"].norm(dim=1).tolist(),
     }), flush=True)
+    assert "reference_text" not in batch and "prompt_lens" not in batch
     assert batch["mel"].shape[1] == 64
     assert batch["speaker_embedding"].shape == (2, 192)
     assert torch.equal(batch["mel_lengths"], batch["video_lengths"])
-
-    if roles:
-        for n, index in enumerate(selected):
-            t, r = (base.records[i] for i in dataset.indices[index])
-            p, duration = int(batch["prompt_lens"][n]), int(batch["mel_lengths"][n])
-            assert p == r["latent_frames"] and duration - p == t["latent_frames"]
-            assert batch["reference_text"][n] == r["text"] and batch["text"][n] == t["text"]
-            assert torch.equal(batch["speaker_embedding"][n], torch.from_numpy(base._load_speaker_embedding_array(r)))
-            assert torch.equal(batch["mel"][n, :, :p], base._normalized_latent(r))
-            assert torch.equal(batch["mel"][n, :, p:duration], base._normalized_latent(t))
-            teacher = torch.from_numpy(base._load_repa_feature_array(t))
-            assert torch.equal(batch["repa_features"][n, :teacher.shape[0]], teacher)
-            assert not batch["video"][n, :p].any()
-            assert torch.equal(batch["video"][n, p:duration], base._target_item(t)["video"])
-            print(json.dumps({"target": t["utterance_key"], "target_text": t["text"], "T": duration - p,
-                              "reference": r["utterance_key"], "reference_text": r["text"], "P": p}), flush=True)
 
     vocab_char_map, vocab_size = get_tokenizer(config.datasets.vocab_path, "custom")
     model_cls = hydra.utils.get_class(f"aligndit.model.{config.model.backbone}")
@@ -106,7 +76,7 @@ def main() -> None:
     )
     migration = load_libritts_ema_into_model(model, ckpts.pretrained_path, config)
     assert migration["loaded_key_count"] == 608 and len(migration["row_remappings"]) == 5
-    assert migration["new_target_key_count"] == 223 and len(migration["ignored_source_keys"]) == 194
+    assert migration["new_target_key_count"] == 210 and len(migration["ignored_source_keys"]) == 194
     assert "transformer.speaker_proj.weight" in migration["loaded_keys"]
     parent_speaker_projection = model.transformer.speaker_proj.weight.detach().clone()
     assert parent_speaker_projection.count_nonzero() > 0
@@ -126,8 +96,6 @@ def main() -> None:
         "repa_features": batch["repa_features"].to(device),
         "repa_feature_lens": batch["repa_feature_lengths"].to(device),
     }
-    if roles:
-        forward_kwargs.update(reference_text=batch["reference_text"], prompt_lens=batch["prompt_lens"].to(device))
     assert not forward_kwargs["repa_features"].requires_grad
     assert not forward_kwargs["speaker_embedding"].requires_grad
     results = []
@@ -154,10 +122,6 @@ def main() -> None:
         else:
             assert "ctc_loss" not in components
         loss.backward()
-        if roles:
-            style_grad = model.transformer.role_conditioner.style_out.weight.grad
-            assert style_grad is not None and torch.isfinite(style_grad).all() and style_grad.norm() > 0
-            components["style_projection_grad_norm"] = float(style_grad.norm())
         speaker_grad = model.transformer.speaker_proj.weight.grad
         assert speaker_grad is not None and torch.isfinite(speaker_grad).all()
         speaker_grad_norm = float(speaker_grad.float().norm())

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from aligndit.script.eval.grid_s1_common import (
-    ROLE_MODE, TEXT_CONDITIONING, grid_config_path, metric_summary, publish, read, sha, validate_text_conditioning,
+    TEXT_CONDITIONING, metric_summary, publish, read, sha, validate_text_conditioning,
 )
 
 
@@ -80,34 +80,30 @@ def main():
     data = Path(prefix+'/zjw524/projects/data')
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--setting', choices=['s1','s2'], default='s1')
-    p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING)
+    p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING, default='reference-target')
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--checkpoint', type=Path)
-    p.add_argument('--config', type=Path)
+    p.add_argument('--config', type=Path, default=Path(__file__).resolve().parents[2] / 'config/finetune_grid.yaml')
     p.add_argument('--step', type=int, default=100000)
     p.add_argument('--gpus', default='0,1')
     p.add_argument('--workers-per-gpu', type=int, default=4)
     p.add_argument('--limit', type=int)
     p.add_argument('--start-stage', choices=['infer', 'sim', 'wer', 'emosim', 'avsync', 'merge'], default='infer')
     a = p.parse_args()
-    if a.text_conditioning is None:
-        a.text_conditioning = ROLE_MODE
     validate_text_conditioning(a.setting, a.text_conditioning, a.output_dir, require_contract=a.start_stage != 'infer')
     if a.workers_per_gpu < 1 or (a.limit and a.limit < len(a.gpus.split(','))*a.workers_per_gpu):
         raise ValueError('Too few clips for worker count')
-    a.config = (a.config or grid_config_path(a.text_conditioning)).resolve(strict=True)
+    a.config = a.config.resolve(strict=True)
     if a.start_stage == 'infer':
         from aligndit.script.eval.infer_celebvdub_semantic_vae_s1 import load_composed_config
         config = load_composed_config(a.config)
-        if bool(config.model.arch.get('role_conditioned_text', False)) != (a.text_conditioning == ROLE_MODE):
-            raise ValueError('GRID text conditioning is incompatible with the checkpoint architecture config')
         a.checkpoint = (a.checkpoint or Path(config.ckpts.save_dir) / f'model_{a.step}.pt').resolve(strict=True)
-    if a.text_conditioning == ROLE_MODE and (a.output_dir/'protocol.json').is_file():
+    if (a.output_dir/'protocol.json').is_file():
         saved = read(a.output_dir/'protocol.json')
-        if saved.get('config_sha256') != sha(a.config) or saved['checkpoint']['update'] != a.step:
-            raise RuntimeError('Role-conditioned output directory belongs to another config or checkpoint step')
+        if ('config_sha256' in saved and saved['config_sha256'] != sha(a.config)) or saved['checkpoint']['update'] != a.step:
+            raise RuntimeError('Output directory belongs to another config or checkpoint step')
         if a.checkpoint is not None and sha(a.checkpoint) != saved['checkpoint']['sha256']:
-            raise RuntimeError('Role-conditioned output directory belongs to another checkpoint')
+            raise RuntimeError('Output directory belongs to another checkpoint')
     a.output_dir.mkdir(parents=True, exist_ok=True)
     if a.setting == 's2':
         from aligndit.script.eval.grid_s2_common import prepare_pairs

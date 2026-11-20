@@ -21,10 +21,10 @@ from aligndit.model.modules import PrecomputedAudioRepresentation
 from f5_tts.model.utils import get_tokenizer
 
 
-class LibriTTSRoleFusionTests(unittest.TestCase):
+class LibriTTSConcatFusionTests(unittest.TestCase):
     def test_architecture_difference_is_closed(self):
         ignored, new = _expected_unshared_keys()
-        self.assertEqual((len(ignored), len(new)), (194, 223))
+        self.assertEqual((len(ignored), len(new)), (194, 210))
         shared = {f"shared.{i}" for i in range(608)}
         source, target = shared | ignored, shared | new
         validate_transfer_keys(source, target)
@@ -37,7 +37,7 @@ class LibriTTSRoleFusionTests(unittest.TestCase):
     def test_real_ema_tensor_migration(self):
         config_dir = Path(__file__).resolve().parents[1] / "src/aligndit/config"
         with initialize_config_dir(version_base="1.3", config_dir=str(config_dir)):
-            cfg = compose(config_name="finetune_celebvdub_role_conditioned")
+            cfg = compose(config_name="finetune_celebvdub_concat_text")
         vocab, size = get_tokenizer(cfg.datasets.vocab_path, "custom")
         audio = cfg.model.audio_representation
         model = CFM_VT(
@@ -50,12 +50,15 @@ class LibriTTSRoleFusionTests(unittest.TestCase):
         _, fresh = _expected_unshared_keys()
         def checksum(key):
             return hashlib.sha256(state[key].numpy()).digest()
+        self.assertIsNone(model.transformer.role_conditioner)
+        self.assertFalse(model.transformer.prompt_isolated_ca)
+        self.assertTrue(all("role_conditioner" not in key for key in state))
         before = {key: checksum(key) for key in fresh}
         report = load_libritts_ema_into_model(model, cfg.ckpts.pretrained_path, cfg)
         self.assertEqual(report["loaded_key_count"], 608)
         self.assertEqual(report["shape_identical_key_count"], 603)
         self.assertEqual(report["parent_ema_step"], 50000)
-        self.assertEqual(report["target_key_count"], 831)
+        self.assertEqual(report["target_key_count"], 818)
         self.assertEqual(set(report["row_remappings"]), {EMBEDDING_KEY, *CTC_ROW_KEYS})
         self.assertEqual(before, {key: checksum(key) for key in fresh})
         self.assertEqual(report["vocabulary"]["ctc_blank"], {"source": 172, "target": 160})

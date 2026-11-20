@@ -1,15 +1,17 @@
 """Numerical checks for the production two-stream text and AV band paths."""
 
 import unittest
+from unittest.mock import patch
 
 import torch
 import torch.nn.functional as F
 
 from aligndit.model.backbone.dit_vt_mm import DiT_VT_MMDiT, MMDiTBlock_VT
+from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.fixed_temporal_band import FixedTemporalBand
 
 
-class FoleyRoleFusionTest(unittest.TestCase):
+class FoleyConcatFusionTest(unittest.TestCase):
     def setUp(self):
         torch.manual_seed(117)
         self.block = MMDiTBlock_VT(
@@ -19,6 +21,7 @@ class FoleyRoleFusionTest(unittest.TestCase):
             text_dim=12,
             ff_mult=2,
             dropout=0,
+            prompt_isolated_ca=False,
             joint_av_text_ca=True,
             temporal_band_bidirectional=True,
             attn_mask_enabled=True,
@@ -49,7 +52,7 @@ class FoleyRoleFusionTest(unittest.TestCase):
                 ref = attn.to_out[0](ref).masked_fill(~valid.unsqueeze(-1), 0)
                 torch.testing.assert_close(got, ref, atol=2e-6, rtol=2e-5)
 
-    def test_separate_gates_and_target_only_audio_and_video_queries(self):
+    def test_both_streams_read_text_in_prompt_and_target_regions(self):
         block = self.block
         a, v, t = torch.randn(2, 7, 16), torch.randn(2, 5, 16), torch.randn(2, 16)
         t1, t2 = torch.randn(2, 4, 12), torch.randn(2, 4, 12)
@@ -76,7 +79,7 @@ class FoleyRoleFusionTest(unittest.TestCase):
             x2, v2 = block(a, v, t, text=t2, **kwargs)
             for d, region in ((x1 - x2, a_region), (v1 - v2, v_region)):
                 self.assertTrue(torch.all(d[region].abs().sum(dim=-1) > 0))
-                self.assertEqual(d[~region].count_nonzero().item(), 0)
+                self.assertTrue(torch.all(d[~region].abs().sum(dim=-1) > 0))
             block.v_cross_attn_ada.bias.zero_()
             x3, v3 = block(a, v, t, text=t1, **kwargs)
             torch.testing.assert_close(x1, x3)
@@ -99,7 +102,8 @@ class FoleyRoleFusionTest(unittest.TestCase):
             ctc_sampling_ratios=(1,),
             n_mm_layers=2,
             n_text_layers=2,
-            role_conditioned_text=True,
+            role_conditioned_text=False,
+            prompt_isolated_ca=False,
             audio_video_ratio=1,
             video_dim=12,
             speaker_dim=4,
@@ -126,7 +130,6 @@ class FoleyRoleFusionTest(unittest.TestCase):
             "video": torch.randn(2, 8, 12),
             "time": torch.rand(2),
             "text": torch.tensor([[1, 2, 3], [4, 5, -1]]),
-            "reference_text": torch.tensor([[4, 2, 3, -1], [1, 2, 3, 4]]),
             "text_mask": torch.tensor([[True, True, True], [True, True, False]]),
             "video_mask": valid,
             "mask": valid,
@@ -137,7 +140,8 @@ class FoleyRoleFusionTest(unittest.TestCase):
         }
         out, ctc, teacher_projection = model(**inputs, return_repa=True)
         self.assertEqual(out.shape, (2, 8, 8))
-        self.assertEqual(ctc[2]["z_lens"].tolist(), [6, 3])
+        self.assertIsNone(model.role_conditioner)
+        self.assertEqual(ctc[2]["z_lens"].tolist(), [8, 6])
         self.assertEqual(teacher_projection.shape, (2, 8, 12))
         out[generate].square().mean().backward()
         grad = model.transformer_blocks[0].cross_attn.v_cond_cross_proj.weight.grad
@@ -148,6 +152,55 @@ class FoleyRoleFusionTest(unittest.TestCase):
             packed, _ = model(**inputs, cfg_infer=True)
             torch.testing.assert_close(packed[:2], regular, rtol=2e-5, atol=2e-5)
             self.assertEqual(packed.shape, (6, 8, 8))
+
+    def test_one_text_sequence_and_raw_prompt_in_sampling_and_training(self):
+        net = DiT_VT_MMDiT(
+            dim=32, depth=2, heads=2, dim_head=16, ff_mult=2, dropout=0,
+            mel_dim=8, text_num_embeds=32, text_dim=16, conv_layers=0,
+            use_conformer=False, layer_indices_ctc=[], ctc_sampling_ratios=(1,),
+            n_mm_layers=1, n_text_layers=1, role_conditioned_text=False,
+            prompt_isolated_ca=False, audio_video_ratio=1, video_dim=12,
+            joint_av_text_ca=True, temporal_band_enabled=True, temporal_band_mode="fixed",
+            temporal_band_bidirectional=True,
+        )
+        flow = CFM_VT(
+            net, num_channels=8, audio_video_ratio=1, audio_drop_prob=0,
+            video_drop_prob=0, text_drop_prob=0, cond_drop_prob=0,
+            ctc_lambda=0, vocab_char_map={" ": 0, "a": 1, "b": 2},
+        )
+        tokens, stem = [], []
+        net.text_embed.register_forward_pre_hook(lambda _, args: tokens.append(args[0].detach().clone()))
+        net.input_embed.register_forward_pre_hook(
+            lambda _, args: stem.append((args[0].detach().clone(), args[1].detach().clone()))
+        )
+        clip = torch.randn(1, 7, 8)
+        video = torch.randn(1, 7, 12)
+        prompt = clip[:, :2]
+        sampled, _ = flow.sample(
+            prompt, ["aa  bb"], 4, video, steps=2, use_epss=False, seed=8,
+            cfg_strength=5.0, cfg_strength_v=2.0,
+        )
+        # Length can expand to the combined character count plus one.
+        self.assertEqual(sampled.shape, clip.shape)
+        self.assertTrue(torch.equal(sampled[:, :2], prompt))
+        self.assertTrue(all(t.tolist() == [[1, 1, 0, 0, 2, 2]] for t in tokens))
+        x, cond = stem[0]
+        self.assertGreater(x[:, :2].abs().sum().item(), 0)
+        torch.testing.assert_close(cond[:, :2], prompt)
+        self.assertEqual(cond[:, 2:].count_nonzero().item(), 0)
+
+        tokens.clear()
+        stem.clear()
+        middle_span = torch.tensor([[False, False, True, True, True, False, False]])
+        flow.train()
+        with patch("aligndit.model.cfm_vt.mask_from_frac_lengths", return_value=middle_span) as span_sampler:
+            loss, _, cond, _ = flow(clip, ["bb"], video)
+        span_sampler.assert_called_once()
+        torch.testing.assert_close(cond, clip.masked_fill(middle_span.unsqueeze(-1), 0))
+        torch.testing.assert_close(stem[0][1], cond)
+        self.assertEqual(tokens[0].tolist(), [[2, 2]])
+        self.assertTrue(loss.isfinite())
+        self.assertFalse(any("role_conditioner" in key for key in flow.state_dict()))
 
 
 if __name__ == "__main__":

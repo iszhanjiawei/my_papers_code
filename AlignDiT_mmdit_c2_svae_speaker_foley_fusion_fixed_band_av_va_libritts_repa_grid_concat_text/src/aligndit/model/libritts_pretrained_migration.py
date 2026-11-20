@@ -1,4 +1,4 @@
-"""Migrate the pinned LibriTTS text/audio EMA into the dual-text Foley backbone.
+"""Migrate the pinned LibriTTS text/audio EMA into the concat-text Foley backbone.
 
 Keep shared audio, text encoder, video, speaker and CTC tensors. Only the
 obsolete joint-text stream is discarded. New modules keep their own initial
@@ -144,14 +144,14 @@ def _validate_transfer_contract(source, config):
     if not src["arch"].get("text_mask_padding") or src["arch"].get("temporal_band_enabled") is not False:
         raise ValueError("Unexpected LibriTTS text-mask or temporal prior")
     required_target = {
-        "joint_av_text_ca": True, "role_conditioned_text": True, "temporal_band_enabled": True,
+        "joint_av_text_ca": True, "role_conditioned_text": False, "text_mask_padding": False, "temporal_band_enabled": True,
         "temporal_band_mode": "fixed", "temporal_band_fixed_sigma_seconds": 0.1,
         "temporal_band_fixed_offset_seconds": 0.0, "temporal_band_audio_fps": 40.0,
         "temporal_band_video_fps": 40.0, "temporal_band_bidirectional": True,
     }
     for key, value in required_target.items():
         if dst["arch"].get(key) != value:
-            raise ValueError(f"Target role/fusion configuration mismatch: {key}")
+            raise ValueError(f"Target concat-text/fusion configuration mismatch: {key}")
     for key, value in {"channels": 64, "frame_rate": 40, "sample_rate": 16000, "hop_length": 400}.items():
         if src["audio_representation"].get(key) != value or dst["audio_representation"].get(key) != value:
             raise ValueError(f"LibriTTS transfer audio representation mismatch: {key}")
@@ -241,13 +241,6 @@ def _expected_unshared_keys():
     # None of those projections has an equivalent in the new static text KV path.
     ignored = {"transformer.text_joint_proj.weight", "transformer.text_joint_proj.bias"}
     fresh = set(REPA_PROJECTOR_SHAPES)
-    role = "transformer.role_conditioner."
-    fresh.update(role + key for key in (
-        "reference_role", "target_role", "style_out.weight", "audio_encoder.0.weight", "audio_encoder.0.bias",
-        "audio_encoder.1.weight", "audio_encoder.1.bias", "reference_attention.q_proj_weight",
-        "reference_attention.k_proj_weight", "reference_attention.v_proj_weight", "reference_attention.in_proj_bias",
-        "reference_attention.out_proj.weight", "reference_attention.out_proj.bias",
-    ))
     for layer in range(12):
         block = f"transformer.transformer_blocks.{layer}."
         for module in ("t_attn_norm.linear", "t_attn.to_q", "t_attn.to_k", "t_attn.to_v", "t_attn.to_out.0",
@@ -342,12 +335,12 @@ def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verify_ch
         "new_target_key_count": len(new_keys),
         "new_target_shapes": {key: list(target[key].shape) for key in new_keys},
         "new_target_numel": sum(target[key].numel() for key in new_keys),
-        "new_target_initialization": "fresh Foley joint-query text attention, modulation, roles and REPA; identical online/EMA initialization",
+        "new_target_initialization": "fresh Foley joint-query text attention, modulation and REPA; identical online/EMA initialization",
         "loaded_keys": sorted(loaded), "loaded_numel": sum(value.numel() for value in loaded.values()),
         "row_remappings": remapped, "vocabulary": vocabulary,
         "source_text_audio_only": True, "target_text_audio_only": False,
-        "intentional_runtime_changes": ["separate prompt and target transcripts", "Foley joint A/V queries to target text",
-                                        "bidirectional fixed 100 ms Gaussian", "target-frame WavLM-Base+ REPA"],
+        "intentional_runtime_changes": ["one text stream for Foley A/V queries", "concatenated reference and target transcript at inference",
+                                        "bidirectional fixed 100 ms Gaussian", "masked-span WavLM-Base+ REPA"],
         "source_ctc_lambda": contract["model"]["ctc_lambda"],
         "visual_weights_pretrained": False, "ctc_weights_pretrained": False,
         "speaker_weights_pretrained": True, "optimizer_restored": False, "downstream_initial_update": 0,

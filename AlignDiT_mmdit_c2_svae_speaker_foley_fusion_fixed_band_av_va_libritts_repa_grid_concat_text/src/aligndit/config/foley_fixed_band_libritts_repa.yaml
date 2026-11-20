@@ -15,7 +15,7 @@ model:
   repa_lambda: 0.1
   arch:
     joint_av_text_ca: true
-    role_conditioned_text: true
+    role_conditioned_text: false
     temporal_band_enabled: true
     temporal_band_mode: fixed
     temporal_band_bidirectional: true

@@ -18,7 +18,7 @@ if [[ ! "$num_processes" =~ ^[1-9][0-9]*$ ]] || (( num_processes > gpu_count ));
     echo "Requested $num_processes workers with $gpu_count visible GPUs" >&2
     exit 1
 fi
-"$python_bin" -u src/aligndit/script/misc/check_celebvdub_role_training.py --num-processes "$num_processes" -- "$@"
+"$python_bin" -u src/aligndit/script/misc/check_celebvdub_concat_training.py --num-processes "$num_processes" -- "$@"
 bash scripts/start_celeb_role_tensorboard.sh
 distributed_args=()
 if (( num_processes > 1 )); then
@@ -28,4 +28,4 @@ exec "$python_bin" -u -m accelerate.commands.launch "${distributed_args[@]}" \
     --mixed_precision bf16 --num_machines 1 --dynamo_backend no \
     --num_processes "$num_processes" --main_process_port "${TRAIN_PORT:-29644}" \
     src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
-    --config-name finetune_celebvdub_role_conditioned "$@"
+    --config-name finetune_celebvdub_concat_text "$@"

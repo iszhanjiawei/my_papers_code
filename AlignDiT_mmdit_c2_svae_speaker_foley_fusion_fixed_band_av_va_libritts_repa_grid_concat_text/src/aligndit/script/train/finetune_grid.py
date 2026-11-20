@@ -1,4 +1,4 @@
-"""Train GRID with paired role inputs, shared audio/video text attention and fixed AV/VA bias."""
+"""Train GRID on single utterances with shared audio/video text attention and fixed AV/VA bias."""
 
 import json
 import math
@@ -11,7 +11,7 @@ from accelerate.utils import set_seed
 from omegaconf import OmegaConf
 
 from aligndit.model.cfm_vt import CFM_VT
-from aligndit.model.grid_dataset import PairedGridDataset
+from aligndit.model.grid_dataset import GridDataset
 from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.trainer_semantic_vae_adaptive_band import SemanticVaeAdaptiveBandTrainer
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
@@ -21,33 +21,31 @@ from f5_tts.model.utils import get_tokenizer
 os.chdir(str(files("aligndit").joinpath("../..")))
 
 
-def check_role_training_config(cfg):
+def check_concat_training_config(cfg):
     """Reject accidental training with a mismatched parent or local-attention recipe."""
     arch = cfg.model.arch
     expected = {
-        "joint_av_text_ca": True, "role_conditioned_text": True, "temporal_band_enabled": True,
+        "joint_av_text_ca": True, "role_conditioned_text": False,
+        "prompt_isolated_ca": False, "text_mask_padding": False, "temporal_band_enabled": True,
         "temporal_band_mode": "fixed", "temporal_band_bidirectional": True,
         "temporal_band_audio_fps": 40.0, "temporal_band_video_fps": 40.0,
         "temporal_band_fixed_offset_seconds": 0.0, "temporal_band_fixed_sigma_seconds": 0.1,
     }
     for name, value in expected.items():
         if arch.get(name) != value:
-            raise ValueError(f"This Foley role experiment requires {name}={value!r}")
+            raise ValueError(f"This Foley concatenated-text experiment requires {name}={value!r}")
     if cfg.ckpts.get("initialization_mode") != "libritts_text_audio":
-        raise ValueError("The fixed AV/VA role experiment requires the LibriTTS text/audio parent")
-    if any("foley_fixed_band_av_va_libritts" not in name for name in (cfg.model.name, Path(cfg.ckpts.save_dir).name)):
-        raise ValueError("Use the dedicated Foley fixed-band LibriTTS model name and checkpoint directory")
+        raise ValueError("The fixed AV/VA experiment requires the LibriTTS text/audio parent")
+    for name in (cfg.model.name, Path(cfg.ckpts.save_dir).name):
+        if "foley_fixed_band_av_va_libritts" not in name or "GRID_concat_text" not in name:
+            raise ValueError("Use the dedicated grid concat_text model name and checkpoint directory")
 
 
 def dataset_from_config(model_cfg, *, allow_partial=False):
     """Load and validate GRID data without instantiating the diffusion model."""
     repa_enabled = float(OmegaConf.select(model_cfg, "model.repa_lambda", default=0.0)) > 0
-    check_role_training_config(model_cfg)
-    if not model_cfg.model.arch.get("role_conditioned_text", False):
-        raise ValueError("The paired GRID training entry requires model.arch.role_conditioned_text=true")
-    if "role_conditioned" not in Path(model_cfg.ckpts.save_dir).resolve().name or "role_conditioned" not in model_cfg.model.name:
-        raise ValueError("Use a dedicated role_conditioned experiment name and checkpoint directory")
-    return PairedGridDataset(
+    check_concat_training_config(model_cfg)
+    return GridDataset(
         manifest_path=model_cfg.datasets.manifest_path,
         cache_root=model_cfg.datasets.cache_root,
         normalization_path=model_cfg.datasets.normalization_path,
@@ -262,8 +260,7 @@ def main(model_cfg):
             "project_dir": str(Path.cwd()),
             "config": OmegaConf.to_container(model_cfg, resolve=True),
             "grid_cache": train_dataset.cache_contract,
-            "train_pairing": train_dataset.pair_contract,
-            "text_roles": "independently encoded reference and target dialogue; target-only CTC",
+            "training_text": "one full utterance transcript; random temporal masking for CFM; full transcript for CTC",
             "batch_and_schedule": schedule,
             "validation": "existing GRID val split is held out; no online validation loop",
             "speaker_cache_metadata": speaker_metadata,
@@ -285,7 +282,7 @@ def main(model_cfg):
                 "schedule": "fixed from the first update",
                 "student_layer_zero_based": int(model_arc.repa_layer),
                 "teacher_layer": int(model_cfg.datasets.repa_teacher_layer),
-                "alignment": "linear interpolation of the target teacher to its own target span, excluding the prompt",
+                "alignment": "linear interpolation of each unpadded 50-Hz teacher to the full valid 40-Hz utterance",
                 "loss": "mean 1-cosine on the flow-matching generation mask only",
                 "inference": "projector weights load strictly but the auxiliary head is not called",
             }
@@ -296,7 +293,7 @@ def main(model_cfg):
                 "scope": "AV and VA logit blocks with transposed bias; AA and VV unmodified",
                 "trainable_parameters": 0,
             }
-            contract["text_cross_attention"] = "both video and audio queries attend to target text, with modality-specific outputs"
+            contract["text_cross_attention"] = "both video and audio queries attend to the same text sequence, with modality-specific outputs"
         elif temporal_band_enabled:
             contract["temporal_band"] = {
                 "formula": "B[i,j] = -(t_video[j] - t_audio[i] - delta[i])**2 / (2*sigma[i]**2)",

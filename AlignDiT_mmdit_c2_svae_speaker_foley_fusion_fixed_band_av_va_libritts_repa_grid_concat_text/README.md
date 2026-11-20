@@ -1,19 +1,25 @@
-# GRID 双台词训练：Foley 双流文本交叉注意力与双向固定带宽
+# GRID 单文本训练与拼接台词推理
 
-本副本保留 GRID 已验证的参考和目标台词配对、CAM++、语义 VAE、CTC 与 WavLM-Base+ REPA。在 12 个多模态块中，音视频先通过 Joint Attention 交换信息；随后拼接两路查询，共同读取目标文本的键和值，再拆回音视频残差。参考台词仍通过参考声学风格分支输入。最后 6 个音频块接收音频流。
+本副本用于从 Foley 角色模型回到原始文本协议。训练清单包含 29,531 条 train 记录，沿用现有 val 划分。每次加载一个片段的完整台词、音频 latent、嘴部特征、CAM++ 和 WavLM 教师特征。在片段内部随机遮盖连续区域，CFM 和 REPA 在有效生成区域计算损失，CTC 与本句文本对齐。
 
-局部先验沿用 `fixed_band_av_va`。在 40 Hz 时间轴上，音频查视频和视频查音频分别加同一个高斯 logit 偏置及其转置，中心偏移为零，标准差 100 ms（4 帧），带外保留连续衰减。预训练单独采用 `avt_joint_fixed_band_window13_av_va_libritts_pretrained` 使用的 LibriTTS 50k EMA。迁移器核对父权重、内部训练契约和字符映射，并为不同架构的新模块保留独立初始化。下游优化器和训练计数从头开始。
+推理将参考台词 A 和目标台词 B 按历史分隔规则拼成同一个字符串，通过同一套字符嵌入和文本编码器。Foley 的视频和音频查询共同读取整句的键和值。参考音频的 latent 和 CAM++ 继续提供条件，合成后裁去参考前缀、解码目标段。该结构不实例化参考/目标角色向量或参考文本风格池化分支。
 
-从本副本启动默认四卡 BF16 训练，目标为 200k 次更新。使用独立权重目录和本副本的日志目录。
+12 个多模态块中仍执行音视频联合自注意力和 Foley 双流文本交叉注意力。AV/VA 使用互为转置的固定高斯偏置，40 Hz、零偏移、σ 为 100 ms。使用 LibriTTS 50k EMA 的 608 个兼容张量（含 5 个字符表映射），其余 210 个张量属于 Foley 和 REPA。下游优化器及步数从零开始。
+
+## 训练
+
+在本项目根目录运行。默认使用四卡 BF16，目标为 200k 次更新。训练入口使用本副本的配置、日志和独立权重目录。
 
 ```bash
 mkdir -p logs
 setsid env CUDA_VISIBLE_DEVICES=0,1,2,3 PYTHONUNBUFFERED=1 \
   bash src/aligndit/run/train/finetune_grid.sh \
-  > logs/train_grid_foley.log 2>&1 < /dev/null &
+  > logs/train_grid_concat.log 2>&1 < /dev/null &
 ```
 
-[训练配置](src/aligndit/config/finetune_grid.yaml) · [固定带宽与权重配置](src/aligndit/config/foley_fixed_band_libritts_repa.yaml) · [MM-DiT](src/aligndit/model/backbone/dit_vt_mm.py) · [LibriTTS 权重迁移](src/aligndit/model/libritts_pretrained_migration.py) · [原实验的数据配对与监督](GRID_ROLE_CONDITIONING.md)
+[训练配置](src/aligndit/config/finetune_grid.yaml) · [固定带宽与父权重](src/aligndit/config/foley_fixed_band_libritts_repa.yaml) · [模型主干](src/aligndit/model/backbone/dit_vt_mm.py) · [流匹配](src/aligndit/model/cfm_vt.py)
+
+验证集上可用 [Setting 1](src/aligndit/run/eval/eval_grid_s1_100k.sh) 或 [Setting 2](src/aligndit/run/eval/eval_grid_s2_100k.sh) 入口，`--step` 选择已保存的步数。 两种设置都默认传入拼接文本。
 
 # AlignDiT
 

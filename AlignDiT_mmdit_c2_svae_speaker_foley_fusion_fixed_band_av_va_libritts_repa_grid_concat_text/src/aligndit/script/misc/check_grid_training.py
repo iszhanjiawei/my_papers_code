@@ -5,8 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
-from hydra import compose, initialize_config_dir
 import torch
+from hydra import compose, initialize_config_dir
 
 from aligndit.model.libritts_pretrained_migration import validate_libritts_checkpoint_artifact
 from aligndit.script.train.finetune_grid import dataset_from_config, training_schedule_from_config
@@ -33,6 +33,10 @@ def main() -> None:
     # Decode a real cached batch, checking lengths, dimensions, finite values
     # and speaker normalization before committing GPU memory to the full model.
     batch = dataset.collate_fn([dataset[i] for i in range(min(2, len(dataset)))])
+    if "prompt_lens" in batch or "reference_text" in batch or not all(batch["text"]):
+        raise ValueError("Expected one transcript and one utterance per training item")
+    if not torch.equal(batch["mel_lengths"], batch["video_lengths"]):
+        raise ValueError("Audio/video geometry mismatch")
     run_name = f"{config.model.name}_{config.model.audio_representation.name}_{config.datasets.name}_{config.model.tokenizer}"
     print(json.dumps({
         "result": "PASS", "records": len(dataset), "schedule": schedule,

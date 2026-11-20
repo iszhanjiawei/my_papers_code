@@ -53,27 +53,20 @@ def main() -> None:
     dataset = dataset_from_config(config, allow_partial=True)
     eligible = [i for i, row in enumerate(dataset.records)
                 if row["ctc_feasible_40hz"] and 64 <= row["latent_frames"] <= args.max_frames]
-    # Prefer different reference lengths to exercise per-example P/T boundaries.
-    selected = eligible[:1]
-    if selected:
-        first_prompt = dataset.records[dataset.reference_indices[selected[0]]]["latent_frames"]
-        second = next((i for i in eligible[1:] if
-                       dataset.records[dataset.reference_indices[i]]["latent_frames"] != first_prompt), None)
-        selected += [second] if second is not None else eligible[1:2]
+    selected = eligible[:2]
     if len(selected) != 2:
         raise RuntimeError("Need two real CTC-feasible examples between 64 and --max-frames frames")
     selected = [selected[index % len(selected)] for index in range(args.batch_size)]
     batch = dataset.collate_fn([dataset[index] for index in selected])
     print(json.dumps({
         "selected_utterances": batch["utterance_keys"],
-        "reference_ids": batch["reference_utterance_keys"],
-        "prompt_lens": batch["prompt_lens"].tolist(),
         "latent_lengths": batch["mel_lengths"].tolist(),
         "text_lengths": batch["text_lengths"].tolist(),
         "speaker_norms": batch["speaker_embedding"].norm(dim=1).tolist(),
         "batch_size": args.batch_size,
         "repeated_clips_for_capacity_only": args.batch_size > 2,
     }), flush=True)
+    assert "reference_text" not in batch and "prompt_lens" not in batch
     assert batch["mel"].shape[1] == 64
     assert batch["speaker_embedding"].shape == (args.batch_size, 192)
     assert torch.equal(batch["mel_lengths"], batch["video_lengths"])
@@ -92,7 +85,7 @@ def main() -> None:
     )
     migration = load_libritts_ema_into_model(model, ckpts.pretrained_path, config)
     assert migration["loaded_key_count"] == 608 and len(migration["row_remappings"]) == 5
-    assert migration["new_target_key_count"] == 223 and len(migration["ignored_source_keys"]) == 194
+    assert migration["new_target_key_count"] == 210 and len(migration["ignored_source_keys"]) == 194
     assert "transformer.speaker_proj.weight" in migration["loaded_keys"]
     parent_speaker_projection = model.transformer.speaker_proj.weight.detach().clone()
     assert parent_speaker_projection.count_nonzero() > 0
@@ -105,8 +98,6 @@ def main() -> None:
     forward_kwargs = {
         "inp": batch["mel"].permute(0, 2, 1).to(device),
         "text": batch["text"],
-        "reference_text": batch["reference_text"],
-        "prompt_lens": batch["prompt_lens"].to(device),
         "lens": batch["mel_lengths"].to(device),
         "text_lens": batch["text_lengths"].to(device),
         "video": batch["video"].to(device),
@@ -141,10 +132,6 @@ def main() -> None:
         else:
             assert "ctc_loss" not in components
         loss.backward()
-        role_grads = [p.grad for p in model.transformer.role_conditioner.parameters() if p.grad is not None]
-        assert role_grads and all(torch.isfinite(g).all() for g in role_grads)
-        role_norm = float(torch.stack([g.float().norm() for g in role_grads]).norm())
-        assert role_norm > 0
         speaker_grad = model.transformer.speaker_proj.weight.grad
         assert speaker_grad is not None and torch.isfinite(speaker_grad).all()
         speaker_grad_norm = float(speaker_grad.float().norm())
@@ -166,7 +153,6 @@ def main() -> None:
             "ctc_lambda": weight,
             "total_loss": float(loss),
             **components,
-            "role_grad_norm_pre_clip": role_norm,
             "speaker_grad_norm_pre_clip": speaker_grad_norm,
             "joint_text_gate_grad_norm_pre_clip": fusion_norm,
             "repa_projector_grad_norm_pre_clip": repa_norm,
@@ -176,21 +162,25 @@ def main() -> None:
         results.append(result)
         print(json.dumps(result, sort_keys=True), flush=True)
         del loss, prediction
-    # Smoke-test actual ODE/CFG inference with both transcript roles and a real pair.
+    # Reproduce the same-clip prompt protocol: one reference transcript,
+    # a separator and the target transcript are encoded in a single sequence.
+    from aligndit.script.eval.infer_celebvdub_grid_reference import reference_target_text
+
     model.eval()
-    prompt_len = int(batch["prompt_lens"][0])
-    duration = int(batch["mel_lengths"][0])
+    prompt_len = int(batch["mel_lengths"][0])
+    text = batch["text"][0]
+    video = forward_kwargs["video"][:1, :prompt_len]
     with torch.inference_mode():
         generated, _ = model.sample(
-            cond=forward_kwargs["inp"][:1, :prompt_len], lens=batch["prompt_lens"][:1].to(device),
-            text=batch["text"][:1], reference_text=batch["reference_text"][:1],
-            duration=duration, video=forward_kwargs["video"][:1, :duration],
+            cond=forward_kwargs["inp"][:1, :prompt_len],
+            text=[reference_target_text(text, text)],
+            duration=2 * prompt_len, video=torch.cat((torch.zeros_like(video), video), dim=1),
             speaker_embedding=forward_kwargs["speaker_embedding"][:1],
             seed=0, steps=4, use_epss=False, cfg_strength=5.0, cfg_strength_v=2.0,
         )
-        target = generated[:, prompt_len:duration]
-        assert target.shape == (1, duration - prompt_len, audio.channels) and torch.isfinite(target).all()
-    print(f"[OK] structured two-text CFG sample, P={prompt_len}, T={target.size(1)}", flush=True)
+        target = generated[:, prompt_len : 2 * prompt_len]
+        assert target.shape == (1, prompt_len, audio.channels) and torch.isfinite(target).all()
+    print(f"[OK] concatenated-text CFG sample, P={prompt_len}, T={target.size(1)}", flush=True)
     del model, forward_kwargs, batch
     gc.collect()
     torch.cuda.empty_cache()

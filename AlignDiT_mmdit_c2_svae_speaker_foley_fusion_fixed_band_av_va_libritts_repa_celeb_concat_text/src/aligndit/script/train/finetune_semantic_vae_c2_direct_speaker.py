@@ -23,38 +23,33 @@ from f5_tts.model.utils import get_tokenizer
 os.chdir(str(files("aligndit").joinpath("../..")))
 
 
-def check_role_training_config(cfg):
+def check_concat_training_config(cfg):
     """Reject accidental training with a mismatched parent or local-attention recipe."""
     arch = cfg.model.arch
     expected = {
-        "joint_av_text_ca": True, "role_conditioned_text": True, "temporal_band_enabled": True,
+        "joint_av_text_ca": True, "role_conditioned_text": False,
+        "prompt_isolated_ca": False, "text_mask_padding": False, "temporal_band_enabled": True,
         "temporal_band_mode": "fixed", "temporal_band_bidirectional": True,
         "temporal_band_audio_fps": 40.0, "temporal_band_video_fps": 40.0,
         "temporal_band_fixed_offset_seconds": 0.0, "temporal_band_fixed_sigma_seconds": 0.1,
     }
     for name, value in expected.items():
         if arch.get(name) != value:
-            raise ValueError(f"This Foley role experiment requires {name}={value!r}")
+            raise ValueError(f"This Foley concatenated-text experiment requires {name}={value!r}")
     if cfg.ckpts.get("initialization_mode") != "libritts_text_audio":
-        raise ValueError("The fixed AV/VA role experiment requires the LibriTTS text/audio parent")
-    if any("foley_fixed_band_av_va_libritts" not in name for name in (cfg.model.name, Path(cfg.ckpts.save_dir).name)):
-        raise ValueError("Use the dedicated Foley fixed-band LibriTTS model name and checkpoint directory")
+        raise ValueError("The fixed AV/VA experiment requires the LibriTTS text/audio parent")
+    for name in (cfg.model.name, Path(cfg.ckpts.save_dir).name):
+        if "foley_fixed_band_av_va_libritts" not in name or "celeb_concat_text" not in name:
+            raise ValueError("Use the dedicated celeb concat_text model name and checkpoint directory")
 
 
 def dataset_from_config(model_cfg):
     repa_enabled = float(model_cfg.model.get("repa_lambda", 0.0)) > 0
-    paired = bool(model_cfg.model.arch.get("role_conditioned_text", False))
-    if bool(model_cfg.datasets.get("pairing_path")) != paired:
-        raise ValueError("Role-conditioned CelebV-Dub training requires both paired data and a role-aware model")
-    if paired:
-        check_role_training_config(model_cfg)
-        if "celeb_role_conditioned" not in Path(model_cfg.ckpts.save_dir).name or (
-            "celeb_role_conditioned" not in model_cfg.model.name
-        ):
-            raise ValueError("Paired CelebV-Dub requires its own model name and checkpoint directory")
+    if model_cfg.model.arch.get("joint_av_text_ca", False):
+        check_concat_training_config(model_cfg)
         if model_cfg.datasets.name != "CelebVDub" or model_cfg.ckpts.logger != "tensorboard":
-            raise ValueError("Role-conditioned CelebV-Dub runs require the CelebVDub split and TensorBoard")
-    base = SemanticVaeCelebVDubDataset(
+            raise ValueError("CelebV-Dub concat training requires the CelebVDub split and TensorBoard")
+    return SemanticVaeCelebVDubDataset(
         manifest_path=model_cfg.datasets.manifest_path,
         cache_root=model_cfg.datasets.cache_root,
         normalization_path=model_cfg.datasets.normalization_path,
@@ -75,30 +70,26 @@ def dataset_from_config(model_cfg):
         repa_checkpoint_sha256=(model_cfg.datasets.repa_checkpoint_sha256 if repa_enabled else None),
         repa_teacher_layer=(int(model_cfg.datasets.repa_teacher_layer) if repa_enabled else None),
     )
-    if paired:
-        from aligndit.model.celeb_role_dataset import PairedCelebVDubDataset
-
-        return PairedCelebVDubDataset(base, model_cfg.datasets.pairing_path)
-    return base
 
 
-def paired_schedule(model_cfg, dataset, world_size):
+def training_schedule(model_cfg, dataset, world_size):
     """Match the trainer's frame batching, DDP tail handling and LR scheduler."""
     from torch.utils.data import SequentialSampler
+
     from f5_tts.model.dataset import DynamicBatchSampler
 
     budget = int(model_cfg.datasets.batch_size_per_gpu)
     accumulation = int(model_cfg.optim.grad_accumulation_steps)
     epochs = int(model_cfg.optim.epochs)
     if world_size < 1 or accumulation < 1 or model_cfg.datasets.batch_size_type != "frame":
-        raise ValueError("Paired training requires frame batching and positive DDP size and accumulation")
+        raise ValueError("Training requires frame batching and positive DDP size and accumulation")
     sampler = DynamicBatchSampler(
         SequentialSampler(dataset), budget, max_samples=int(model_cfg.datasets.max_samples),
         random_seed=int(model_cfg.seed), drop_residual=False,
     )
     if sum(map(len, sampler.batches)) != len(dataset):
         longest = max(dataset.get_frame_len(i) for i in range(len(dataset)))
-        raise ValueError(f"Per-GPU budget {budget} would omit pairs (longest P+T is {longest})")
+        raise ValueError(f"Per-GPU budget {budget} would omit utterances (longest is {longest} frames)")
     batches = len(sampler)
     per_rank = batches // world_size
     available_updates = math.ceil(per_rank / accumulation) * epochs
@@ -110,7 +101,7 @@ def paired_schedule(model_cfg, dataset, world_size):
     if not 0 < warmup_steps < scheduler_steps:
         raise ValueError(f"LR schedule requires positive warmup and decay, got {warmup_steps=} {scheduler_steps=}")
     return {
-        "world_size": world_size, "frame_budget_per_gpu": budget, "pairs": len(dataset),
+        "world_size": world_size, "frame_budget_per_gpu": budget, "utterances": len(dataset),
         "batches_per_epoch": batches, "batches_per_rank": per_rank, "dropped_tail_batches": batches % world_size,
         "available_updates": available_updates, "run_until_update": run_until,
         "lr_warmup_steps": warmup_steps, "lr_total_steps": scheduler_steps,
@@ -181,8 +172,7 @@ def main(model_cfg):
         raise RuntimeError("Direct-C2 CTC-warmup experiment requires start=10000 and end=30000")
 
     train_dataset = dataset_from_config(model_cfg)
-    paired = bool(model_arc.get("role_conditioned_text", False))
-    schedule = paired_schedule(model_cfg, train_dataset, int(os.environ.get("WORLD_SIZE", 1))) if paired else None
+    schedule = training_schedule(model_cfg, train_dataset, int(os.environ.get("WORLD_SIZE", "1"))) if fixed_band else None
 
     vocab_char_map, vocab_size = get_tokenizer(model_cfg.datasets.vocab_path, "custom")
     exp_name = f"{model_cfg.model.name}_{audio_cfg.name}_{model_cfg.datasets.name}_{model_cfg.model.tokenizer}"
@@ -263,20 +253,16 @@ def main(model_cfg):
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }
-        if paired:
-            contract["train_pairing"] = train_dataset.pairing_contract
+        if fixed_band:
             contract["batch_and_schedule"] = schedule
-            contract["text_roles"] = "separate reference style and target lexical streams; target-only FM, CTC and REPA"
+            contract["training_text"] = "one full utterance transcript; random temporal masking for CFM; full transcript for CTC"
         if repa_enabled:
             contract["repa"] = {
                 "lambda": repa_lambda,
                 "schedule": "fixed from the first update",
                 "student_layer_zero_based": int(model_arc.repa_layer),
                 "teacher_layer": int(model_cfg.datasets.repa_teacher_layer),
-                "alignment": (
-                    "linear interpolation of the target 50-Hz teacher to its target-only 40-Hz span"
-                    if paired else "linear interpolation of each unpadded 50-Hz target to valid 40-Hz latent length"
-                ),
+                "alignment": "linear interpolation of each unpadded 50-Hz teacher to the full valid 40-Hz utterance",
                 "loss": "mean 1-cosine on the flow-matching generation mask only",
                 "inference": "projector weights load strictly but the auxiliary head is not called",
             }
@@ -287,7 +273,7 @@ def main(model_cfg):
                 "scope": "AV and VA logit blocks with transposed bias; AA and VV unmodified",
                 "trainable_parameters": 0,
             }
-            contract["text_cross_attention"] = "both video and audio queries attend to target text, with modality-specific outputs"
+            contract["text_cross_attention"] = "both video and audio queries attend to the same text sequence, with modality-specific outputs"
         elif temporal_band_enabled:
             contract["temporal_band"] = {
                 "formula": "B[i,j] = -(t_video[j] - t_audio[i] - delta[i])**2 / (2*sigma[i]**2)",
@@ -310,8 +296,8 @@ def main(model_cfg):
             if previous != contract:
                 raise RuntimeError(f"Refusing to reuse a checkpoint directory with a different contract: {save_dir}")
         else:
-            if paired and any(save_dir.glob("model_*.pt")):
-                raise RuntimeError(f"Existing checkpoint has no source pairing/training contract: {save_dir}")
+            if fixed_band and any(save_dir.glob("model_*.pt")):
+                raise RuntimeError(f"Existing checkpoint has no training contract: {save_dir}")
             temporary = contract_path.with_suffix(f".{os.getpid()}.tmp")
             temporary.write_text(json.dumps(contract, indent=2, ensure_ascii=False) + "\n")
             os.replace(temporary, contract_path)
@@ -319,7 +305,7 @@ def main(model_cfg):
     if trainer.is_main:
         print(
             "Direct-C2 CAM++ speaker CTC-warmup dataset validated: "
-            f"records={len(train_dataset)}, paired_roles={paired}, CTC feasible={train_dataset.ctc_feasible_count}, "
+            f"records={len(train_dataset)}, CTC feasible={train_dataset.ctc_feasible_count}, "
             f"CTC zero_infinity-only={train_dataset.ctc_infeasible_count}; "
             f"ctc_lambda=0 through update {model_cfg.model.ctc_warmup_start}, "
             f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}; "

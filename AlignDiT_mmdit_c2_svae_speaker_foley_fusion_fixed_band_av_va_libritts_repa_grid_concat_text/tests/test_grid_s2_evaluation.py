@@ -1,4 +1,5 @@
 import unittest
+import sys
 import tempfile
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
@@ -15,7 +16,7 @@ from aligndit.script.eval.grid_s1_common import (
     validate_text_conditioning,
 )
 from aligndit.script.eval.grid_s2_common import PROTOCOL, select_references
-from aligndit.script.eval.infer_grid_s2 import sampler_text_kwargs, sampling_inputs
+from aligndit.script.eval.infer_grid_s2 import args as inference_args, sampling_inputs
 from aligndit.script.eval.run_grid_s1 import main as pipeline_main
 
 
@@ -56,38 +57,16 @@ class GridS2EvaluationTests(unittest.TestCase):
             np.testing.assert_array_equal(target_only[1][prompt_frames:prompt_frames+target_frames], video)
             self.assertEqual(np.count_nonzero(target_only[1][:prompt_frames]), 0)
 
-    def test_role_mode_delivers_both_transcripts_with_independent_lengths(self):
-        prompt = np.zeros((4, 64), dtype=np.float32)
-        video = np.ones((6, 1024), dtype=np.float32)
-        ref, target = 'place red with c seven now', 'set blue at t six soon'
-        model_text, (cond, full_video, p, t, n) = sampling_inputs(
-            prompt, video, ref, target, np.zeros(64), np.ones(64), 'role-conditioned')
-        text_args = sampler_text_kwargs(model_text, ref, 'role-conditioned')
-        self.assertEqual(text_args, {'reference_text': [ref], 'text': [target]})
-        self.assertEqual((p, t, n), (4, 6, 10))
-        np.testing.assert_array_equal(cond, prompt)
-        np.testing.assert_array_equal(full_video[p:], video)
-        for invalid in [('', target), (ref, '  ')]:
-            with self.assertRaisesRegex(ValueError, 'Both transcripts'):
-                sampling_inputs(prompt, video, *invalid, np.zeros(64), np.ones(64), 'role-conditioned')
-
-    def test_role_receipt_binds_reference_and_target_to_the_pair(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root, target, receipt = self.output_fixture(directory, target_only=False)
-            ref = dict(row('s1', 'ref', 'place red with c seven now'), latent_frames=4)
-            mode = 'role-conditioned'
-            contract = dict(read(root/'protocol.json'), text_conditioning=mode,
-                            reference_transcript_used_for_generation=True)
-            publish(root/'protocol.json', contract)
-            receipt.update(protocol_sha256=sha(root/'protocol.json'), text_conditioning=mode,
-                           target_text=target['text'], reference_text=ref['text'])
-            receipt_path = root/'receipts'/(identity(target)+'.json')
-            publish(receipt_path, receipt)
-            self.assertEqual(output_record(root, target, PROTOCOL, reference=ref), receipt)
-            for invalid in (dict(receipt, reference_text=target['text']), dict(receipt, target_text=ref['text'])):
-                publish(receipt_path, invalid)
-                with self.assertRaisesRegex(RuntimeError, 'Role-conditioned'):
-                    output_record(root, target, PROTOCOL, reference=ref)
+    def test_default_model_text_and_config(self):
+        with patch.object(sys, 'argv', ['infer', '--checkpoint', '/tmp/model.pt', '--output-dir', '/tmp/out']):
+            args = inference_args()
+        self.assertEqual(args.text_conditioning, 'reference-target')
+        self.assertEqual(args.config.name, 'finetune_grid.yaml')
+        ref, tgt = 'reference dialogue', 'target dialogue'
+        text, (_, _, p, t, n) = sampling_inputs(np.zeros((3, 64)), np.ones((5, 1024)), ref, tgt,
+                                                 np.zeros(64), np.ones(64))
+        self.assertEqual(text, ref + '  ' + tgt)
+        self.assertEqual((p, t, n), (3, 5, len(text) + 1))
 
     def test_same_slot_reference_matches_count_only_conflicting_target_slots(self):
         pairs = {'id': {'reference_text': 'place red with c seven now'}}

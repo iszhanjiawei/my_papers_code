@@ -2,7 +2,7 @@ defaults:
   - foley_fixed_band_libritts_repa
   - _self_
 
-# Keep the paired cache, character mapping, LibriSpeech normalization and target-only REPA supervision.
+# Use single-utterance GRID features, the original character mapping and LibriSpeech normalization.
 # GRID's existing train/val split is preserved by prepare_grid.py.
 datasets:
   name: GRID
@@ -28,7 +28,7 @@ optim:
   run_until_update: 200000
 
 model:
-  name: AlignDiT_foley_fixed_band_av_va_libritts_repa_wavlm_base_plus_GRID_role_conditioned_ctc003_warmup10k30k
+  name: AlignDiT_foley_fixed_band_av_va_libritts_repa_wavlm_base_plus_GRID_concat_text_ctc003_warmup10k30k
 
 ckpts:
   logger: tensorboard

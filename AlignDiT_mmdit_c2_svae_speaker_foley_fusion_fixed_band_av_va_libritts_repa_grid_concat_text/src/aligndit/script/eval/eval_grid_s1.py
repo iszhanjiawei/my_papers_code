@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from aligndit.script.eval.grid_s1_common import (
-    PROTOCOL, ROLE_MODE, TEXT_CONDITIONING, identity, metric_summary, normalize_text, output_record, publish, read, sha,
+    PROTOCOL, TEXT_CONDITIONING, identity, metric_summary, normalize_text, output_record, publish, read, sha,
     validate_text_conditioning, verify_outputs,
 )
 from aligndit.script.eval.eval_celebvdub_grid_reference import word_edit_counts
@@ -360,7 +360,7 @@ def args():
     p.add_argument('--avhubert-user-dir', type=Path, default=data/'av_hubert/avhubert/avhubert')
     parsed = p.parse_args()
     if parsed.text_conditioning is None:
-        parsed.text_conditioning = ROLE_MODE
+        parsed.text_conditioning = 'reference-target'
     return parsed
 
 

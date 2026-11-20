@@ -39,30 +39,20 @@ def build_source():
          'default=root / "alignDiT_idea6/my_papers_code/celebvdub_setting2/inference.jsonl"'),
         ('default=bench / "cache/lipvoicer_vsr_text"',
          'default=root / "alignDiT_idea6/my_papers_code/celebvdub_setting2/text"'),
+        ('config/finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus.yaml',
+         'config/finetune_celebvdub_concat_text.yaml'),
         ('default=bench / "results/Ours_150k"',
-         'default=bench / "results/setting2_gttext_dubbing/Ours_150k"'),
+         'default=project / "outputs/setting2_gttext_dubbing"'),
         ('default=bench / "cache/ours_svae_campplus_setting2"',
          'default=bench / "cache/ours_svae_campplus_setting2_gttext_dubbing"'),
         ('parser.add_argument("--vsr-text-dir",',
          'parser.add_argument("--text-input-mode", choices=["reference-target", "target-only"], default="reference-target", help="Text passed to model.sample; audio prompt and speaker conditioning are unchanged")\n    parser.add_argument("--vsr-text-dir",'),
-        ('cfg = load_composed_config(args.config)',
-         'cfg = load_composed_config(args.config)\n'
-         '    role_conditioned = bool(cfg.model.arch.get("role_conditioned_text", False))\n'
-         '    if role_conditioned and args.text_input_mode != "reference-target":\n'
-         '        raise ValueError("The role-conditioned model requires reference and target transcripts")'),
         ('text = reference_target_text(row["reference_text"], row["vsr_text"])',
-         'text = select_model_text(row["reference_text"], row["vsr_text"], args.text_input_mode)\n'
-         '            reference_kwargs = {}\n'
-         '            if role_conditioned:\n'
-         '                text = row["vsr_text"]\n'
-         '                reference_kwargs = {"reference_text": [row["reference_text"]]}'),
-        ('make_sampling_inputs(latent, video, text, mean, std)',
-         'make_sampling_inputs(latent, video, text, mean, std, exact_duration=role_conditioned)'),
-        ('to(device), text=[text],', 'to(device), text=[text], **reference_kwargs,'),
+         'text = select_model_text(row["reference_text"], row["vsr_text"], args.text_input_mode)'),
         ('"text_source": "LipVoicer_visual_only_VSR; reference transcript from explicit reference",',
-         '"text_source": ("supplied_target_GT_dialogue_only" if args.text_input_mode == "target-only" else "supplied_target_GT_dialogue; reference transcript from explicit different utterance"),\n              "text_input_mode": args.text_input_mode, "reference_text_conditioned": args.text_input_mode == "reference-target",\n              "role_conditioned_text": role_conditioned,'),
+         '"text_source": ("supplied_target_GT_dialogue_only" if args.text_input_mode == "target-only" else "supplied_target_GT_dialogue; reference transcript from explicit different utterance"),\n              "text_input_mode": args.text_input_mode, "reference_text_conditioned": args.text_input_mode == "reference-target",'),
         ('"generation_seconds": time.monotonic()-started}',
-         '"generation_seconds": time.monotonic()-started, "model_text": text, "text_input_mode": args.text_input_mode,\n                      **({"model_reference_text": row["reference_text"]} if role_conditioned else {})}'),
+         '"generation_seconds": time.monotonic()-started, "model_text": text, "text_input_mode": args.text_input_mode}'),
     ]
     for before, after in substitutions:
         if source.count(before) != 1:

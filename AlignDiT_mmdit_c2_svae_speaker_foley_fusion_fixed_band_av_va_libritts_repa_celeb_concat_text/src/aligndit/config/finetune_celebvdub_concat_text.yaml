@@ -1,0 +1,15 @@
+defaults:
+  - foley_fixed_band_libritts_repa
+  - _self_
+
+datasets:
+  batch_size_per_gpu: 2400
+  num_workers: 8
+
+model:
+  name: AlignDiT_foley_fixed_band_av_va_libritts_repa_wavlm_base_plus_celeb_concat_text_ctc003_warmup10k30k
+  arch:
+    checkpoint_activations: true
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_40hz_CelebVDub_char
