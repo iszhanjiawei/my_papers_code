@@ -1,0 +1,21 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+# An isolated, otherwise matched repeat of the speaker baseline. The pretrained
+# S2c EMA, optimizer/scheduler, CTC warmup, data, seed and speaker path are inherited.
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_ctc003_warmup10k30k
+  arch:
+    temporal_band_enabled: True
+    temporal_band_hidden_dim: 64
+    # These are the model-input rates AFTER the existing 25 -> 40 Hz cache interpolation.
+    temporal_band_audio_fps: 40.0
+    temporal_band_video_fps: 40.0
+    temporal_band_max_offset_seconds: 0.100
+    temporal_band_min_sigma_seconds: 0.025
+    temporal_band_max_sigma_seconds: 0.250
+    temporal_band_init_sigma_seconds: 0.100
+
+ckpts:
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_ctc003_warmup10k30k_40hz_CelebVDub_char
