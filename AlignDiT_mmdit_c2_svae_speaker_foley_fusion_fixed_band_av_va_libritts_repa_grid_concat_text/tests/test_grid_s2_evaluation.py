@@ -86,6 +86,20 @@ class GridS2EvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'text conditioning'):
                 validate_text_conditioning('s2', 'target-only', root)
 
+    def test_concatenated_receipt_binds_text_to_the_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, target, receipt = self.output_fixture(directory, target_only=False)
+            ref = row('s1', 'ref', 'place red with c seven now')
+            protocol = root / 'protocol.json'
+            publish(protocol, {**read(protocol), 'text_conditioning': 'reference-target'})
+            path = root / 'receipts' / (identity(target) + '.json')
+            receipt.update(protocol_sha256=sha(protocol), model_text=ref['text'] + '  ' + target['text'])
+            publish(path, receipt)
+            self.assertEqual(output_record(root, target, PROTOCOL, reference=ref), receipt)
+            publish(path, {**receipt, 'model_text': target['text']})
+            with self.assertRaisesRegex(RuntimeError, 'Concatenated model text'):
+                output_record(root, target, PROTOCOL, reference=ref)
+
     def output_fixture(self, directory, *, target_only):
         root = Path(directory)
         target = {**row('s1', 'target', 'set blue by k four soon'), 'original_num_samples': 1600, 'latent_frames': 4}

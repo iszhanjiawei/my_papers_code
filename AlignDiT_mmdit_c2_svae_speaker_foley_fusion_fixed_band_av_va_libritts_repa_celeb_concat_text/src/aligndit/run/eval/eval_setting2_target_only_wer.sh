@@ -19,6 +19,7 @@ gpu="${EVAL_GPU:-0}"
 lock="/tmp/alignDiT_idea6_vts_gpu${gpu}.lock"
 PYTHONPATH="$project_root/src" "$python_bin" -u \
     -m aligndit.script.eval.infer_celebvdub_setting2_dubbing \
+    --config "$project_root/src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus.yaml" \
     --checkpoint "$checkpoint_dir/model_150000.pt" --step 150000 \
     --output-dir "$output" --reference-cache "$cache" --gpu "$gpu" --gpu-lock "$lock" \
     --seed 0 --nfe 32 --cfg-text 5 --cfg-video 2 --sway -1 \
