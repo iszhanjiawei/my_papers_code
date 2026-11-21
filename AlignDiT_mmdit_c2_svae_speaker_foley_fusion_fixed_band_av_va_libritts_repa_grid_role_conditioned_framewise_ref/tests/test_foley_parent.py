@@ -46,6 +46,7 @@ class LibriTTSRoleFusionTests(unittest.TestCase):
             num_channels=audio.channels, vocab_char_map=vocab, audio_video_ratio=cfg.model.arch.audio_video_ratio,
             ctc_lambda=cfg.model.ctc_lambda, repa_lambda=cfg.model.repa_lambda,
         )
+        self.assertTrue(model.transformer.role_framewise_reference)
         state = model.state_dict()
         _, fresh = _expected_unshared_keys()
         def checksum(key):
@@ -66,3 +67,8 @@ class LibriTTSRoleFusionTests(unittest.TestCase):
                 expected = expected[report["row_remappings"][key]["source_rows"]]
             self.assertTrue(torch.equal(state[key], expected), key)
         self.assertGreater(int(torch.count_nonzero(state["transformer.speaker_proj.weight"])), 0)
+        # The second half consumes fixed prompt latents. Keep the learned
+        # LibriTTS columns intact when enabling the new reference route.
+        input_projection = "transformer.input_embed.proj.weight"
+        self.assertIn(input_projection, report["loaded_keys"])
+        self.assertGreater(int(state[input_projection][:, audio.channels:].count_nonzero()), 0)

@@ -573,6 +573,7 @@ class DiT_VT_MMDiT(DiT):
         temporal_band_fixed_offset_seconds=0.0,
         temporal_band_fixed_sigma_seconds=0.100,
         temporal_band_bidirectional=False,
+        role_framewise_reference=False,
     ):
         if type(temporal_band_bidirectional) is not bool or type(joint_av_text_ca) is not bool:
             raise TypeError("temporal_band_bidirectional and joint_av_text_ca must be boolean")
@@ -603,6 +604,11 @@ class DiT_VT_MMDiT(DiT):
         self.audio_video_ratio = audio_video_ratio
         self.video_rope_scaled = video_rope_scaled
         self.role_conditioned_text = bool(role_conditioned_text)
+        if type(role_framewise_reference) is not bool:
+            raise TypeError("role_framewise_reference must be boolean")
+        if role_framewise_reference and not self.role_conditioned_text:
+            raise ValueError("role_framewise_reference requires role_conditioned_text")
+        self.role_framewise_reference = role_framewise_reference
         self.prompt_isolated_ca = prompt_isolated_ca or self.role_conditioned_text
         if self.role_conditioned_text and (speaker_dim is None or text_embedding_average_upsampling):
             raise ValueError("role-conditioned text requires CAM++ conditioning and token-resolution text")
@@ -989,11 +995,12 @@ class DiT_VT_MMDiT(DiT):
             if mask is not None:
                 prompt_mask = prompt_mask & mask
             style_delta = self.reference_style(cond, prompt_mask, reference_text, cache)
-            # The pooled style and CAM++ are the only paths from the reference
-            # to the target trunk. In particular, training x_t on the P frames
-            # contains noisy GT reference acoustics and must not be a shortcut.
+            # Only the clean, fixed prompt may supply framewise reference audio.
             x = x.masked_fill(~generation_mask.unsqueeze(-1), 0.0)
-            cond = torch.zeros_like(cond)
+            if self.role_framewise_reference and not drop_audio_cond:
+                cond = cond.masked_fill(~prompt_mask.unsqueeze(-1), 0.0)
+            else:
+                cond = torch.zeros_like(cond)
             if drop_audio_cond or drop_text or drop_speaker:
                 style_delta = style_delta * 0.0
         elif reference_text is not None:

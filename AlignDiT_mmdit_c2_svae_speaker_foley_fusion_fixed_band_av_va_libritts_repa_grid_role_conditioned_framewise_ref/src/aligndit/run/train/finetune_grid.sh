@@ -19,9 +19,12 @@ if [[ ! "$num_processes" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 # Validate the exact overrides before starting TensorBoard or allocating DDP.
+mkdir -p "$project_root/logs"
+preflight="$project_root/logs/grid_preflight.json"
 "$python_bin" -u src/aligndit/script/misc/check_grid_training.py \
-    --num-processes "$num_processes" -- "$@"
-bash scripts/start_grid_tensorboard.sh
+    --num-processes "$num_processes" --report "$preflight" -- "$@"
+tb_logdir="$("$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1]))["tensorboard_logdir"])' "$preflight")"
+bash scripts/start_grid_tensorboard.sh "$tb_logdir"
 distributed_args=()
 if [[ "$num_processes" -gt 1 ]]; then
     distributed_args+=(--multi_gpu)
@@ -29,5 +32,5 @@ fi
 exec "$python_bin" -u -m accelerate.commands.launch \
     "${distributed_args[@]}" \
     --mixed_precision bf16 --num_machines 1 --dynamo_backend no \
-    --num_processes "$num_processes" --main_process_port "${TRAIN_PORT:-29643}" \
+    --num_processes "$num_processes" --main_process_port "${TRAIN_PORT:-0}" \
     src/aligndit/script/train/finetune_grid.py --config-name finetune_grid "$@"

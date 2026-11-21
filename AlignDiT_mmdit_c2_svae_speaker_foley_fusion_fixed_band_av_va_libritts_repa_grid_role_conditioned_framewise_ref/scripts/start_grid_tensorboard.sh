@@ -4,7 +4,7 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_root/env.sh"
 cd "$project_root"
 python_bin="${PYTHON_BIN:-${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python}"
-logdir="$project_root/runs"
+logdir="${1:-$project_root/runs}"
 mkdir -p "$logdir" "$project_root/logs"
 # Reuse only the exact live service previously started for this snapshot.
 # This lets preparation expose the port before training creates event files.

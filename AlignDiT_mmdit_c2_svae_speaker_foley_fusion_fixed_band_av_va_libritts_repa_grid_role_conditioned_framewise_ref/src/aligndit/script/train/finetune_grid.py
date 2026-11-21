@@ -25,7 +25,8 @@ def check_role_training_config(cfg):
     """Reject accidental training with a mismatched parent or local-attention recipe."""
     arch = cfg.model.arch
     expected = {
-        "joint_av_text_ca": True, "role_conditioned_text": True, "temporal_band_enabled": True,
+        "joint_av_text_ca": True, "role_conditioned_text": True, "role_framewise_reference": True,
+        "temporal_band_enabled": True,
         "temporal_band_mode": "fixed", "temporal_band_bidirectional": True,
         "temporal_band_audio_fps": 40.0, "temporal_band_video_fps": 40.0,
         "temporal_band_fixed_offset_seconds": 0.0, "temporal_band_fixed_sigma_seconds": 0.1,
@@ -35,8 +36,9 @@ def check_role_training_config(cfg):
             raise ValueError(f"This Foley role experiment requires {name}={value!r}")
     if cfg.ckpts.get("initialization_mode") != "libritts_text_audio":
         raise ValueError("The fixed AV/VA role experiment requires the LibriTTS text/audio parent")
-    if any("foley_fixed_band_av_va_libritts" not in name for name in (cfg.model.name, Path(cfg.ckpts.save_dir).name)):
-        raise ValueError("Use the dedicated Foley fixed-band LibriTTS model name and checkpoint directory")
+    for name in (cfg.model.name, Path(cfg.ckpts.save_dir).name):
+        if "foley_fixed_band_av_va_libritts" not in name or "GRID_role_conditioned_framewise_ref" not in name:
+            raise ValueError("Use the dedicated GRID framewise reference model name and checkpoint directory")
 
 
 def dataset_from_config(model_cfg, *, allow_partial=False):
@@ -264,6 +266,11 @@ def main(model_cfg):
             "grid_cache": train_dataset.cache_contract,
             "train_pairing": train_dataset.pair_contract,
             "text_roles": "independently encoded reference and target dialogue; target-only CTC",
+            "framewise_reference": {
+                "audio_input": "clean reference latent at valid prompt frames, zero on target and padding",
+                "flow_state": "reference and padded flow-state frames masked before the input projection",
+                "initialization": "input projection copied intact from LibriTTS EMA",
+            },
             "batch_and_schedule": schedule,
             "validation": "existing GRID val split is held out; no online validation loop",
             "speaker_cache_metadata": speaker_metadata,

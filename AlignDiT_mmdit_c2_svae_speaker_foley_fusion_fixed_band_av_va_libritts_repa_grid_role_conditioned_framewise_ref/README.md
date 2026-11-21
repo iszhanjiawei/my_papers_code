@@ -1,19 +1,19 @@
-# GRID 双台词训练：Foley 双流文本交叉注意力与双向固定带宽
+# GRID 双角色训练与逐帧参考音频
 
-本副本保留 GRID 已验证的参考和目标台词配对、CAM++、语义 VAE、CTC 与 WavLM-Base+ REPA。在 12 个多模态块中，音视频先通过 Joint Attention 交换信息；随后拼接两路查询，共同读取目标文本的键和值，再拆回音视频残差。参考台词仍通过参考声学风格分支输入。最后 6 个音频块接收音频流。
+本实验从 LibriTTS 50k EMA 迁移可复用的参数。GRID 训练从第 0 步建立独立的优化器、学习率调度和 EMA。参考音频输入投影按原 LibriTTS 迁移规则加载，双角色新增模块按原初始化规则建立。运行目录、训练契约和权重均属于本快照。
 
-局部先验沿用 `fixed_band_av_va`。在 40 Hz 时间轴上，音频查视频和视频查音频分别加同一个高斯 logit 偏置及其转置，中心偏移为零，标准差 100 ms（4 帧），带外保留连续衰减。预训练单独采用 `avt_joint_fixed_band_window13_av_va_libritts_pretrained` 使用的 LibriTTS 50k EMA。迁移器核对父权重、内部训练契约和字符映射，并为不同架构的新模块保留独立初始化。下游优化器和训练计数从头开始。
+训练与采样均开启 `model.arch.role_framewise_reference`。参考音频 A 的真实 latent 通过音频输入投影进入主干的前 P 帧，目标 T 帧与 padding 的固定音频条件为零。主干仍屏蔽参考位置的流状态。目标音频帧可通过自注意力读取参考声学特征。参考台词 A 进入原有的池化风格分支，CAM++ 继续提供全局声纹。目标台词 B 通过文本交叉注意力更新目标区，流匹配、CTC 与 WavLM-Base+ REPA 的监督沿用目标区配置。推理时只取目标 T 帧解码。
 
-从本副本启动默认四卡 BF16 训练，目标为 200k 次更新。使用独立权重目录和本副本的日志目录。
+默认使用四卡 BF16、峰值学习率 `5e-5`、学习率预热 20k 次更新，CTC 权重在第 10k 至 30k 步逐渐升至 0.03，GRID 训练上限 200k 次更新。使用本副本入口会校验 LibriTTS 权重与 GRID 训练缓存，并启动 TensorBoard。
 
 ```bash
 mkdir -p logs
 setsid env CUDA_VISIBLE_DEVICES=0,1,2,3 PYTHONUNBUFFERED=1 \
   bash src/aligndit/run/train/finetune_grid.sh \
-  > logs/train_grid_foley.log 2>&1 < /dev/null &
+  > logs/train_grid_framewise.log 2>&1 < /dev/null &
 ```
 
-[训练配置](src/aligndit/config/finetune_grid.yaml) · [固定带宽与权重配置](src/aligndit/config/foley_fixed_band_libritts_repa.yaml) · [MM-DiT](src/aligndit/model/backbone/dit_vt_mm.py) · [LibriTTS 权重迁移](src/aligndit/model/libritts_pretrained_migration.py) · [原实验的数据配对与监督](GRID_ROLE_CONDITIONING.md)
+[GRID 配置](src/aligndit/config/finetune_grid.yaml) · [固定带宽与父权重配置](src/aligndit/config/foley_fixed_band_libritts_repa.yaml) · [逐帧条件路由](src/aligndit/model/backbone/dit_vt_mm.py) · [LibriTTS 迁移](src/aligndit/model/libritts_pretrained_migration.py)
 
 # AlignDiT
 
