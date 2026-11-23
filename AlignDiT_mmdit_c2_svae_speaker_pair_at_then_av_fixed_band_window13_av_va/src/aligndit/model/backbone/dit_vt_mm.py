@@ -21,6 +21,8 @@ MM-DiT backbone for multimodal dubbing:
   the embeddings, audio/video FFNs, CTC taps and audio-only tail are unchanged
 - paired_joint_order divides the audio heads equally between bidirectional AV
   and AT attention, with the same order/fusion rule in every multimodal block
+- the optional fixed time prior biases only the AV and VA logits of the
+  second stage of each AT-then-AV block
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from x_transformers.x_transformers import apply_rotary_pos_emb
 
+from aligndit.model.fixed_temporal_band import FixedTemporalBand
 from aligndit.model.modules import DiTCrossBlock, DownsampleLayer
 from cosyvoice.transformer.encoder import ConformerEncoder
 from f5_tts.model.backbones.dit import ConvPositionEmbedding, DiT
@@ -494,7 +497,9 @@ class MMDiTBlock_PairedJoint(MMDiTBlock_AVT):
     def _mask_output(x, valid):
         return x if valid is None else x.masked_fill(~valid.unsqueeze(-1), 0.0)
 
-    def _pair_attention(self, audio_qkv, condition, is_video, audio_mask, condition_mask, rope, v_rope):
+    def _pair_attention(
+        self, audio_qkv, condition, is_video, audio_mask, condition_mask, rope, v_rope, temporal_band_bias=None,
+    ):
         start = 0 if is_video else self.pair_heads
         attn = self.v_attn if is_video else self.t_attn
         q_a, k_a, v_a = audio_qkv
@@ -515,20 +520,38 @@ class MMDiTBlock_PairedJoint(MMDiTBlock_AVT):
                 valid_c = torch.ones((batch, n_condition), dtype=torch.bool, device=q_a.device)
             key_mask = torch.cat((valid_a, valid_c), dim=1)[:, None, None, :]
 
-        out = F.scaled_dot_product_attention(
-            torch.cat((q_a, q_c), dim=2), torch.cat((k_a, k_c), dim=2),
-            torch.cat((v_a, v_c), dim=2), attn_mask=key_mask, dropout_p=0.0,
-        )
+        key = torch.cat((k_a, k_c), dim=2)
+        value = torch.cat((v_a, v_c), dim=2)
+        if temporal_band_bias is None:
+            out = F.scaled_dot_product_attention(
+                torch.cat((q_a, q_c), dim=2), key, value, attn_mask=key_mask, dropout_p=0.0,
+            )
+        else:
+            if not is_video or temporal_band_bias.shape != (batch, n_audio, n_condition):
+                raise ValueError("temporal_band_bias requires the AV pair and shape [batch, audio, video]")
+            # Both query groups normalize over the complete [A,V] sequence.
+            # The zero blocks leave AA and VV logits unchanged.
+            av_bias = temporal_band_bias.to(q_a.dtype)
+            audio_bias = F.pad(av_bias, (n_audio, 0))[:, None]
+            video_bias = F.pad(av_bias.transpose(-1, -2), (0, n_condition))[:, None]
+            if key_mask is not None:
+                audio_bias = audio_bias.masked_fill(~key_mask, float("-inf"))
+                video_bias = video_bias.masked_fill(~key_mask, float("-inf"))
+            out_a = F.scaled_dot_product_attention(q_a, key, value, attn_mask=audio_bias, dropout_p=0.0)
+            out_v = F.scaled_dot_product_attention(q_c, key, value, attn_mask=video_bias, dropout_p=0.0)
+            out = torch.cat((out_a, out_v), dim=2)
         out_a, out_c = out.transpose(1, 2).flatten(2).split((n_audio, n_condition), dim=1)
         out_c = attn.to_out[1](attn.to_out[0](out_c))
         return out_a, self._mask_output(out_c, condition_mask)
 
     def forward(
         self, x, v, t, mask=None, v_mask=None, rope=None, v_rope=None,
-        text=None, text_mask=None, generation_mask=None,
+        text=None, text_mask=None, generation_mask=None, temporal_band_bias=None,
     ):
         if text is None:
             raise ValueError("paired joint attention requires the text stream")
+        if temporal_band_bias is not None and self.paired_joint_order != "at_then_av":
+            raise ValueError("temporal_band_bias requires paired_joint_order='at_then_av'")
         # Compute the audio AdaLN modulation once. Both serial stages normalize
         # their own current state with the same timestep-conditioned scale/shift.
         shift, scale, gate, ff_shift, ff_scale, ff_gate = self.attn_norm.linear(
@@ -563,6 +586,7 @@ class MMDiTBlock_PairedJoint(MMDiTBlock_AVT):
                 audio_qkv = self._serial_audio_qkv(norm_x, start)
                 audio_heads, condition_updates[index] = self._pair_attention(
                     audio_qkv, condition, index == 0, mask, condition_mask, rope, v_rope,
+                    temporal_band_bias=temporal_band_bias if index == 0 else None,
                 )
                 width = self.pair_heads * self.head_dim
                 columns = slice(index * width, (index + 1) * width)
@@ -622,7 +646,22 @@ class DiT_VT_MMDiT(DiT):
         speaker_condition_start_layer=None,
         text_joint_attention=False,
         paired_joint_order=None,
+        temporal_band_enabled=False,
+        temporal_band_mode="fixed",
+        temporal_band_audio_fps=40.0,
+        temporal_band_video_fps=40.0,
+        temporal_band_fixed_offset_seconds=0.0,
+        temporal_band_fixed_sigma_seconds=0.150,
+        temporal_band_bidirectional=False,
     ):
+        if type(temporal_band_enabled) is not bool or type(temporal_band_bidirectional) is not bool:
+            raise TypeError("temporal_band_enabled and temporal_band_bidirectional must be bools")
+        if temporal_band_mode != "fixed":
+            raise ValueError("Only temporal_band_mode='fixed' is supported")
+        if temporal_band_enabled != temporal_band_bidirectional:
+            raise ValueError("temporal_band_enabled and temporal_band_bidirectional must match")
+        if temporal_band_enabled and paired_joint_order != "at_then_av":
+            raise ValueError("Fixed AV/VA bias requires paired_joint_order='at_then_av'")
         super().__init__(
             dim=dim,
             depth=depth,
@@ -790,6 +829,15 @@ class DiT_VT_MMDiT(DiT):
             # Preserve the parent Direct-C2 model at initialization. A second
             # zero gate here would block gradients into the projection.
             nn.init.constant_(self.speaker_proj.weight, 0)
+
+        self.temporal_band = None
+        if temporal_band_enabled:
+            self.temporal_band = FixedTemporalBand(
+                dim=dim, audio_fps=temporal_band_audio_fps, video_fps=temporal_band_video_fps,
+                offset_seconds=temporal_band_fixed_offset_seconds, sigma_seconds=temporal_band_fixed_sigma_seconds,
+            )
+            if abs(self.temporal_band.audio_fps / self.temporal_band.video_fps - self.audio_video_ratio) > 1e-6:
+                raise ValueError("temporal-band audio/video frame-rate ratio must match audio_video_ratio")
 
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
@@ -1040,6 +1088,15 @@ class DiT_VT_MMDiT(DiT):
                 text_mask = text_mask[:, :text_embed.shape[1]]
                 text_embed = text_embed.masked_fill(~text_mask.unsqueeze(-1), 0.0)
 
+        band_args = ()
+        band_kwargs = {}
+        if self.temporal_band is not None:
+            # Construct once after CFG packing and reuse across all paired layers.
+            offset, sigma = self.temporal_band(v, seq_len)
+            temporal_band_bias = self.temporal_band.bias(offset, sigma, video_len)
+            band_args = (temporal_band_bias,)  # ckpt_wrapper forwards positional arguments.
+            band_kwargs = {"temporal_band_bias": temporal_band_bias}
+
         lens = (
             mask.sum(dim=1)
             if mask is not None
@@ -1093,6 +1150,7 @@ class DiT_VT_MMDiT(DiT):
                         text_embed,
                         text_mask,
                         generation_mask,
+                        *band_args,
                         use_reentrant=False,
                     )
                 elif has_tail_text:
@@ -1129,6 +1187,7 @@ class DiT_VT_MMDiT(DiT):
                         text=text_embed,
                         text_mask=text_mask,
                         generation_mask=generation_mask,
+                        **band_kwargs,
                     )
                 elif has_tail_text:
                     x = block(

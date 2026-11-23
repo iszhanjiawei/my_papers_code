@@ -4,6 +4,7 @@ Run with PYTHONPATH=src python -m aligndit.script.misc.smoke_test_paired_joint.
 """
 
 import math
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,8 @@ from omegaconf import OmegaConf
 from torch.nn import functional as F
 from x_transformers.x_transformers import apply_rotary_pos_emb
 
+from aligndit.model.fixed_temporal_band import FixedTemporalBand
+from aligndit.model.paired_attention_contract import checkpoint_architecture
 from aligndit.script.misc import smoke_test_avt_joint as baseline
 from f5_tts.model.modules import DiTBlock
 
@@ -22,9 +25,18 @@ CONFIG = (
     / "config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml"
 )
 ORDER = OmegaConf.load(CONFIG).model.arch.paired_joint_order
+BAND_CONFIG = {
+    "temporal_band_enabled": True,
+    "temporal_band_mode": "fixed",
+    "temporal_band_audio_fps": 40.0,
+    "temporal_band_video_fps": 40.0,
+    "temporal_band_fixed_offset_seconds": 0.0,
+    "temporal_band_fixed_sigma_seconds": 0.150,
+    "temporal_band_bidirectional": True,
+}
 
 
-def dense_pair(block, audio, condition, name, masks, ropes, rotated_heads):
+def dense_pair(block, audio, condition, name, masks, ropes, rotated_heads, band=None):
     """Form the full dense attention matrix independently of the grouped implementation."""
     attn = block.attn
     cond_attn = getattr(block, f"{name}_attn")
@@ -56,6 +68,9 @@ def dense_pair(block, audio, condition, name, masks, ropes, rotated_heads):
     valid_c = condition_mask if name == "t" or block.attn_mask_enabled else torch.ones_like(condition_mask)
     valid = torch.cat((valid_a, valid_c), dim=-1)
     score = (q @ k.transpose(-1, -2)) / math.sqrt(d)
+    if name == "v" and band is not None:
+        score[:, :, :n, n:] += band[:, None]
+        score[:, :, n:, :n] += band.transpose(-1, -2)[:, None]
     score = score.masked_fill(~valid[:, None, None, :], -torch.inf)
     ctx = (score.softmax(-1) @ v).transpose(1, 2).flatten(2)
     condition_delta = cond_attn.to_out[0](ctx[:, n:]).masked_fill(~condition_mask[..., None], 0)
@@ -76,7 +91,7 @@ class TopologyTests(unittest.TestCase):
             # A visible bias catches double-counting and accidental placement on the intermediate update.
             self.block.attn.to_out[0].bias.normal_(std=0.3)
 
-    def forward_block(self, a, v, text):
+    def forward_block(self, a, v, text, **kwargs):
         return self.block(
             a,
             v,
@@ -87,9 +102,10 @@ class TopologyTests(unittest.TestCase):
             text_mask=self.masks[2],
             rope=self.ropes[0],
             v_rope=self.ropes[1],
+            **kwargs,
         )
 
-    def dense_reference(self):
+    def dense_reference(self, band=None):
         b = self.block
         na, ga, sa, za, fa = b.attn_norm(self.a, self.emb)
         nv, gv, sv, zv, fv = b.v_attn_norm(self.v, self.emb)
@@ -108,6 +124,7 @@ class TopologyTests(unittest.TestCase):
                 (self.masks[0], self.masks[1 if is_video else 2]),
                 self.ropes,
                 rotated,
+                band,
             )
             audio_delta = audio_delta + delta
             if i == 0 and ORDER != "av_at_parallel":
@@ -159,6 +176,31 @@ class TopologyTests(unittest.TestCase):
                 torch.testing.assert_close(out, expected, atol=0, rtol=0)
 
     @torch.no_grad()
+    def test_fixed_av_va_gaussian_matches_joint_softmax(self):
+        # Unequal lengths and a nonzero offset expose an incorrect reverse direction.
+        self.a = torch.randn(2, 19, 32)
+        self.v = torch.randn(2, 16, 32)
+        self.masks[:2] = [torch.arange(n)[None, :] < torch.tensor([n, n - 4])[:, None] for n in (19, 16)]
+        self.ropes = tuple(self.model.rotary_embed(torch.arange(n)) for n in (19, 16))
+        for offset_frames in (0, 2):
+            band = FixedTemporalBand(32, 40, 40, offset_frames / 40, 0.150)
+            actual_bias = band.bias(*band(self.v, 19), video_len=16)
+            distance = torch.arange(16)[None, :] - torch.arange(19)[:, None] - offset_frames
+            expected_bias = (-0.5 * (distance / 6.0).square())[None].expand(2, -1, -1)
+            torch.testing.assert_close(actual_bias, expected_bias)
+            center = 7 + offset_frames
+            for key in (center - 6, center + 6):
+                self.assertAlmostEqual(actual_bias[0, 7, key].item(), -0.5, places=6)
+            self.assertLess(actual_bias[0, 18, 0].item(), -0.5)
+            self.assertTrue(actual_bias.isfinite().all())
+            for use_padding in (True, False):
+                self.block.attn_mask_enabled = use_padding
+                expected = self.dense_reference(expected_bias)
+                actual = self.forward_block(self.a, self.v, self.t, temporal_band_bias=actual_bias)
+                for out, ref in zip(actual, expected):
+                    torch.testing.assert_close(out, ref, atol=2e-6, rtol=2e-5)
+
+    @torch.no_grad()
     def test_empty_condition_keys_and_padding(self):
         self.masks[2][0] = False
         a, v, text = self.forward_block(self.a, self.v, self.t)
@@ -191,7 +233,7 @@ class BackboneTests(unittest.TestCase):
     # Reuse the snapshot's existing input fixtures and equivalence tests on its paired model.
     def setUp(self):
         torch.manual_seed(527)
-        config_patch = patch.dict(baseline.BASE_ARCH, paired_joint_order=ORDER)
+        config_patch = patch.dict(baseline.BASE_ARCH, paired_joint_order=ORDER, **BAND_CONFIG)
         config_patch.start()
         self.addCleanup(config_patch.stop)
 
@@ -203,6 +245,48 @@ class BackboneTests(unittest.TestCase):
     )
     test_text_propagates_between_blocks = baseline.BackboneTests.test_text_is_updated_and_forwarded_between_mm_layers
     test_speaker_and_ctc = baseline.BackboneTests.test_speaker_changes_only_audio_tail_and_ctc_lengths_are_preserved
+
+    @torch.no_grad()
+    def test_band_changes_backbone_output_without_changing_state_dict(self):
+        with_band = baseline.make_model().eval()
+        plain = baseline.make_model(temporal_band_enabled=False, temporal_band_bidirectional=False).eval()
+        plain.load_state_dict(with_band.state_dict(), strict=True)
+        inputs = baseline.make_inputs()
+        n_audio, n_video = inputs["x"].size(1), inputs["video"].size(1)
+        distance = torch.arange(n_video)[None, :] - torch.arange(n_audio)[:, None]
+        expected_bias = (-0.5 * (distance / 6.0).square())[None].expand(inputs["x"].size(0), -1, -1)
+        observed = []
+
+        def record_band(_module, _args, kwargs):
+            observed.append(kwargs["temporal_band_bias"])
+
+        for block in with_band.transformer_blocks[:with_band.n_mm_layers]:
+            self.addCleanup(block.register_forward_pre_hook(record_band, with_kwargs=True).remove)
+        for training in (True, False):
+            observed.clear()
+            expected, _ = plain.train(training)(**inputs)
+            actual, _ = with_band.train(training)(**inputs)
+            self.assertEqual(len(observed), with_band.n_mm_layers)
+            for bias in observed:
+                torch.testing.assert_close(bias, expected_bias)
+            self.assertGreater((expected - actual).abs().max().item(), 1e-6)
+
+
+class CheckpointIdentityTests(unittest.TestCase):
+    def test_geometry_is_required_for_windowed_checkpoint(self):
+        from aligndit.script.eval.infer_celebvdub_semantic_vae_s1 import build_model
+
+        legacy = {"paired_joint_order": "at_then_av"}
+        self.assertIsNone(checkpoint_architecture({}))
+        self.assertEqual(checkpoint_architecture(legacy), legacy)
+        expected = {**legacy, **BAND_CONFIG}
+        self.assertEqual(checkpoint_architecture(OmegaConf.load(CONFIG).model.arch), expected)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model_1.pt"
+            for identity in (legacy, {**expected, "temporal_band_fixed_sigma_seconds": 0.100}):
+                torch.save({"architecture": identity}, path)
+                with self.assertRaisesRegex(RuntimeError, "Checkpoint architecture mismatch"):
+                    build_model(CONFIG, path, 1, torch.device("cpu"))
 
 
 if __name__ == "__main__":

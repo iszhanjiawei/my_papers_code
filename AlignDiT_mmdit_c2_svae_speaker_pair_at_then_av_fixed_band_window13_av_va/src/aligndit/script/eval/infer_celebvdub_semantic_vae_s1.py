@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
+from aligndit.model.paired_attention_contract import checkpoint_architecture
 from aligndit.model.speaker_embedding import (
     load_speaker_embedding,
     speaker_embedding_path,
@@ -141,7 +142,7 @@ def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, de
         raise RuntimeError("The selected config is not the fixed 64-D/40-Hz Semantic-VAE representation")
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=True)
-    expected_architecture = {"paired_joint_order": paired_order} if paired_order is not None else None
+    expected_architecture = checkpoint_architecture(arch)
     if checkpoint.get("architecture") != expected_architecture:
         raise RuntimeError(
             f"Checkpoint architecture mismatch: expected {expected_architecture!r}, "
@@ -386,7 +387,7 @@ def run(args: argparse.Namespace) -> None:
             "sha256": sha256_file(args.checkpoint),
             "update": args.step,
             "weights": "EMA",
-            "paired_joint_order": config.model.arch.get("paired_joint_order"),
+            **(checkpoint_architecture(config.model.arch) or {"paired_joint_order": None}),
         },
         "dataset": {
             "cache_root": str(cache_root),

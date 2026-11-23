@@ -17,14 +17,22 @@ optim:
   run_until_update: 200000
 
 model:
-  name: AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_pair_at_then_av
+  name: AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_ctc003_warmup10k30k
   arch:
     # Only the 12 MM blocks change topology; the 6 audio-only blocks are retained.
     text_joint_attention: True
     paired_joint_order: at_then_av
+    # +/-6 aligned frames form the 13-frame core. The Gaussian has soft tails.
+    temporal_band_enabled: true
+    temporal_band_mode: fixed
+    temporal_band_audio_fps: 40.0
+    temporal_band_video_fps: 40.0
+    temporal_band_fixed_offset_seconds: 0.0
+    temporal_band_fixed_sigma_seconds: 0.150
+    temporal_band_bidirectional: true
     n_text_layers: ${.n_mm_layers}
     speaker_dim: 192
     speaker_condition_start_layer: ${.n_mm_layers}
 
 ckpts:
-  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_qknorm_ca_c2_semantic_vae_direct_speaker_ctc003_warmup10k30k_40hz_CelebVDub_char_pair_at_then_av
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_40hz_CelebVDub_char

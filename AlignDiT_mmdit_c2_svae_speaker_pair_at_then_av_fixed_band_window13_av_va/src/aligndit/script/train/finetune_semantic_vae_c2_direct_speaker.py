@@ -12,6 +12,7 @@ from omegaconf import OmegaConf
 
 from aligndit.model.cfm_vt import CFM_VT
 from aligndit.model.modules import PrecomputedAudioRepresentation
+from aligndit.model.paired_attention_contract import checkpoint_architecture
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
@@ -77,7 +78,7 @@ def main(model_cfg):
         save_per_updates=model_cfg.ckpts.save_per_updates,
         keep_last_n_checkpoints=model_cfg.ckpts.keep_last_n_checkpoints,
         checkpoint_path=model_cfg.ckpts.save_dir,
-        checkpoint_architecture={"paired_joint_order": model_arc.paired_joint_order},
+        checkpoint_architecture=checkpoint_architecture(model_arc),
         batch_size_per_gpu=model_cfg.datasets.batch_size_per_gpu,
         batch_size_type=model_cfg.datasets.batch_size_type,
         max_samples=model_cfg.datasets.max_samples,
