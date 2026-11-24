@@ -16,7 +16,7 @@ datasets:
 optim:
   # Four GPUs yield 246 updates per GRID epoch at the inherited frame budget.
   epochs: 1000
-  run_until_update: 200000
+  run_until_update: 100000
 
 model:
   name: AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_ctc003_warmup10k30k

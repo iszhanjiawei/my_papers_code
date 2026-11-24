@@ -11,7 +11,7 @@ mkdir -p logs
 setsid env PYTHONUNBUFFERED=1 bash src/aligndit/run/train/finetune_grid.sh > logs/train_grid.log 2>&1 < /dev/null &
 ```
 
-默认使用 4 张 RTX 4090、BF16、每卡 3,600 帧和种子 666。沿用 GRID 参考配置的 1,000 个 epoch 预算，达到 200,000 次更新时停止。学习率为 `5e-5`，预热 20,000 步。CTC 在前 10,000 步的权重为 0，到 30,000 步线性升至 0.03。最新断点每 5,000 步保存一次，带步数的权重每 50,000 步保存一次。
+默认使用 4 张 RTX 4090、BF16、每卡 3,600 帧和种子 666。学习率调度沿用 GRID 参考配置的 1,000 个 epoch 预算。训练在第 100,000 步保存 `model_100000.pt` 后停止。学习率为 `5e-5`，预热 20,000 步。CTC 在前 10,000 步的权重为 0，到 30,000 步线性升至 0.03。最新断点每 5,000 步保存一次，带步数的权重每 50,000 步保存一次。
 
 权重目录为 `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_ctc003_warmup10k30k_40hz_char`。TensorBoard 读取当前副本的 `runs/`，默认从端口 6066 开始选择可用端口。实际端口和进程号记录在 `logs/tensorboard_grid.json`。
 
