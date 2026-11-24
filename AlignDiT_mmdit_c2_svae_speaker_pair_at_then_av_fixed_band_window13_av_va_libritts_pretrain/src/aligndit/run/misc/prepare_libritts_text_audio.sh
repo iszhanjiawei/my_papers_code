@@ -21,7 +21,7 @@ codec_checkpoint="${LIBRITTS_CODEC_CHECKPOINT:-${ROOT_PREFIX}/zjw524/projects/al
 log_dir="${LIBRITTS_PREPARE_LOG_DIR:-$cache_root/logs}"
 stage="${1:-all}"
 if [[ "$stage" != all && "$stage" != inventory && "$stage" != extract && "$stage" != audit ]]; then
-    echo "Usage: $0 [all|inventory|extract|audit]; configure LIBRITTS_* and PREPARE_GPUS via environment" >&2
+    echo "Usage: $0 [all|inventory|extract|audit]; configure LIBRITTS_*, PREPARE_GPUS, and WORKERS_PER_GPU via environment" >&2
     exit 2
 fi
 [[ $# -le 1 ]] || { echo "Pass configuration through environment variables; unexpected extra arguments" >&2; exit 2; }
@@ -39,6 +39,9 @@ if [[ "$stage" == extract || ( "$stage" == all && ! -f "$cache_root/complete.jso
     [[ -f "$speaker_checkpoint" ]] || { echo "Missing CAM++ checkpoint: $speaker_checkpoint" >&2; exit 1; }
     IFS=',' read -r -a prepare_gpus <<< "${PREPARE_GPUS:-0,1,2,3,4,5,6,7}"
     [[ "${#prepare_gpus[@]}" -gt 0 ]] || { echo "PREPARE_GPUS is empty" >&2; exit 1; }
+    workers_per_gpu="${WORKERS_PER_GPU:-2}"
+    [[ "$workers_per_gpu" =~ ^[1-9][0-9]*$ ]] || { echo "WORKERS_PER_GPU must be a positive integer" >&2; exit 1; }
+    world_size=$(( ${#prepare_gpus[@]} * workers_per_gpu ))
     declare -A seen_gpus=()
     for gpu in "${prepare_gpus[@]}"; do
         [[ "$gpu" =~ ^[0-9]+$ && -z "${seen_gpus[$gpu]+x}" ]] || { echo "Invalid or duplicate GPU: $gpu" >&2; exit 1; }
@@ -53,10 +56,10 @@ if [[ "$stage" == extract || ( "$stage" == all && ! -f "$cache_root/complete.jso
         exit 130
     }
     trap stop_workers INT TERM
-    for rank in "${!prepare_gpus[@]}"; do
-        gpu="${prepare_gpus[$rank]}"
+    for (( rank=0; rank < world_size; rank++ )); do
+        gpu="${prepare_gpus[rank % ${#prepare_gpus[@]}]}"
         CUDA_VISIBLE_DEVICES="$gpu" "$python_bin" -u "$entry" extract \
-            --cache-root "$cache_root" --rank "$rank" --world-size "${#prepare_gpus[@]}" --device cuda:0 \
+            --cache-root "$cache_root" --rank "$rank" --world-size "$world_size" --device cuda:0 \
             --codec-repo "$codec_repo" --codec-checkpoint "$codec_checkpoint" \
             --speaker-checkpoint "$speaker_checkpoint" > "$log_dir/extract_rank_${rank}.log" 2>&1 &
         worker_pids+=("$!")

@@ -10,7 +10,7 @@
 
 在完整 LibriTTS train-clean-100 和 train-clean-360 上训练 50,000 步。从 LibriSpeech S2c 70k EMA 初始化音频参数。前 12 层使用配对模型中的 AT 六个头，视觉分支与 Window13 在本阶段关闭。后 6 层使用音频和 CAM++ 说话人条件。默认种子 666，bf16，每卡 2,400 帧，8 卡每次更新的名义预算为 19,200 帧。CTC 权重为 0。训练每 1,000 步保存断点，最终输出 `model_00050000.pt`。[预训练配置](src/aligndit/config/pretrain_libritts_text_audio.yaml)
 
-在项目根目录执行以下命令。特征准备按 GPU 0–7 分片，逐条生成 Semantic-VAE latent 和 CAM++ 向量，复用通过校验的已有记录。
+在项目根目录执行以下命令。特征提取默认使用 GPU 0–7，每张卡运行两个进程，共 16 个进程。每个进程处理独立的数据分片，逐条生成 Semantic-VAE latent 和 CAM++ 向量，复用通过校验的已有记录。可用 `WORKERS_PER_GPU` 调整提取并发数。正式预训练使用每张卡一个 DDP 进程。
 
 ```bash
 bash src/aligndit/run/misc/prepare_libritts_text_audio.sh all
