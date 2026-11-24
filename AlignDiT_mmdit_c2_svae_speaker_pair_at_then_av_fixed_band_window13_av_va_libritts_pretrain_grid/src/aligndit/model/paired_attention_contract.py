@@ -4,12 +4,13 @@
 from aligndit.model.text_audio_checkpoint import PRETRAIN_STAGE
 
 
-def checkpoint_architecture(arch, initialization_mode=None) -> dict | None:
+def checkpoint_architecture(arch, initialization_mode=None, *, dataset_name=None) -> dict | None:
     """Retain the historical checkpoint identity when the Gaussian prior is off."""
     order = arch.get("paired_joint_order")
     if not arch.get("temporal_band_enabled", False):
         return {"paired_joint_order": order} if order is not None else None
     return {
+        **({"dataset": "GRID"} if dataset_name == "GRID" else {}),
         **({"parent_stage": PRETRAIN_STAGE} if initialization_mode == PRETRAIN_STAGE else {}),
         "paired_joint_order": order,
         "temporal_band_enabled": True,

@@ -1,4 +1,4 @@
-"""Load the paired LibriTTS EMA while preserving the fixed-13 CelebVDub recipe.
+"""Load the paired LibriTTS EMA for fixed-13 audiovisual dubbing.
 
 The LibriTTS vocabulary extends the original CelebVDub vocabulary. Transfer
 embedding and CTC rows by their meanings; never change the downstream vocabulary.
@@ -120,7 +120,7 @@ def _validate_transfer_contract(source, config):
         if src["arch"].get(key, default) != default or dst["arch"].get(key, default) != default:
             raise ValueError(f"LibriTTS transfer architecture mismatch: {key}")
     if src["arch"].get("text_audio_only") is not True or dst["arch"].get("text_audio_only", False) is not False:
-        raise ValueError("Expected explicit LibriTTS AT-to-CelebVDub AVT initialization")
+        raise ValueError("Expected LibriTTS AT-only initialization of the downstream audiovisual model")
     if src["arch"].get("text_mask_padding") is not True or dst["arch"].get("text_mask_padding") is not False:
         raise ValueError("The original downstream text_mask_padding=False must be retained")
     if src["arch"].get("temporal_band_enabled") is not False:
@@ -148,11 +148,54 @@ def _validate_transfer_contract(source, config):
         raise ValueError("Downstream normalization file changed")
     if data.get("speaker_embedding_checkpoint_sha256") != SPEAKER_SHA256:
         raise ValueError("Downstream speaker encoder contract changed")
-    spec = json.loads((Path(data["cache_root"]) / "state/latents/spec.json").read_text())
-    if spec["checkpoint"].get("ema_sha256") != CODEC_SHA256:
-        raise ValueError("Downstream latent cache codec differs from the LibriTTS parent")
-    if spec["extraction"].get("protocol") != source["data"].get("posterior_protocol"):
-        raise ValueError("Source and target latent posterior protocols differ")
+    if data.get("name") == "GRID":
+        _validate_grid_representation(data, source["data"].get("posterior_protocol"))
+    else:
+        spec = json.loads((Path(data["cache_root"]) / "state/latents/spec.json").read_text())
+        if spec["checkpoint"].get("ema_sha256") != CODEC_SHA256:
+            raise ValueError("Downstream latent cache codec differs from the LibriTTS parent")
+        if spec["extraction"].get("protocol") != source["data"].get("posterior_protocol"):
+            raise ValueError("Source and target latent posterior protocols differ")
+
+
+def _validate_grid_representation(data, posterior_protocol):
+    """Validate GRID's extraction receipt against the LibriTTS representation.
+
+    The GRID training entry validates the complete manifest and disjoint splits
+    with GridDataset. Initialization additionally checks that the cached raw
+    latents obey the pretrained model's codec and posterior sampling convention.
+    """
+    from aligndit.model.grid_dataset import _expect_fields
+    from aligndit.model.semantic_vae_dataset import _read_json, _regular_file
+
+    root = Path(data["cache_root"])
+    if (root / "WRITE_ACTIVE.json").exists() or (root / "WRITE_ACTIVE.json").is_symlink():
+        raise ValueError("Cannot initialize from a GRID cache with an active writer")
+    meta_path = _regular_file(root / "manifests/inventory_meta.json", label="GRID metadata")
+    meta = _read_json(meta_path, label="GRID metadata")
+    complete = _read_json(_regular_file(root / "complete.json", label="GRID completion"), label="GRID completion")
+    _expect_fields(meta, {"schema_version": 1, "dataset": "GRID", "selection": {"mode": "full"},
+                         "normalization_sha256": NORMALIZATION_SHA256,
+                         "vocab_sha256": TARGET_VOCAB_SHA256}, "GRID pretrained representation")
+    _expect_fields(complete, {"complete": True, "dataset": "GRID", "missing": [], "invalid": [],
+                             "inventory_meta_sha256": sha256_file(meta_path),
+                             "feature_contract": meta.get("feature_contract"),
+                             "extraction_sha256": meta.get("extraction_sha256")}, "GRID completion")
+    features = meta["feature_contract"]
+    _expect_fields(features.get("latent"), {"checkpoint_sha256": CODEC_SHA256, "dimension": 64,
+                   "dtype": "float32", "frame_rate_hz": 40.0, "feature": posterior_protocol}, "GRID latent")
+    _expect_fields(features.get("speaker"), {"checkpoint_sha256": SPEAKER_SHA256, "dimension": 192,
+                   "dtype": "float32", "source_audio": "complete_unmasked_waveform"}, "GRID speaker")
+    _expect_fields(meta.get("extraction_protocol"), {
+        "feature_contract": features, "normalization_sha256": NORMALIZATION_SHA256,
+        "vocab_sha256": TARGET_VOCAB_SHA256, "latent_normalized": False,
+        "posterior_base_seed": 666, "posterior_logvar_clamp": [-12, 12],
+        "posterior_noise": "torch.randn_per_utterance_device_Generator",
+        "posterior_padding": "right_zero_pad_to_400_samples",
+    }, "GRID posterior sampling")
+    extraction_hash = contract_sha256(meta["extraction_protocol"])
+    if meta.get("extraction_sha256") != extraction_hash:
+        raise ValueError("GRID extraction protocol SHA256 mismatch")
 
 
 def _validate_model(model, config):

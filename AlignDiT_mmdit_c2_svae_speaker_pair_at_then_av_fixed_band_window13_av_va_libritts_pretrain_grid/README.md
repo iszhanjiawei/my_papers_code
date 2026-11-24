@@ -1,4 +1,21 @@
-# AlignDiT · LibriTTS 配对 AT 预训练与 AT → AV Window13 配音
+# AlignDiT · GRID 配音训练（AT → AV，Window13）
+
+本项目复制自 `AlignDiT_mmdit_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts_pretrain`。GRID 训练从配对模型的 LibriTTS 50,000 步 EMA 权重 `AlignDiT_LibriTTS_svae_speaker_pair_at_then_av_6AT6AV_50k/model_00050000.pt` 初始化，从第 0 步开始更新。前 12 层先用 6 个头融合音频与文本，再用 6 个头融合音频与视频。双向音视频注意力使用标准差 0.150 秒的固定高斯偏置。后 6 层通过 CAM++ 说话人向量调节音频。[GRID 配置](src/aligndit/config/finetune_grid.yaml)
+
+GRID 入口读取 `${ROOT_PREFIX}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp32` 中的 40 Hz Semantic-VAE、AV-HuBERT 和 CAM++ 特征。沿用参考实验按语句划分的 29,531 条训练样本和 3,274 条留出样本，训练只读取训练分片的特征。字符词表和潜变量归一化沿用原配音模型。加载父权重时按字符和 CTC blank 映射词表相关参数。
+
+在本目录执行以下命令。启动器校验缓存、父权重与四卡训练步数，启动 TensorBoard 并进入训练。
+
+```bash
+mkdir -p logs
+setsid env PYTHONUNBUFFERED=1 bash src/aligndit/run/train/finetune_grid.sh > logs/train_grid.log 2>&1 < /dev/null &
+```
+
+默认使用 4 张 RTX 4090、BF16、每卡 3,600 帧和种子 666。沿用 GRID 参考配置的 1,000 个 epoch 预算，达到 200,000 次更新时停止。学习率为 `5e-5`，预热 20,000 步。CTC 在前 10,000 步的权重为 0，到 30,000 步线性升至 0.03。最新断点每 5,000 步保存一次，带步数的权重每 50,000 步保存一次。
+
+权重目录为 `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_ctc003_warmup10k30k_40hz_char`。TensorBoard 读取当前副本的 `runs/`，默认从端口 6066 开始选择可用端口。实际端口和进程号记录在 `logs/tensorboard_grid.json`。
+
+## 来源项目的 LibriTTS 与 CelebV-Dub 配方
 
 本快照复制自 `AlignDiT_mmdit_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va`。默认前 12 层重复同一个 **AT → AV 融合块**，后 6 层只更新音频。先让音频与台词做双流联合注意力，把六个 AT 头的输出投影回 768 维并加到音频。AV 的六个头从更新后的音频重新计算 Q/K/V，再与嘴型做双流联合注意力。文本因此可以在同一层经音频影响嘴型。
 

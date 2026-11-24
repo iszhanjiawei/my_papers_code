@@ -273,6 +273,22 @@ class BackboneTests(unittest.TestCase):
 
 
 class CheckpointIdentityTests(unittest.TestCase):
+    def test_grid_rejects_paired_checkpoint_from_celebvdub(self):
+        from aligndit.script.eval.infer_celebvdub_semantic_vae_s1 import build_model, load_composed_config
+
+        config_path = CONFIG.with_name("finetune_grid.yaml")
+        cfg = load_composed_config(config_path)
+        celeb_identity = checkpoint_architecture(cfg.model.arch, cfg.ckpts.initialization_mode)
+        grid_identity = checkpoint_architecture(
+            cfg.model.arch, cfg.ckpts.initialization_mode, dataset_name=cfg.datasets.name,
+        )
+        self.assertEqual(grid_identity, {**celeb_identity, "dataset": "GRID"})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model_1.pt"
+            torch.save({"architecture": celeb_identity}, path)
+            with self.assertRaisesRegex(RuntimeError, "Checkpoint architecture mismatch"):
+                build_model(config_path, path, 1, torch.device("cpu"))
+
     def test_geometry_is_required_for_windowed_checkpoint(self):
         from aligndit.script.eval.infer_celebvdub_semantic_vae_s1 import build_model
 

@@ -1,0 +1,28 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+datasets:
+  name: GRID
+  cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp32
+  manifest_path: ${datasets.cache_root}/manifests/train.jsonl
+  expected_manifest_sha256: 46532a02d9d9ef03127aa358bab4788640575f19b3d11efc850086ef107298e7
+  expected_inventory_sha256: aa9c83ab1a65de85f3c49b350e7c8cc228dd23b4ca8ea2eec76a2f9ceb3a0959
+  expected_record_count: 29531
+  expected_vae_checkpoint_sha256: 7c455aa8ab3f7d576b4834f8342558894aafaa61a371b84a9bfa4d10a100e516
+  expected_video_checkpoint_sha256: 343c9dbaa29847b8c4d0d9503c43f2877fd2efde9988d41abf14e74f28232b75
+  speaker_embedding_cache_dir: ${datasets.cache_root}/speakers
+
+optim:
+  # Four GPUs yield 246 updates per GRID epoch at the inherited frame budget.
+  epochs: 1000
+  run_until_update: 200000
+
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_ctc003_warmup10k30k
+
+ckpts:
+  expected_parent_sha256: 1bce46fbe0dd96794456c1716f730123f1b84267ec7a8536da4d3abcf6c320b8
+  expected_parent_size: 4710953520
+  expected_parent_contract_sha256: b0a64e0eb466b6068812b7d99b905f9c729d0ab28c9f2bc2ce2f06ee42c3bb4b
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_40hz_char
