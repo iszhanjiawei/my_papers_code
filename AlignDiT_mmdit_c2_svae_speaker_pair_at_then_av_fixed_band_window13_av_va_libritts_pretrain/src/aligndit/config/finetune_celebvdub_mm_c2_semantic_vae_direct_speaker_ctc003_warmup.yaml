@@ -17,7 +17,7 @@ optim:
   run_until_update: 200000
 
 model:
-  name: AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_ctc003_warmup10k30k
+  name: AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_ctc003_warmup10k30k
   arch:
     # Only the 12 MM blocks change topology; the 6 audio-only blocks are retained.
     text_joint_attention: True
@@ -35,4 +35,11 @@ model:
     speaker_condition_start_layer: ${.n_mm_layers}
 
 ckpts:
+  initialization_mode: paired_libritts_text_audio
+  pretrained_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/AlignDiT_LibriTTS_svae_speaker_pair_at_then_av_6AT6AV_50k/model_00050000.pt
+  expected_parent_update: 50000
+  expected_parent_sha256: null
+  expected_parent_size: null
+  expected_parent_contract_sha256: null
+  parent_contract_path: null
   save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_40hz_CelebVDub_char

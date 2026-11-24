@@ -70,6 +70,7 @@ def main(model_cfg):
         ctc_lambda=model_cfg.model.ctc_lambda,
     )
 
+    initialization_mode = model_cfg.ckpts.get("initialization_mode", "s2c")
     trainer = SemanticVaeDirectC2SpeakerTrainer(
         model,
         epochs=model_cfg.optim.epochs,
@@ -78,7 +79,7 @@ def main(model_cfg):
         save_per_updates=model_cfg.ckpts.save_per_updates,
         keep_last_n_checkpoints=model_cfg.ckpts.keep_last_n_checkpoints,
         checkpoint_path=model_cfg.ckpts.save_dir,
-        checkpoint_architecture=checkpoint_architecture(model_arc),
+        checkpoint_architecture=checkpoint_architecture(model_arc, initialization_mode),
         batch_size_per_gpu=model_cfg.datasets.batch_size_per_gpu,
         batch_size_type=model_cfg.datasets.batch_size_type,
         max_samples=model_cfg.datasets.max_samples,
@@ -101,6 +102,7 @@ def main(model_cfg):
         expected_parent_size=model_cfg.ckpts.expected_parent_size,
         expected_parent_contract_sha256=model_cfg.ckpts.expected_parent_contract_sha256,
         expected_parent_update=model_cfg.ckpts.expected_parent_update,
+        initialization_mode=initialization_mode,
         ctc_target_lambda=model_cfg.model.ctc_lambda,
         ctc_warmup_start=model_cfg.model.ctc_warmup_start,
         ctc_warmup_end=model_cfg.model.ctc_warmup_end,
@@ -110,13 +112,16 @@ def main(model_cfg):
     if trainer.is_main:
         save_dir = Path(model_cfg.ckpts.save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
+        paired_parent = initialization_mode == "paired_libritts_text_audio"
         contract = {
             "experiment": str(model_cfg.model.name),
             "project_dir": str(Path.cwd()),
             "config": OmegaConf.to_container(model_cfg, resolve=True),
             "speaker_cache_metadata": speaker_metadata,
-            "initialization": "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter",
-            "speaker_condition": "L2 CAM++ -> zero-initialized bias-free Linear(192,768) in the audio-only tail",
+            "initialization": ("paired LibriTTS AT-only 50k EMA, new optimizer/update counter" if paired_parent
+                               else "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter"),
+            "speaker_condition": ("L2 CAM++ -> LibriTTS-pretrained projection in the audio-only tail" if paired_parent
+                                  else "L2 CAM++ -> zero-initialized bias-free Linear(192,768) in the audio-only tail"),
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }

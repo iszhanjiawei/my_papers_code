@@ -280,10 +280,13 @@ class CheckpointIdentityTests(unittest.TestCase):
         self.assertIsNone(checkpoint_architecture({}))
         self.assertEqual(checkpoint_architecture(legacy), legacy)
         expected = {**legacy, **BAND_CONFIG}
-        self.assertEqual(checkpoint_architecture(OmegaConf.load(CONFIG).model.arch), expected)
+        cfg = OmegaConf.load(CONFIG)
+        self.assertEqual(checkpoint_architecture(cfg.model.arch), expected)
+        self.assertEqual(checkpoint_architecture(cfg.model.arch, cfg.ckpts.initialization_mode),
+                         {**expected, "parent_stage": "paired_libritts_text_audio"})
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "model_1.pt"
-            for identity in (legacy, {**expected, "temporal_band_fixed_sigma_seconds": 0.100}):
+            for identity in (legacy, expected, {**expected, "temporal_band_fixed_sigma_seconds": 0.100}):
                 torch.save({"architecture": identity}, path)
                 with self.assertRaisesRegex(RuntimeError, "Checkpoint architecture mismatch"):
                     build_model(CONFIG, path, 1, torch.device("cpu"))

@@ -1,14 +1,31 @@
-# AlignDiT 配音实验 · AT → AV 双向高斯软窗口
+# AlignDiT · LibriTTS 配对 AT 预训练与 AT → AV Window13 配音
 
-本快照复制自 `AlignDiT_mmdit_c2_svae_speaker_pair_at_then_av`。默认前 12 层重复同一个 **AT → AV 融合块**，后 6 层只更新音频。先让音频与台词做双流联合注意力，把六个 AT 头的输出投影回 768 维并加到音频。AV 的六个头从更新后的音频重新计算 Q/K/V，再与嘴型做双流联合注意力。文本因此可以在同一层经音频影响嘴型。
+本快照复制自 `AlignDiT_mmdit_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va`。默认前 12 层重复同一个 **AT → AV 融合块**，后 6 层只更新音频。先让音频与台词做双流联合注意力，把六个 AT 头的输出投影回 768 维并加到音频。AV 的六个头从更新后的音频重新计算 Q/K/V，再与嘴型做双流联合注意力。文本因此可以在同一层经音频影响嘴型。
 
 每个双流注意力都同时更新音频和对应条件。视频和文本各自保留 768 维状态，传入下一融合层。每个头 64 维，音频头 0–5 用于 AV，6–11 用于 AT。每层共用原来的音频输入和输出投影参数，每种模态各执行一次 FFN。位置编码沿用基线配置，音频与视频的全局第一个头使用时间 RoPE。训练继续使用 CelebV-Dub 的 64 维、40 Hz Semantic-VAE 表征、音频尾部 CAM++ 说话人条件和原 CTC 配置。
 
 窗口沿用 `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_avt_joint_fixed_band_window13_av_va_libritts_pretrained` 的 `fixed_band_window13_av_va` 设置。每个融合层的第二阶段在音频查询与视频键的注意力分数上加入固定高斯偏置，视频查询与音频键使用其转置。音视频各为 40 Hz，中心偏移为 0，标准差为 0.150 秒（6 帧）。中心及左右各 6 帧构成 13 帧核心，核心外的偏置随时间差平方连续衰减。每个查询仍在全部有效音频键和视频键上统一归一化，同模态的分数和第一阶段 AT 注意力沿用基线。窗口不引入可训练参数。
 
-## 正式训练
+## LibriTTS 预训练（8 × RTX 4090）
 
-在本项目根目录运行。启动器读取本目录的 `env.sh`，通过 `PYTHONPATH` 导入本份源码。默认使用本机四张 GPU、bf16、每卡 3,600 个 latent 帧，从 S2c 70k EMA 初始化，训练至第 200,000 次更新。有 `/home/zjw524` 路径前缀的服务器请先执行 `export ROOT_PREFIX=/home`，并确认训练数据缓存、父权重及环境已就位。
+在完整 LibriTTS train-clean-100 和 train-clean-360 上训练 50,000 步。从 LibriSpeech S2c 70k EMA 初始化音频参数。前 12 层使用配对模型中的 AT 六个头，视觉分支与 Window13 在本阶段关闭。后 6 层使用音频和 CAM++ 说话人条件。默认种子 666，bf16，每卡 2,400 帧，8 卡每次更新的名义预算为 19,200 帧。CTC 权重为 0。训练每 1,000 步保存断点，最终输出 `model_00050000.pt`。[预训练配置](src/aligndit/config/pretrain_libritts_text_audio.yaml)
+
+在项目根目录执行以下命令。特征准备按 GPU 0–7 分片，逐条生成 Semantic-VAE latent 和 CAM++ 向量，复用通过校验的已有记录。
+
+```bash
+bash src/aligndit/run/misc/prepare_libritts_text_audio.sh all
+source env.sh
+pretrain_event_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_LibriTTS_svae_speaker_pair_at_then_av_6AT6AV_50k/tensorboard"
+TENSORBOARD_LOGDIR="$pretrain_event_dir" TENSORBOARD_PORT=6064 bash scripts/start_speaker_tensorboard.sh
+mkdir -p logs
+setsid env PYTHONUNBUFFERED=1 bash src/aligndit/run/train/pretrain_libritts_text_audio_8x4090.sh > logs/pretrain_libritts.log 2>&1 < /dev/null &
+```
+
+预训练权重目录为 `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_LibriTTS_svae_speaker_pair_at_then_av_6AT6AV_50k`。TensorBoard 事件位于其中的 `tensorboard/`。可将 `ckpts.resume=/绝对路径/model_NNNNNNNN.pt` 传给启动脚本恢复同一实验。
+
+## CelebV-Dub 下游训练
+
+在本项目根目录运行。启动器读取本目录的 `env.sh`，通过 `PYTHONPATH` 导入本份源码。默认使用本机四张 GPU、bf16、每卡 3,600 个 latent 帧，从本项目训练完成的 LibriTTS 50k EMA 初始化，训练至第 200,000 次更新。有 `/home/zjw524` 路径前缀的服务器请先执行 `export ROOT_PREFIX=/home`，并确认训练数据缓存、父权重及环境已就位。
 
 ```bash
 bash scripts/start_speaker_tensorboard.sh
@@ -16,7 +33,7 @@ mkdir -p logs
 setsid env PYTHONUNBUFFERED=1 bash src/aligndit/run/train/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_4x4090.sh > logs/train.log 2>&1 < /dev/null &
 ```
 
-正式配置同时设置 `paired_joint_order: at_then_av` 和 `temporal_band_enabled: true`。训练、推理、评测和 TensorBoard 使用本实验独立的路径。默认 DDP 端口为 29654，TensorBoard 端口为 6054。[训练配置](src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml)
+正式配置同时设置 `paired_joint_order: at_then_av` 和 `temporal_band_enabled: true`。训练、推理、评测和 TensorBoard 使用本实验独立的路径。默认 DDP 端口为 29654，下游 TensorBoard 端口为 6065。[训练配置](src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml)
 
 ## 结构验证与层数消融
 
@@ -27,7 +44,7 @@ source env.sh
 PYTHONPATH=src "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python" -m aligndit.script.misc.smoke_test_paired_joint
 ```
 
-默认模型共有 348,224,642 个可训练参数，与无窗口的 AT → AV 基线相同。
+下游配音模型共有 348,224,642 个可训练参数，与无窗口的 AT → AV 基线相同。
 
 固定 S2c 父模型的总深度为 18。比如在训练配置中把 `model.arch.n_mm_layers` 改为 8，就得到 8 层融合加 10 层音频。文本流和说话人条件的边界会一同调整。层数消融请使用单独的 `model.name` 和 `ckpts.save_dir`，并在推理时选用同一配置。
 

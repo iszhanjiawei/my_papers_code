@@ -142,7 +142,7 @@ def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, de
         raise RuntimeError("The selected config is not the fixed 64-D/40-Hz Semantic-VAE representation")
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=True)
-    expected_architecture = checkpoint_architecture(arch)
+    expected_architecture = checkpoint_architecture(arch, config.ckpts.get("initialization_mode"))
     if checkpoint.get("architecture") != expected_architecture:
         raise RuntimeError(
             f"Checkpoint architecture mismatch: expected {expected_architecture!r}, "
@@ -387,7 +387,7 @@ def run(args: argparse.Namespace) -> None:
             "sha256": sha256_file(args.checkpoint),
             "update": args.step,
             "weights": "EMA",
-            **(checkpoint_architecture(config.model.arch) or {"paired_joint_order": None}),
+            **(checkpoint_architecture(config.model.arch, config.ckpts.get("initialization_mode")) or {"paired_joint_order": None}),
         },
         "dataset": {
             "cache_root": str(cache_root),

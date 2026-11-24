@@ -14,7 +14,7 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-checkpoint_dir="${CKPT_DIR:-${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_ctc003_warmup10k30k_40hz_CelebVDub_char}"
+checkpoint_dir="${CKPT_DIR:-${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_ctc003_warmup10k30k_40hz_CelebVDub_char}"
 step="${CKPT_STEP:-200000}"
 checkpoint="${CHECKPOINT_PATH:-$checkpoint_dir/model_${step}.pt}"
 cfg_video="${CFG_VIDEO:-2.0}"

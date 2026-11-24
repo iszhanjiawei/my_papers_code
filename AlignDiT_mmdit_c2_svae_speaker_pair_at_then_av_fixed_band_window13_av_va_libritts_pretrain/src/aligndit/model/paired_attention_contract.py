@@ -1,12 +1,16 @@
 """Checkpoint identity for parameter-free changes to paired attention."""
 
 
-def checkpoint_architecture(arch) -> dict | None:
+from aligndit.model.text_audio_checkpoint import PRETRAIN_STAGE
+
+
+def checkpoint_architecture(arch, initialization_mode=None) -> dict | None:
     """Retain the historical checkpoint identity when the Gaussian prior is off."""
     order = arch.get("paired_joint_order")
     if not arch.get("temporal_band_enabled", False):
         return {"paired_joint_order": order} if order is not None else None
     return {
+        **({"parent_stage": PRETRAIN_STAGE} if initialization_mode == PRETRAIN_STAGE else {}),
         "paired_joint_order": order,
         "temporal_band_enabled": True,
         "temporal_band_mode": arch.get("temporal_band_mode", "fixed"),
