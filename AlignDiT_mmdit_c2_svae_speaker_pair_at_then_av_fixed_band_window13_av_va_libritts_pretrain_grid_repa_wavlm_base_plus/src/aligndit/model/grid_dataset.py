@@ -6,10 +6,19 @@ copied Semantic-VAE dataset, without its CelebV-Dub-specific sample counts.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
+import torch
+from torch.nn.utils.rnn import pad_sequence
 
+from aligndit.model.repa import (
+    WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
+    WAVLM_BASE_PLUS_MODEL_ID,
+    WAVLM_BASE_PLUS_REVISION,
+    validate_repa_feature_array,
+)
 from aligndit.model.semantic_vae_dataset import (
     SEMANTIC_VAE_FEATURE,
     VIDEO_40HZ_FEATURE,
@@ -67,6 +76,12 @@ class GridDataset(SemanticVaeCelebVDubDataset):
         speaker_embedding_dim: int = 192,
         speaker_embedding_model_id: str = SPEAKER_MODEL_ID,
         speaker_embedding_checkpoint_sha256: str = SPEAKER_CHECKPOINT_SHA256,
+        repa_feature_cache_dir: str | Path | None = None,
+        repa_feature_dim: int = 768,
+        repa_model_id: str = WAVLM_BASE_PLUS_MODEL_ID,
+        repa_model_revision: str = WAVLM_BASE_PLUS_REVISION,
+        repa_checkpoint_sha256: str = WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
+        repa_teacher_layer: int = 12,
         allow_partial: bool = False,
     ):
         root = Path(cache_root).expanduser().absolute()
@@ -258,18 +273,15 @@ class GridDataset(SemanticVaeCelebVDubDataset):
         self.records = all_records[self.manifest_path.name]
         self.ctc_feasible_count = sum(row["ctc_feasible_40hz"] for row in self.records)
         self.ctc_infeasible_count = len(self.records) - self.ctc_feasible_count
-        self.speaker_embedding_dim = speaker_embedding_dim
+        self.speaker_embedding_dim, self.repa_feature_dim = speaker_embedding_dim, repa_feature_dim
         self.speaker_embedding_cache_dir = None
+        self.repa_feature_cache_dir = None
         self.speaker_embedding_contract = None
-        if speaker_embedding_cache_dir is not None:
-            if speaker_embedding_dim != 192:
-                raise ValueError("The CAM++ speaker condition requires 192 dimensions")
-            feature_root = Path(speaker_embedding_cache_dir).expanduser().absolute()
-            expected_root = self.cache_root / "speakers"
-            if feature_root.is_symlink() or feature_root.resolve() != expected_root or not feature_root.is_dir():
-                raise ValueError(f"GRID speaker cache must be {expected_root}")
-            _expect_fields(
-                features.get("speaker"),
+        self.repa_feature_contract = None
+        for directory, feature_name, expected in (
+            (
+                speaker_embedding_cache_dir,
+                "speaker",
                 {
                     "dimension": speaker_embedding_dim,
                     "dtype": "float32",
@@ -277,10 +289,38 @@ class GridDataset(SemanticVaeCelebVDubDataset):
                     "checkpoint_sha256": speaker_embedding_checkpoint_sha256,
                     "source_audio": "complete_unmasked_waveform",
                 },
-                "GRID speaker feature",
-            )
-            self.speaker_embedding_cache_dir = expected_root
-            self.speaker_embedding_contract = features["speaker"]
+            ),
+            (
+                repa_feature_cache_dir,
+                "repa",
+                {
+                    "dimension": repa_feature_dim,
+                    "dtype": "float16",
+                    "model_id": repa_model_id,
+                    "model_revision": repa_model_revision,
+                    "checkpoint_sha256": repa_checkpoint_sha256,
+                    "teacher_layer": repa_teacher_layer,
+                    "source_audio": "complete_unmasked_waveform",
+                },
+            ),
+        ):
+            if directory is None:
+                continue
+            feature_root = Path(directory).expanduser().absolute()
+            expected_root = self.cache_root / ("speakers" if feature_name == "speaker" else "repa")
+            if feature_root.is_symlink() or feature_root.resolve() != expected_root or not feature_root.is_dir():
+                raise ValueError(f"GRID {feature_name} cache must be {expected_root}")
+            _expect_fields(features.get(feature_name), expected, f"GRID {feature_name} feature")
+            if feature_name == "speaker":
+                if speaker_embedding_dim != 192:
+                    raise ValueError("The CAM++ speaker condition requires 192 dimensions")
+                self.speaker_embedding_cache_dir = expected_root
+                self.speaker_embedding_contract = features[feature_name]
+            else:
+                if repa_feature_dim != 768:
+                    raise ValueError("WavLM-Base+ REPA requires 768 dimensions")
+                self.repa_feature_cache_dir = expected_root
+                self.repa_feature_contract = features[feature_name]
         self.inventory_metadata = meta
         self.cache_contract = {
             "cache_root": str(self.cache_root),
@@ -305,3 +345,51 @@ class GridDataset(SemanticVaeCelebVDubDataset):
         embedding = np.load(path, allow_pickle=False)
         validate_speaker_embedding_array(embedding, expected_dim=self.speaker_embedding_dim, source=path)
         return embedding
+
+    def _load_repa_feature_array(self, record: dict) -> np.ndarray:
+        path = self._feature_path(self.repa_feature_cache_dir, record, "REPA feature")
+        feature = np.load(path, allow_pickle=False)
+        validate_repa_feature_array(feature, expected_dim=self.repa_feature_dim, source=path)
+        # WavLM's 16-kHz convolution stack has a 400-sample receptive field and 320-sample stride.
+        expected_frames = (record["original_num_samples"] - 400) // 320 + 1
+        if len(feature) != expected_frames:
+            raise ValueError(f"{path}: expected {expected_frames} teacher frames, got {len(feature)}")
+        return feature
+
+    def audit_repa_coverage(self) -> int:
+        """Check every ID in this split against the physical teacher cache before launching DDP."""
+        expected = {Path(row["audio_relative_path"]).with_suffix(".npy") for row in self.records}
+        if self.repa_feature_cache_dir is None:
+            raise ValueError("GRID teacher cache is required for a REPA coverage check")
+        actual = set()
+        with os.scandir(self.repa_feature_cache_dir / self.split) as speakers:
+            for speaker in speakers:
+                if speaker.is_dir(follow_symlinks=False):
+                    with os.scandir(speaker.path) as features:
+                        actual.update(
+                            Path(self.split, speaker.name, feature.name)
+                            for feature in features
+                            if feature.name.endswith(".npy") and feature.is_file(follow_symlinks=False)
+                        )
+        if actual != expected:
+            missing, extra = expected - actual, actual - expected
+            raise ValueError(f"GRID {self.split} REPA coverage mismatch: missing={len(missing)}, extra={len(extra)}, "
+                             f"first_missing={min(missing, default=None)}, first_extra={min(extra, default=None)}")
+        return len(actual)
+
+    def __getitem__(self, index: int) -> dict:
+        item = super().__getitem__(index)
+        if self.repa_feature_cache_dir is not None:
+            item["repa_feature"] = torch.from_numpy(self._load_repa_feature_array(self.records[index]))
+        return item
+
+    @staticmethod
+    def collate_fn(batch: list[dict]) -> dict:
+        result = SemanticVaeCelebVDubDataset.collate_fn(batch)
+        features = [item["repa_feature"] for item in batch if "repa_feature" in item]
+        if features:
+            if len(features) != len(batch):
+                raise ValueError("GRID teacher features must be present for every item in a REPA batch")
+            result["repa_features"] = pad_sequence(features, batch_first=True)
+            result["repa_feature_lengths"] = torch.tensor([len(feature) for feature in features], dtype=torch.long)
+        return result

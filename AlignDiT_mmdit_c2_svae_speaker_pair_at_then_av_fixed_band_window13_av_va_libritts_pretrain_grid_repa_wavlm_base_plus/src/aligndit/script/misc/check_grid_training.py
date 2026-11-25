@@ -10,7 +10,7 @@ import torch
 
 from aligndit.model.libritts_pretrained_migration import validate_libritts_checkpoint_artifact
 from aligndit.script.train.finetune_grid import (
-    dataset_from_config, training_schedule_from_config, validate_grid_training_target,
+    dataset_from_config, make_repa_contract, training_schedule_from_config, validate_grid_training_target,
 )
 
 
@@ -34,6 +34,7 @@ def main() -> None:
     config.datasets.expected_inventory_sha256 = dataset.cache_contract["inventory_sha256"]
     config.datasets.expected_record_count = len(dataset)
     validate_grid_training_target(config, dataset, schedule)
+    teacher_count = dataset.audit_repa_coverage()
     ckpt = config.ckpts
     validate_libritts_checkpoint_artifact(ckpt.pretrained_path, config)
     # Decode a real cached batch, checking lengths, dimensions, finite values
@@ -44,6 +45,10 @@ def main() -> None:
         "result": "PASS", "records": len(dataset), "schedule": schedule,
         "batch_latent_shape": list(batch["mel"].shape),
         "batch_video_shape": list(batch["video"].shape),
+        "batch_repa_shape": list(batch["repa_features"].shape),
+        "batch_repa_lengths": batch["repa_feature_lengths"].tolist(),
+        "repa": make_repa_contract(config, dataset),
+        "repa_train_files": teacher_count,
         "checkpoint_dir": str(ckpt.save_dir), "run_name": run_name,
         "tensorboard_logdir": str((Path("runs") / run_name).resolve()),
     }, indent=2))

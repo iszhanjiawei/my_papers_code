@@ -82,7 +82,7 @@ def main():
     p.add_argument('--setting', choices=['s1','s2'], default='s1')
     p.add_argument('--text-conditioning', choices=TEXT_CONDITIONING, default='reference-target')
     p.add_argument('--output-dir', type=Path, required=True)
-    p.add_argument('--checkpoint', type=Path, default=data/'ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_ctc003_warmup10k30k_40hz_char/model_100000.pt')
+    p.add_argument('--checkpoint', type=Path, default=data/'ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_char/model_100000.pt')
     p.add_argument('--step', type=int, default=100000)
     p.add_argument('--gpus', default='0,1')
     p.add_argument('--workers-per-gpu', type=int, default=4)

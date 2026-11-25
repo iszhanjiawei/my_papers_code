@@ -6,8 +6,8 @@ source env.sh
 export PYTHONPATH="$project_root/src" PYTHONUNBUFFERED=1
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
 data="${ROOT_PREFIX}/zjw524/projects/data"
-checkpoint="$data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_ctc003_warmup10k30k_40hz_char/model_100000.pt"
-output_root="${OUTPUT_ROOT:-$data/evaluations/GRID_paired_at_then_av_window13_libritts_100k}"
+checkpoint="$data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_char/model_100000.pt"
+output_root="${OUTPUT_ROOT:-$data/evaluations/GRID_paired_at_then_av_window13_libritts_repa_wavlm_base_plus_100k}"
 gpus="${EVAL_GPUS:-0,1,2,3}"
 workers="${WORKERS_PER_GPU:-4}"
 mkdir -p "$output_root"

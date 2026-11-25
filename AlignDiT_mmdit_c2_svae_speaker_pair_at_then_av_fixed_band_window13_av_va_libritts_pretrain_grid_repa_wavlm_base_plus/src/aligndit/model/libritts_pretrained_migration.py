@@ -1,4 +1,4 @@
-"""Load the paired LibriTTS EMA for fixed-13 audiovisual dubbing.
+"""Load the paired LibriTTS EMA for fixed-13 audiovisual dubbing and optional REPA.
 
 The LibriTTS vocabulary extends the original CelebVDub vocabulary. Transfer
 embedding and CTC rows by their meanings; never change the downstream vocabulary.
@@ -31,6 +31,15 @@ CTC_ROW_KEYS = frozenset(
     f"transformer.projectors_ctc.{index}.model.6.{suffix}"
     for index in (0, 1) for suffix in ("weight", "bias")
 )
+
+REPA_PROJECTOR_SHAPES = {
+    "transformer.repa_projector.0.weight": (2048, 768),
+    "transformer.repa_projector.0.bias": (2048,),
+    "transformer.repa_projector.2.weight": (2048, 2048),
+    "transformer.repa_projector.2.bias": (2048,),
+    "transformer.repa_projector.4.weight": (768, 2048),
+    "transformer.repa_projector.4.bias": (768,),
+}
 
 
 def _plain(config):
@@ -209,6 +218,27 @@ def _validate_model(model, config):
     if backbone.text_embed.text_embed.num_embeddings != 160:
         raise ValueError("Instantiated model must retain the downstream 160-row text embedding")
 
+    if arch.get("repa_layer") is not None:
+        for key, expected in (("repa_layer", 9), ("repa_target_dim", 768)):
+            if arch.get(key) != expected or getattr(backbone, key, None) != expected:
+                raise ValueError(f"Unexpected paired GRID REPA configuration: {key}")
+        if arch.get("repa_projector_dim") != 2048 or config["model"].get("repa_lambda") != 0.1 or model.repa_lambda != 0.1:
+            raise ValueError("Paired GRID REPA requires a 2048-wide projector and a loss weight of 0.1")
+
+
+def _fresh_parameters(source, target, arch):
+    """Preserve the initialized REPA head and require a one-to-one match for every parent key."""
+    shapes = REPA_PROJECTOR_SHAPES if arch.get("repa_layer") is not None else {}
+    if len(source) != 802 or set(shapes).intersection(source) or set(target) != set(source) | set(shapes):
+        raise ValueError("Expected all 802 paired LibriTTS tensors plus only the configured REPA projector")
+    for key, shape in shapes.items():
+        tensor = target[key]
+        if tuple(tensor.shape) != shape or not tensor.is_floating_point():
+            raise ValueError(f"Unexpected shape or dtype for fresh REPA projector parameter: {key}")
+        if not tensor.is_meta and not torch.isfinite(tensor).all():
+            raise ValueError(f"Non-finite fresh REPA projector parameter: {key}")
+    return {key: target[key] for key in shapes}
+
 
 def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verified_artifact=None) -> dict:
     """Load all 802 EMA tensors, with five explicit vocabulary row remappings."""
@@ -241,11 +271,10 @@ def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verified_
         raise ValueError("LibriTTS EMA must be initialized at step 50000")
     source = {key.removeprefix("ema_model."): value for key, value in ema.items() if key.startswith("ema_model.")}
     target = model.state_dict()
-    if len(source) != 802 or len(target) != 802 or set(source) != set(target):
-        raise ValueError("LibriTTS transfer requires exactly the same 802 tensor names")
+    fresh = _fresh_parameters(source, target, config["model"]["arch"])
     remapped, loaded = {}, {}
-    for key, destination in target.items():
-        value = source[key]
+    for key, value in source.items():
+        destination = target[key]
         if not isinstance(value, torch.Tensor) or not value.is_floating_point():
             raise TypeError(f"LibriTTS source value is not a floating-point tensor: {key}")
         if key == EMBEDDING_KEY or key in CTC_ROW_KEYS:
@@ -263,14 +292,17 @@ def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verified_
         raise RuntimeError("LibriTTS transfer did not perform exactly the five approved row remappings")
     if _identity(path) != before:
         raise RuntimeError("LibriTTS parent changed while its tensors were being read")
-    model.load_state_dict(loaded, strict=True)
+    model.load_state_dict({**loaded, **fresh}, strict=True)
     return {
         "initialization": "Paired LibriTTS AT-only EMA to AT-then-AV with Window13",
         "parent_path": str(path.resolve()), "parent_sha256": artifact["sha256"], "parent_size": before[2],
         "parent_contract_sha256": contract_hash, "parent_stage": PRETRAIN_STAGE,
         "parent_update": PARENT_UPDATE, "parent_ema_step": PARENT_UPDATE,
         "source_key_count": len(source), "target_key_count": len(target), "loaded_key_count": len(loaded),
-        "shape_identical_key_count": len(loaded) - len(remapped), "ignored_source_keys": [], "new_target_keys": [],
+        "shape_identical_key_count": len(loaded) - len(remapped), "ignored_source_keys": [],
+        "new_target_keys": sorted(fresh), "new_target_key_count": len(fresh),
+        "new_target_shapes": {key: list(value.shape) for key, value in fresh.items()},
+        "new_target_numel": sum(value.numel() for value in fresh.values()),
         "loaded_keys": sorted(loaded), "loaded_numel": sum(value.numel() for value in loaded.values()),
         "row_remappings": remapped, "vocabulary": vocabulary,
         "source_text_mask_padding": True, "target_text_mask_padding": False,

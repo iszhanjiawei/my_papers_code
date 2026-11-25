@@ -246,10 +246,15 @@ class Trainer_VT(Trainer):
                     text_lengths = batch["text_lengths"]
                     video = batch["video"]
                     video_lengths = batch["video_lengths"]
-                    speaker_kwargs = (
+                    condition_kwargs = (
                         {"speaker_embedding": batch["speaker_embedding"]} if "speaker_embedding" in batch else {}
                     )
 
+                    if "repa_features" in batch:
+                        condition_kwargs.update(
+                            repa_features=batch["repa_features"],
+                            repa_feature_lens=batch["repa_feature_lengths"],
+                        )
                     loss, loss_components, cond, pred = self.model(
                         mel_spec,
                         text=text_inputs,
@@ -258,7 +263,7 @@ class Trainer_VT(Trainer):
                         video=video,
                         video_lens=video_lengths,
                         noise_scheduler=self.noise_scheduler,
-                        **speaker_kwargs,
+                        **condition_kwargs,
                     )
                     diagnostics = self._forward_diagnostics(loss, loss_components)
                     self.accelerator.backward(loss)

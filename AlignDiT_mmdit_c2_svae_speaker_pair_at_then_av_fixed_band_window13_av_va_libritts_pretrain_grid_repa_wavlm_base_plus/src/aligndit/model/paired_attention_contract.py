@@ -11,6 +11,8 @@ def checkpoint_architecture(arch, initialization_mode=None, *, dataset_name=None
         return {"paired_joint_order": order} if order is not None else None
     return {
         **({"dataset": "GRID"} if dataset_name == "GRID" else {}),
+        **({key: arch[key] for key in ("repa_layer", "repa_target_dim", "repa_projector_dim")}
+           if arch.get("repa_layer") is not None else {}),
         **({"parent_stage": PRETRAIN_STAGE} if initialization_mode == PRETRAIN_STAGE else {}),
         "paired_joint_order": order,
         "temporal_band_enabled": True,

@@ -26,6 +26,7 @@ import numpy as np
 
 S1 = "grid_val_setting1_same_clip_prompt_v1"
 S2 = "grid_val_setting2_same_speaker_cross_utterance_gttext_v1"
+REPA_TEACHER_SHA = "3bb273a6ace99408b50cfc81afdbb7ef2de02da2eab0234e18db608ce692fe51"
 AVHUBERT_SHA = "343c9dbaa29847b8c4d0d9503c43f2877fd2efde9988d41abf14e74f28232b75"
 NORMALIZATION_SHA = "65b8ab93520b88dc12492fe6ffb471d510bb77502d59d17eaa81e78e3d02c3f6"
 VOCAB_SHA = "225df7792c4ade59e3de39789b36fdf735e1b30ed96b4456d2d27df0d86a875d"
@@ -126,7 +127,16 @@ def verify_checkpoint(protocol, reuse_path=None):
             "Actual checkpoint architecture differs from the GRID training contract")
     ema = checkpoint_metadata.get("ema_model_state_dict", {})
     require(bool(ema.get("initted", False)), "Actual checkpoint EMA is uninitialized")
-    verification.update(update=checkpoint_metadata["update"], ema_initialized=True,
+    projection = {key.removeprefix("ema_model.transformer.repa_projector."): tensor for key, tensor in ema.items()
+                  if key.startswith("ema_model.transformer.repa_projector.")}
+    widths = ((0, 768, 2048), (2, 2048, 2048), (4, 2048, 768))
+    expected_shapes = {f"{layer}.{name}": shape for layer, n_in, n_out in widths
+                       for name, shape in (("weight", (n_out, n_in)), ("bias", (n_out,)))}
+    require(set(projection) == set(expected_shapes), "Expected all six EMA REPA projector tensors")
+    for key, tensor in projection.items():
+        require(tensor.shape == expected_shapes[key] and tensor.is_floating_point() and torch.isfinite(tensor).all(),
+                f"Invalid REPA EMA projector tensor: {key}")
+    verification.update(update=checkpoint_metadata["update"], ema_initialized=True, repa_tensors=len(projection),
                         ema_step=int(ema["step"]), ema_state_entries=len(ema))
     del checkpoint_metadata, ema
     require(file_stat(path) == before, "Checkpoint changed while being audited")
@@ -144,6 +154,7 @@ def verify_fixed_architecture(protocol):
     require(arch == stored_arch, "Generation architecture differs from the training sidecar")
     expected = {"depth": 18, "n_mm_layers": 12, "n_text_layers": 12,
                 "audio_video_ratio": 1, "text_joint_attention": True, "paired_joint_order": "at_then_av",
+                "repa_layer": 9, "repa_target_dim": 768, "repa_projector_dim": 2048,
                 "temporal_band_enabled": True, "temporal_band_mode": "fixed",
                 "temporal_band_audio_fps": 40.0, "temporal_band_video_fps": 40.0,
                 "temporal_band_fixed_offset_seconds": 0.0,
@@ -155,14 +166,21 @@ def verify_fixed_architecture(protocol):
             "Wrong dataset or LibriTTS parent for the checkpoint")
     for key, value in expected.items():
         require(type(arch.get(key)) is type(value) and arch[key] == value, f"Fixed-13 mismatch: {key}")
-        if key.startswith("temporal_band_") or key == "paired_joint_order":
+        if key.startswith(("temporal_band_", "repa_")) or key == "paired_joint_order":
             require(type(architecture.get(key)) is type(value) and architecture[key] == value,
                     f"Fixed-band sidecar contradicts {key}")
+    training_cfg = sidecar["config"]
+    require(training_cfg["model"].get("repa_lambda") == 0.1 and config["model"].get("repa_lambda") == 0.1,
+            "Training and generation configurations must identify the REPA experiment")
+    require(training_cfg["datasets"].get("repa_checkpoint_sha256") == REPA_TEACHER_SHA
+            and training_cfg["datasets"].get("repa_teacher_layer") == 12,
+            "Unexpected WavLM-Base+ REPA teacher")
     require(sha(config["datasets"]["normalization_path"]) == protocol["normalization_sha256"] == NORMALIZATION_SHA,
             "Pretrained latent normalization changed")
     require(sha(config["datasets"]["vocab_path"]) == VOCAB_SHA, "Pretrained vocabulary changed")
     return {"path": str(contract_path), "sha256": sha(contract_path), "architecture_exact_match": True,
-            "fixed_band_sigma_seconds": 0.15, "fixed_band_offset_seconds": 0.0}
+            "fixed_band_sigma_seconds": 0.15, "fixed_band_offset_seconds": 0.0,
+            "repa_student_layer": 9, "repa_teacher_layer": 12, "repa_teacher_sha256": REPA_TEACHER_SHA}
 
 
 def reference_assignment(rows):
@@ -216,6 +234,7 @@ def verify_launch_sources(output):
     required = {"src/aligndit/model/cfm_vt.py", "src/aligndit/model/backbone/dit_vt_mm.py",
                 "src/aligndit/script/eval/infer_celebvdub_semantic_vae_s1.py",
                 "src/aligndit/script/eval/infer_grid_s1.py", "src/aligndit/script/eval/infer_grid_s2.py",
+                "src/aligndit/model/repa.py", "src/aligndit/model/paired_attention_contract.py",
                 "src/aligndit/config/finetune_grid.yaml"}
     require(required <= set(files), "Launch snapshot omits inference/model/config sources")
     checked = 0

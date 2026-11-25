@@ -1,8 +1,10 @@
-# AlignDiT · GRID 配音训练（AT → AV，Window13）
+# AlignDiT · GRID 配音训练（AT → AV，Window13，WavLM-Base+ REPA）
 
-本项目复制自 `AlignDiT_mmdit_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts_pretrain`。GRID 训练从配对模型的 LibriTTS 50,000 步 EMA 权重 `AlignDiT_LibriTTS_svae_speaker_pair_at_then_av_6AT6AV_50k/model_00050000.pt` 初始化，从第 0 步开始更新。前 12 层先用 6 个头融合音频与文本，再用 6 个头融合音频与视频。双向音视频注意力使用标准差 0.150 秒的固定高斯偏置。后 6 层通过 CAM++ 说话人向量调节音频。[GRID 配置](src/aligndit/config/finetune_grid.yaml)
+本项目复制自 `AlignDiT_mmdit_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts_pretrain_grid`。GRID 训练从配对模型的 LibriTTS 50,000 步 EMA 权重 `AlignDiT_LibriTTS_svae_speaker_pair_at_then_av_6AT6AV_50k/model_00050000.pt` 初始化，从第 0 步开始更新。前 12 层先用 6 个头融合音频与文本，再用 6 个头融合音频与视频。双向音视频注意力使用标准差 0.150 秒的固定高斯偏置。后 6 层通过 CAM++ 说话人向量调节音频。[GRID 配置](src/aligndit/config/finetune_grid.yaml)
 
 GRID 入口读取 `${ROOT_PREFIX}/zjw524/projects/data/GRID_svae1000k_sample_seed666_fp32` 中的 40 Hz Semantic-VAE、AV-HuBERT 和 CAM++ 特征。沿用参考实验按语句划分的 29,531 条训练样本和 3,274 条留出样本，训练只读取训练分片的特征。字符词表和潜变量归一化沿用原配音模型。加载父权重时按字符和 CTC blank 映射词表相关参数。
+
+训练从第 1 次更新起，将第 10 个 AT → AV 融合块输出的音频状态送入 768 → 2048 → 2048 → 768 的 SiLU 投影头。教师为冻结的 WavLM-Base+ 第 12 层，特征来自每条完整录音，在 GRID 缓存的 `repa/train/` 下按语句读取。每条 50 Hz 教师特征裁去填充并线性插值到对应的 40 Hz 有效长度，只在流匹配损失的生成帧上计算余弦距离。总损失为 `flow + 0.1 × REPA + λ_CTC(step) × CTC`。推理沿用原有流程，无需教师特征。
 
 在本目录执行以下命令。启动器校验缓存、父权重与四卡训练步数，启动 TensorBoard 并进入训练。
 
@@ -13,7 +15,14 @@ setsid env PYTHONUNBUFFERED=1 bash src/aligndit/run/train/finetune_grid.sh > log
 
 默认使用 4 张 RTX 4090、BF16、每卡 3,600 帧和种子 666。学习率调度沿用 GRID 参考配置的 1,000 个 epoch 预算。训练在第 100,000 步保存 `model_100000.pt` 后停止。学习率为 `5e-5`，预热 20,000 步。CTC 在前 10,000 步的权重为 0，到 30,000 步线性升至 0.03。最新断点每 5,000 步保存一次，带步数的权重每 50,000 步保存一次。
 
-权重目录为 `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_ctc003_warmup10k30k_40hz_char`。TensorBoard 读取当前副本的 `runs/`，默认从端口 6066 开始选择可用端口。实际端口和进程号记录在 `logs/tensorboard_grid.json`。
+权重目录为 `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_GRID_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_char`。TensorBoard 读取当前副本的 `runs/`，默认从端口 6067 开始选择可用端口。实际端口和进程号记录在 `logs/tensorboard_grid.json`。TensorBoard 中的 `repa_loss` 为原始余弦损失，`repa_weighted_loss` 为其对总损失的贡献。
+
+在正式训练前可使用以下命令，以 30 条真实训练语句检查 CTC 权重为 0 和 0.03 时的总损失、教师填充、投影头梯度及显存占用。
+
+```bash
+source env.sh
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python" scripts/check_grid_repa_gpu.py
+```
 
 ## 来源项目的 LibriTTS 与 CelebV-Dub 配方
 
@@ -61,7 +70,7 @@ source env.sh
 PYTHONPATH=src "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python" -m aligndit.script.misc.smoke_test_paired_joint
 ```
 
-下游配音模型共有 348,224,642 个可训练参数，与无窗口的 AT → AV 基线相同。
+在原 AT → AV 模型基础上，本 GRID 实验的 REPA 投影头新增 7,344,896 个可训练参数。
 
 固定 S2c 父模型的总深度为 18。比如在训练配置中把 `model.arch.n_mm_layers` 改为 8，就得到 8 层融合加 10 层音频。文本流和说话人条件的边界会一同调整。层数消融请使用单独的 `model.name` 和 `ckpts.save_dir`，并在推理时选用同一配置。
 

@@ -186,6 +186,7 @@ def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, de
         vocab_char_map=vocab_char_map,
         audio_video_ratio=1,
         ctc_lambda=float(config.model.ctc_lambda),
+        repa_lambda=0.0,  # Strictly load the training head; sampling needs no teacher or projection.
         odeint_kwargs={"method": "euler"},
     )
 
