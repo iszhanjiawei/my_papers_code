@@ -16,6 +16,8 @@ from aligndit.model.libritts_pretrained_migration import (
     CTC_ROW_KEYS,
     EMBEDDING_KEY,
     NORMALIZATION_SHA256,
+    REPA_PROJECTOR_SHAPES,
+    validate_transfer_keys,
     S2C_SHA256,
     SOURCE_VOCAB_SHA256,
     SPEAKER_SHA256,
@@ -43,6 +45,23 @@ class TransferTests(unittest.TestCase):
         optimizer.step()
         for actual, expected in frozen + active:
             torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+    def test_repa_transfer_allows_only_the_new_projector(self):
+        with torch.device("meta"):
+            source = {str(i): torch.empty(1) for i in range(802)}
+            head = {key: torch.empty(shape) for key, shape in REPA_PROJECTOR_SHAPES.items()}
+            target = {**source, **head}
+            self.assertEqual(set(validate_transfer_keys(source, target, repa_enabled=True)), set(head))
+            invalid_targets = [
+                {key: val for key, val in target.items() if key != "0"},
+                {**target, "unexpected": torch.empty(1)},
+                {**target, "transformer.repa_projector.0.weight": torch.empty(1)},
+            ]
+            for invalid in invalid_targets:
+                with self.assertRaises(ValueError):
+                    validate_transfer_keys(source, invalid, repa_enabled=True)
+            with self.assertRaises(ValueError):
+                validate_transfer_keys(source, target, repa_enabled=False)
 
     def test_strict_full_layout_with_vocab_remapping_and_legacy_rejection(self):
         cfg_dir = Path(__file__).resolve().parents[2] / "config"

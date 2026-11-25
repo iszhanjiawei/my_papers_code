@@ -1,0 +1,25 @@
+defaults:
+  - finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup
+  - _self_
+
+datasets:
+  repa_feature_cache_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/CelebVDub/wavlm_base_plus_repa_final_fp16
+  repa_feature_dim: 768
+  repa_model_id: microsoft/wavlm-base-plus
+  repa_model_revision: 4c66d4806a428f2e922ccfa1a962776e232d487b
+  repa_checkpoint_sha256: 3bb273a6ace99408b50cfc81afdbb7ef2de02da2eab0234e18db608ce692fe51
+  repa_teacher_layer: 12
+
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_repa_wavlm_base_plus_ctc003_warmup10k30k
+  repa_lambda: 0.1
+  arch:
+    # Zero-based 9: audio output of the 10th paired AT-then-AV block.
+    repa_layer: 9
+    repa_target_dim: 768
+    repa_projector_dim: 2048
+
+ckpts:
+  expected_parent_sha256: 1bce46fbe0dd96794456c1716f730123f1b84267ec7a8536da4d3abcf6c320b8
+  expected_parent_size: 4710953520
+  expected_parent_contract_sha256: b0a64e0eb466b6068812b7d99b905f9c729d0ab28c9f2bc2ce2f06ee42c3bb4b

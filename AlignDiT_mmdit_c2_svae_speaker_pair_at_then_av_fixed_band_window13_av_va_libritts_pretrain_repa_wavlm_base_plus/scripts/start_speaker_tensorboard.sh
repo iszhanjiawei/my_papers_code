@@ -3,8 +3,8 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_root/env.sh"
 cd "$project_root"
-port="${TENSORBOARD_PORT:-6065}"
-run_name="AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_ctc003_warmup10k30k_semantic_vae_40hz_CelebVDub_char"
+port="${TENSORBOARD_PORT:-6066}"
+run_name="AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_repa_wavlm_base_plus_ctc003_warmup10k30k_semantic_vae_40hz_CelebVDub_char"
 logdir="${TENSORBOARD_LOGDIR:-$project_root/runs/$run_name}"
 mkdir -p "$logdir" "$project_root/logs"
 if ss -ltnH "sport = :$port" | grep -q .; then

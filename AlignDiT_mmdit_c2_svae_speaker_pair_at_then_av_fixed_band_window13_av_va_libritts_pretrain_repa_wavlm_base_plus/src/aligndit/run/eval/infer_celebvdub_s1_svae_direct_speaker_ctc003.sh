@@ -14,11 +14,11 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-checkpoint_dir="${CKPT_DIR:-${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_ctc003_warmup10k30k_40hz_CelebVDub_char}"
+checkpoint_dir="${CKPT_DIR:-${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_pair_at_then_av_fixed_band_window13_av_va_libritts50k_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char}"
 step="${CKPT_STEP:-200000}"
 checkpoint="${CHECKPOINT_PATH:-$checkpoint_dir/model_${step}.pt}"
 cfg_video="${CFG_VIDEO:-2.0}"
-output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_speaker_pair_at_then_av_fixed_band_window13_av_va_cfgv${cfg_video}}"
+output_dir="${OUTPUT_DIR:-$checkpoint_dir/eval_s1_${step}_speaker_pair_at_then_av_fixed_band_window13_av_va_repa_wavlm_base_plus_cfgv${cfg_video}}"
 if [[ ! -f "$checkpoint" || -L "$checkpoint" ]]; then
     echo "Missing regular speaker-conditioned checkpoint: $checkpoint" >&2
     exit 1
@@ -32,7 +32,7 @@ CUDA_VISIBLE_DEVICES="${EVAL_GPU:-0}" OMP_NUM_THREADS=1 PYTHONPATH="$project_roo
 "$python_bin" -u src/aligndit/script/eval/infer_celebvdub_semantic_vae_s1.py \
     --checkpoint "$checkpoint" \
     --step "$step" \
-    --config src/aligndit/config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml \
+    --config src/aligndit/config/finetune_celebvdub_repa.yaml \
     --output-dir "$output_dir" \
     --cfg-video "$cfg_video" \
     --cfg-text "${CFG_TEXT:-5.0}" \

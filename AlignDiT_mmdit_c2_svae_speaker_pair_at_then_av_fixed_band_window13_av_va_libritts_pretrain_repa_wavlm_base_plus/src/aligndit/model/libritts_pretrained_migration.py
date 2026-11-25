@@ -33,6 +33,16 @@ CTC_ROW_KEYS = frozenset(
 )
 
 
+REPA_PROJECTOR_SHAPES = {
+    "transformer.repa_projector.0.weight": (2048, 768),
+    "transformer.repa_projector.0.bias": (2048,),
+    "transformer.repa_projector.2.weight": (2048, 2048),
+    "transformer.repa_projector.2.bias": (2048,),
+    "transformer.repa_projector.4.weight": (768, 2048),
+    "transformer.repa_projector.4.bias": (768,),
+}
+
+
 def _plain(config):
     from omegaconf import OmegaConf
 
@@ -166,6 +176,25 @@ def _validate_model(model, config):
     if backbone.text_embed.text_embed.num_embeddings != 160:
         raise ValueError("Instantiated model must retain the downstream 160-row text embedding")
 
+    if getattr(backbone, "repa_layer", None) != arch.get("repa_layer"):
+        raise ValueError("REPA feature layer differs from the configured tap")
+
+
+def validate_transfer_keys(source, target, *, repa_enabled):
+    """Require the complete paired parent's state and permit only a fresh WavLM head."""
+    new_shapes = REPA_PROJECTOR_SHAPES if repa_enabled else {}
+    if len(source) != 802 or set(source).intersection(REPA_PROJECTOR_SHAPES):
+        raise ValueError("Expected 802 paired LibriTTS tensors without a REPA projector")
+    if set(target) != set(source).union(new_shapes):
+        raise ValueError("Downstream tensor names differ from the paired parent and configured projector")
+    for key, shape in new_shapes.items():
+        value = target[key]
+        if tuple(value.shape) != shape or not value.is_floating_point():
+            raise ValueError(f"Invalid fresh REPA projector tensor: {key}")
+        if not value.is_meta and not torch.isfinite(value).all():
+            raise ValueError(f"Non-finite fresh REPA projector tensor: {key}")
+    return sorted(new_shapes)
+
 
 def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verified_artifact=None) -> dict:
     """Load all 802 EMA tensors, with five explicit vocabulary row remappings."""
@@ -198,11 +227,10 @@ def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verified_
         raise ValueError("LibriTTS EMA must be initialized at step 50000")
     source = {key.removeprefix("ema_model."): value for key, value in ema.items() if key.startswith("ema_model.")}
     target = model.state_dict()
-    if len(source) != 802 or len(target) != 802 or set(source) != set(target):
-        raise ValueError("LibriTTS transfer requires exactly the same 802 tensor names")
+    new_keys = validate_transfer_keys(source, target, repa_enabled=config["model"]["arch"].get("repa_layer") is not None)
     remapped, loaded = {}, {}
-    for key, destination in target.items():
-        value = source[key]
+    for key, value in source.items():
+        destination = target[key]
         if not isinstance(value, torch.Tensor) or not value.is_floating_point():
             raise TypeError(f"LibriTTS source value is not a floating-point tensor: {key}")
         if key == EMBEDDING_KEY or key in CTC_ROW_KEYS:
@@ -220,14 +248,17 @@ def load_libritts_ema_into_model(model, checkpoint_path, model_cfg, *, verified_
         raise RuntimeError("LibriTTS transfer did not perform exactly the five approved row remappings")
     if _identity(path) != before:
         raise RuntimeError("LibriTTS parent changed while its tensors were being read")
-    model.load_state_dict(loaded, strict=True)
+    model.load_state_dict({**loaded, **{key: target[key] for key in new_keys}}, strict=True)
     return {
         "initialization": "Paired LibriTTS AT-only EMA to AT-then-AV with Window13",
         "parent_path": str(path.resolve()), "parent_sha256": artifact["sha256"], "parent_size": before[2],
         "parent_contract_sha256": contract_hash, "parent_stage": PRETRAIN_STAGE,
         "parent_update": PARENT_UPDATE, "parent_ema_step": PARENT_UPDATE,
         "source_key_count": len(source), "target_key_count": len(target), "loaded_key_count": len(loaded),
-        "shape_identical_key_count": len(loaded) - len(remapped), "ignored_source_keys": [], "new_target_keys": [],
+        "shape_identical_key_count": len(loaded) - len(remapped), "ignored_source_keys": [],
+        "new_target_keys": new_keys, "new_target_key_count": len(new_keys),
+        "new_target_shapes": {key: list(target[key].shape) for key in new_keys},
+        "new_target_numel": sum(target[key].numel() for key in new_keys),
         "loaded_keys": sorted(loaded), "loaded_numel": sum(value.numel() for value in loaded.values()),
         "row_remappings": remapped, "vocabulary": vocabulary,
         "source_text_mask_padding": True, "target_text_mask_padding": False,

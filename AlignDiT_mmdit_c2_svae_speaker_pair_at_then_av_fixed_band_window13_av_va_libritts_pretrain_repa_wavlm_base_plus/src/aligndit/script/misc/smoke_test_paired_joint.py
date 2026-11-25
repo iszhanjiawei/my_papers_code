@@ -16,6 +16,7 @@ from x_transformers.x_transformers import apply_rotary_pos_emb
 
 from aligndit.model.fixed_temporal_band import FixedTemporalBand
 from aligndit.model.paired_attention_contract import checkpoint_architecture
+from aligndit.model.repa import masked_repa_cosine_loss
 from aligndit.script.misc import smoke_test_avt_joint as baseline
 from f5_tts.model.modules import DiTBlock
 
@@ -270,6 +271,53 @@ class BackboneTests(unittest.TestCase):
             for bias in observed:
                 torch.testing.assert_close(bias, expected_bias)
             self.assertGreater((expected - actual).abs().max().item(), 1e-6)
+
+
+class RepaTests(unittest.TestCase):
+    def test_tenth_paired_block_trains_projector_and_inference_skips_it(self):
+        torch.manual_seed(666)
+        layer = OmegaConf.load(CONFIG.with_name("finetune_celebvdub_repa.yaml")).model.arch.repa_layer
+        self.assertEqual(layer, 9)
+        model = baseline.make_model(
+            paired_joint_order=ORDER, **BAND_CONFIG, depth=13, n_mm_layers=12, n_text_layers=12,
+            speaker_condition_start_layer=12, repa_layer=layer, repa_target_dim=24, repa_projector_dim=48,
+        )
+        inputs = baseline.make_inputs()
+        audio = []
+        hook = model.transformer_blocks[9].register_forward_hook(
+            lambda _module, _args, outputs: audio.append(outputs[0])
+        )
+        self.addCleanup(hook.remove)
+        _, _, projection = model(**inputs, return_repa=True)
+        torch.testing.assert_close(projection, model.repa_projector(audio[0]))
+        teacher = torch.randn(2, 15, 24, requires_grad=True)
+        loss = masked_repa_cosine_loss(
+            projection, teacher, torch.tensor([15, 12]), inputs["mask"].sum(1), inputs["generation_mask"]
+        )
+        loss.backward()
+        self.assertIsNone(teacher.grad)
+        for name, parameter in model.repa_projector.named_parameters():
+            baseline.assert_nonzero_finite(self, parameter.grad, name)
+        block = model.transformer_blocks[9]
+        for attention in (block.t_attn, block.v_attn):
+            baseline.assert_nonzero_finite(self, attention.to_v.weight.grad, "paired attention")
+        with torch.no_grad(), patch.object(model.repa_projector, "forward") as projector:
+            prediction, _ = model.eval()(**inputs)
+            self.assertEqual(prediction.shape, inputs["x"].shape)
+            projector.assert_not_called()
+
+    def test_cosine_interpolates_each_utterance_and_scores_generated_frames(self):
+        # Teacher vectors at successive native frames have coordinates [t, 1].
+        teacher = torch.stack((torch.arange(5.), torch.ones(5)), dim=-1).repeat(2, 1, 1)
+        teacher[1, 3:] = torch.nan
+        mask = torch.tensor([[False, True, True, False], [False, True, False, False]])
+        student = torch.full((2, 4, 2), torch.nan)
+        student[mask] = torch.tensor([1., 0.])
+        loss = masked_repa_cosine_loss(student, teacher, torch.tensor([5, 3]), torch.tensor([4, 2]), mask)
+        # Half-pixel interpolation gives these native positions for the three generated frames.
+        positions = torch.tensor([1.375, 2.625, 1.75])
+        expected = 1.0 - (positions / (positions.square() + 1).sqrt()).mean()
+        torch.testing.assert_close(loss, expected)
 
 
 class CheckpointIdentityTests(unittest.TestCase):

@@ -438,7 +438,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=Path(__file__).parents[2]
-        / "config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml",
+        / "config/finetune_celebvdub_repa.yaml",
     )
     parser.add_argument(
         "--cache-root",

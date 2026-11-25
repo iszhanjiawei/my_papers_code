@@ -34,7 +34,7 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-echo "Launching isolated $project_root: AT then AV with a bidirectional Window13 Gaussian bias (defaults: 12 fusion + 6 audio blocks, LR=5e-5, stop at 200k)" >&2
+echo "Launching isolated $project_root: AT then AV with bidirectional Window13 and WavLM Base+ REPA (defaults: 12 fusion + 6 audio blocks, LR=5e-5, stop at 200k)" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     OMP_NUM_THREADS=1 \
@@ -45,11 +45,11 @@ exec env \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=src \
     "$python_bin" -u -m accelerate.commands.launch \
-        --mixed_precision bf16 \
+        --multi_gpu --mixed_precision bf16 \
         --num_machines 1 \
         --dynamo_backend no \
         --num_processes 4 \
-        --main_process_port "${TRAIN_PORT:-29654}" \
+        --main_process_port "${TRAIN_PORT:-29655}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
-        --config-name finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup \
+        --config-name finetune_celebvdub_repa \
         "$@"

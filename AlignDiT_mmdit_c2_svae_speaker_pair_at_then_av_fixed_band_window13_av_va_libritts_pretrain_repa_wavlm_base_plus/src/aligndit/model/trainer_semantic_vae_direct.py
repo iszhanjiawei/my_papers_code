@@ -170,6 +170,7 @@ class SemanticVaeDirectC2Trainer(Trainer_VT):
                 print(
                     "Strict LibriTTS EMA migration passed: "
                     f"source_update={report['parent_update']}, loaded={report['loaded_key_count']}, "
+                    f"new_target_tensors={len(report['new_target_keys'])}, "
                     f"vocabulary_remapped={len(report['row_remappings'])}, "
                     f"EMA step={report['parent_ema_step']}; fresh downstream optimizer/update counter",
                     flush=True,
