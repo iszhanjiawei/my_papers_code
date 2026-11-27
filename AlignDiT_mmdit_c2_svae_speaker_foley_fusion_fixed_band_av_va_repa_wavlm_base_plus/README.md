@@ -1,9 +1,34 @@
-# Current experiment
+# CelebV-Dub Foley 双流文本交叉注意力与双向固定时间带
 
-This independent copy of the adaptive-band speaker experiment adds WavLM-Base+
-REPA with fixed weight 0.1. The adaptive temporal band and delayed CTC schedule
-remain enabled. See [ADAPTIVE_BAND_WAVLM_REPA.md](ADAPTIVE_BAND_WAVLM_REPA.md)
-for the combined experiment's configuration, validation and launch commands.
+本实验基于 `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_adaptive_band_repa_wavlm_base_plus`，采用 Foley `celeb_concat_text` 参考项目中的两项设计。
+
+- 前 12 个 MM-DiT 块先做音视频 Joint Attention。两路更新后的特征分别投影为 Query，沿序列维拼接，共用文本 Key/Value 做一次 Cross Attention。输出按视频、音频序列长度拆分，通过各自的投影和门控写回。最后 6 个块只处理音频。
+- 在 40 Hz 音视频时间轴上，AV 跨模态 logits 加固定高斯偏置 `B[i,j] = -0.5 × ((j-i)/4)²`，VA 加其转置。中心偏移为零，σ 为 4 帧（100 ms），更远的帧按高斯尾部衰减。同模态 logits 的时间偏置为零。
+
+训练从源项目的 S2c 70k EMA 初始化。CelebV-Dub 的文本和采样流程、CAM++ 条件、第 10 个多模态块音频输出上的 WavLM-Base+ REPA（λ=0.1）和延迟 CTC 沿用源项目配置。[训练配置](src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.yaml)
+
+从本副本根目录运行。当前服务器使用 `ROOT_PREFIX=/home`。训练和 150k EMA 的 Setting 1 评测分别使用以下入口，评测需先有本实验生成的 `model_150000.pt` 和同目录的训练契约。
+
+```bash
+export ROOT_PREFIX=/home
+bash scripts/start_foley_fixed_band_av_va_repa_tensorboard.sh
+bash src/aligndit/run/train/finetune_celebvdub_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_4x4090.sh
+```
+
+```bash
+export ROOT_PREFIX=/home
+CKPT_STEP=150000 bash src/aligndit/run/eval/eval_celebvdub_s1_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.sh
+```
+
+在本项目根目录运行架构回归测试。
+
+```bash
+PYTHONPATH=src "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python" -m unittest discover -s tests -p test_foley_fixed_band_repa.py
+```
+
+已用真实 S2c 70k EMA 验证迁移。原权重的 313 个状态张量中有 303 个按值加载，10 个属于父模型的辅助投影。新模型共 818 个状态张量，其余 515 个使用新模型的初始化值。在 A40 上，完整规模模型使用合成输入通过了 BF16 前向和反向检查，覆盖 CTC 权重 0 和 0.03。
+
+随副本保留的 Adaptive Band、GRID 外部参考及 Setting 2 历史评测文档记录的是源实验的设置和数值。
 
 # AlignDiT
 

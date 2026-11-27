@@ -1,5 +1,6 @@
 """Text ablation and actual generated-entry regression checks."""
 import sys
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -7,7 +8,7 @@ import numpy as np
 
 from aligndit.script.eval import infer_celebvdub_setting2_dubbing as adapter
 from aligndit.script.eval.infer_celebvdub_grid_reference import make_sampling_inputs
-from aligndit.script.eval.verify_setting2_target_only_wer import s1_imported_code_hash, word_edits
+from aligndit.script.eval.verify_setting2_target_only_wer import verify, word_edits
 
 
 class TargetOnlyTests(unittest.TestCase):
@@ -47,12 +48,16 @@ class TargetOnlyTests(unittest.TestCase):
         self.assertEqual(word_edits("one two", ""), (2, 2))
         self.assertEqual(word_edits("one", " one "), (0, 1))
 
-    def test_historical_helper_audit_ignores_only_unused_s1_functions(self):
-        source = "VALUE = 1\ndef build_model():\n return VALUE\ndef run():\n pass\n"
-        fingerprint = s1_imported_code_hash(source)
-        self.assertEqual(fingerprint, s1_imported_code_hash(source.replace(" pass", " return 42")))
-        self.assertNotEqual(fingerprint, s1_imported_code_hash(source.replace("VALUE = 1", "VALUE = 2")))
-        self.assertNotEqual(fingerprint, s1_imported_code_hash(source.replace("return VALUE", "return 42")))
+    def test_target_only_comparison_requires_matching_checkpoint(self):
+        shared = {"source_sha256": {}, "checkpoint_sha256": "foley-150k"}
+        baseline = dict(shared, text_input_mode="reference-target", reference_text_conditioned=True,
+                        text_source="reference_and_target")
+        target_only = dict(shared, text_input_mode="target-only", reference_text_conditioned=False,
+                           text_source="supplied_target_GT_dialogue_only", checkpoint_sha256="other-150k")
+        with patch("aligndit.script.eval.verify_setting2_target_only_wer.read_json",
+                   side_effect=[target_only, baseline]):
+            with self.assertRaisesRegex(ValueError, "checkpoint_sha256"):
+                verify(Path("target_only"), Path("baseline"), Path("evaluator"))
 
 
 if __name__ == "__main__":

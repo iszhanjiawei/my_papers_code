@@ -189,7 +189,10 @@ def migrate_s2c_ema_into_model(
     # to match, and the same ten S2c HuBERT tensors are the only ignored keys.
     band = getattr(model.transformer, "temporal_band", None)
     band_keys = set()
-    if band is not None:
+    if band is not None and getattr(model.transformer, "temporal_band_mode", "adaptive") == "fixed":
+        if any(key.startswith("transformer.temporal_band.") for key in target_keys):
+            raise RuntimeError("Fixed Gaussian prior must have no checkpoint state")
+    elif band is not None:
         prefix = "transformer.temporal_band."
         expected_band_keys = {prefix + f"net.{layer}.{suffix}" for layer in (0, 2) for suffix in ("weight", "bias")}
         band_keys = {key for key in target_keys if key.startswith(prefix)}
@@ -233,6 +236,25 @@ def migrate_s2c_ema_into_model(
             raise RuntimeError(
                 "S2c REPA migration requires a new finite 768->2048->2048->768 three-layer projector"
             )
+    # Each dual-stream text CA replaces six nn.MultiheadAttention tensors
+    # with 13 projection/norm tensors and a two-tensor video modulation.
+    # All these MM text-path tensors are newly initialized from the S2c parent.
+    foley_extra_keys = 0
+    if getattr(model.transformer, "joint_av_text_ca", False):
+        for layer in range(model.transformer.n_mm_layers):
+            prefix = f"transformer.transformer_blocks.{layer}."
+            foley_keys = {
+                prefix + "cross_attn." + projection + "." + suffix
+                for projection in ("audio_cross_q", "v_cond_cross_q", "text_cross_kv",
+                                   "audio_cross_proj", "v_cond_cross_proj")
+                for suffix in ("weight", "bias")
+            }
+            foley_keys.update(prefix + "cross_attn." + name + ".weight"
+                              for name in ("audio_cross_q_norm", "v_cond_cross_q_norm", "text_cross_k_norm"))
+            foley_keys.update(prefix + "v_cross_attn_ada." + suffix for suffix in ("weight", "bias"))
+            if not foley_keys.issubset(new_target):
+                raise RuntimeError(f"Incomplete new Foley text attention for MM block {layer}")
+            foley_extra_keys += len(foley_keys) - 6
     actual_counts = (
         len(source_state),
         len(target_state),
@@ -242,10 +264,10 @@ def migrate_s2c_ema_into_model(
     )
     expected_counts = (
         EXPECTED_SOURCE_KEYS,
-        EXPECTED_TARGET_KEYS + int(has_speaker) + len(band_keys) + 6 * int(has_repa),
+        EXPECTED_TARGET_KEYS + int(has_speaker) + len(band_keys) + 6 * int(has_repa) + foley_extra_keys,
         EXPECTED_LOADED_KEYS,
         EXPECTED_IGNORED_SOURCE_KEYS,
-        EXPECTED_NEW_TARGET_KEYS + int(has_speaker) + len(band_keys) + 6 * int(has_repa),
+        EXPECTED_NEW_TARGET_KEYS + int(has_speaker) + len(band_keys) + 6 * int(has_repa) + foley_extra_keys,
     )
     if actual_counts != expected_counts:
         raise RuntimeError(

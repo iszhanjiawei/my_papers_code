@@ -1,6 +1,5 @@
 """Check full target-only ablation coverage, fixed conditions, and corpus WER."""
 import argparse
-import ast
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -27,19 +26,6 @@ def require(ok, message):
         raise ValueError(message)
 
 
-def s1_imported_code_hash(source):
-    """Ignore only S1 CLI/run functions, neither of which Setting2 calls.
-
-    The baseline file is git blob 2cc463b at commit 7032540; commit a90188a
-    subsequently added S1 sharding and memory reporting only to those functions.
-    All module imports, globals, and imported helper definitions remain checked.
-    """
-    tree = ast.parse(source)
-    tree.body = [node for node in tree.body if not (
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in {"run", "parse_args"})]
-    return hashlib.sha256(ast.dump(tree, include_attributes=False).encode()).hexdigest()
-
-
 def word_edits(truth, hypothesis):
     """Independent Levenshtein distance over already normalized ASR word lists."""
     reference, predicted = truth.split(), hypothesis.split()
@@ -59,24 +45,15 @@ def verify(generated, baseline, evaluator):
     require(new["text_input_mode"] == "target-only", "Not target-only inference")
     require(new["reference_text_conditioned"] is False, "Reference text was conditioned")
     require(new["text_source"] == "supplied_target_GT_dialogue_only", "Wrong target text source")
-    invariant_keys = set(old) - {"source_sha256", "text_source", "shared_implementation_sha256"}
-    for key in invariant_keys:
-        require(new[key] == old[key], f"Historical inference configuration changed: {key}")
-    wrapper = "src/aligndit/script/eval/infer_celebvdub_setting2_dubbing.py"
-    s1_helper = "src/aligndit/script/eval/infer_celebvdub_semantic_vae_s1.py"
+    require(old["text_input_mode"] == "reference-target" and old["reference_text_conditioned"] is True,
+            "Expected the same Foley model with concatenated reference and target text")
+    text_fields = {"text_source", "text_input_mode", "reference_text_conditioned"}
+    require(old.keys() == new.keys(), "Inference configuration fields changed")
+    for key in old.keys() - text_fields:
+        require(new[key] == old[key], f"Inference configuration changed: {key}")
     project = Path(__file__).resolve().parents[4]
-    require(new["source_sha256"].keys() == old["source_sha256"].keys(), "Source inventory changed")
-    for path, digest in old["source_sha256"].items():
-        if path == s1_helper:
-            require(digest == "7fdc7dfddadce612016a54c377495d288a441a432e3c25939237a232a3108d95",
-                    "Unexpected historical S1 helper source")
-            require(sha256(project / path) == new["source_sha256"][path], "S1 helper changed after inference")
-            require(s1_imported_code_hash((project / path).read_text())
-                    == "23deaf10b5c672d228a9dfc4ff931a9b25e8202896295c819b0d1358622a380b",
-                    "Imported S1 helper behavior differs from historical baseline")
-        elif path != wrapper:
-            require(new["source_sha256"][path] == digest, f"Non-text inference source changed: {path}")
-        require(sha256(project / path) == new["source_sha256"][path], f"Source changed after inference: {path}")
+    for path, digest in new["source_sha256"].items():
+        require(sha256(project / path) == digest, f"Source changed after inference: {path}")
     require(sha256(new["checkpoint"]) == new["checkpoint_sha256"], "Checkpoint hash changed")
     require(sha256(new["config"]) == new["config_sha256"], "Model configuration hash changed")
     require(sha256(new["manifest"]) == new["manifest_sha256"], "Pair manifest hash changed")
@@ -163,7 +140,6 @@ def verify(generated, baseline, evaluator):
               "targets": 115, "unique_reference_clips": len(reference_ids), "text_input_mode": "target-only",
               "checkpoint_update": new["checkpoint_update"], "reference_condition_hashes_match_baseline": True,
               "all_nontext_configuration_matches_baseline": True, "audio_geometry_matches_baseline": True,
-              "s1_helper_source_audit": "S1-only run/parse_args changed; all imported helpers and module globals match historical AST",
               "target_audio_seconds": total_samples / 16000, "reference_words": words,
               "errors": errors, "wer_percent": wer, "baseline_errors": old_errors,
               "baseline_wer_percent": baseline_wer, "delta_percentage_points": wer - baseline_wer,

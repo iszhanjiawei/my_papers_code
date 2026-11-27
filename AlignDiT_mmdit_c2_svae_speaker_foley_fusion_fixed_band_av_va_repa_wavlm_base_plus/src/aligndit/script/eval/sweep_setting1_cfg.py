@@ -18,8 +18,8 @@ PREFIX = os.environ.get("ROOT_PREFIX", "")
 WORKSPACE = Path(PREFIX + "/zjw524/projects/alignDiT_idea6")
 DATA = Path(PREFIX + "/zjw524/projects/data")
 ASSETS = Path(PREFIX + "/zjw524/alignDiT_pretrain_models")
-CKPTS = DATA / "ckpts/AlignDiT_MMDiT_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char"
-CONFIG = PROJECT / "src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus.yaml"
+CKPTS = DATA / "ckpts/AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char"
+CONFIG = PROJECT / "src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.yaml"
 LIST = DATA / "celebvdub_test_s1.lst"
 SCRIPT = PROJECT / "src/aligndit/script"
 

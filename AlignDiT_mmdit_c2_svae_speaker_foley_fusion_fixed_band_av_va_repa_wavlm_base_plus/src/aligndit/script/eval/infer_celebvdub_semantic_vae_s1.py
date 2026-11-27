@@ -19,6 +19,7 @@ import torch
 import torchaudio
 from hydra import compose, initialize_config_dir
 from hydra.utils import get_class
+from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from aligndit.model.cfm_vt import CFM_VT
@@ -119,6 +120,19 @@ def load_composed_config(config_path: Path):
 def build_model(config_path: Path, checkpoint_path: Path, expected_step: int, device: torch.device) -> CFM_VT:
     config = load_composed_config(config_path)
     arch = config.model.arch
+    if arch.get("joint_av_text_ca") or "foley_fixed_band_av_va" in config.model.name:
+        # Fixed Gaussian priors have no state tensors. Strict EMA loading alone
+        # cannot detect a different bandwidth, direction, or training variant.
+        contract = read_json_object(checkpoint_path.parent / "speaker_training_contract.json")
+        trained_model = contract["config"]["model"]
+        if (
+            contract["experiment"] != config.model.name
+            or trained_model["name"] != config.model.name
+            or trained_model["arch"] != OmegaConf.to_container(arch, resolve=True)
+            or trained_model["repa_lambda"] != config.model.repa_lambda
+        ):
+            raise ValueError("Foley checkpoint training contract differs from the selected model configuration")
+
     representation = config.model.audio_representation
     required_arch = {
         "depth": 18,
@@ -438,7 +452,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=Path(__file__).parents[2]
-        / "config/finetune_celebvdub_mm_c2_semantic_vae_direct_speaker_ctc003_warmup.yaml",
+        / "config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.yaml",
     )
     parser.add_argument(
         "--cache-root",

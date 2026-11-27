@@ -12,7 +12,7 @@ from aligndit.script.eval.infer_celebvdub_grid_reference import (
     make_sampling_inputs,
     reference_target_text,
 )
-from aligndit.script.misc.smoke_test_adaptive_temporal_band import BASE_ARCH, BAND_ARCH
+from aligndit.script.misc.smoke_test_adaptive_temporal_band import BASE_ARCH
 
 
 class GridInferenceTests(unittest.TestCase):
@@ -52,7 +52,11 @@ class GridInferenceTests(unittest.TestCase):
             self.inputs(2, 2, "x" * 4096)
 
     def test_real_cfg_sampler_with_different_prompt_lengths(self):
-        arch = {**BASE_ARCH, **BAND_ARCH, "video_dim": 1024}
+        arch = {
+            **BASE_ARCH, "video_dim": 1024, "joint_av_text_ca": True,
+            "temporal_band_enabled": True, "temporal_band_mode": "fixed",
+            "temporal_band_bidirectional": True,
+        }
         model = CFM_VT(
             transformer=DiT_VT_MMDiT(**arch),
             mel_spec_module=PrecomputedAudioRepresentation(64, 16000, 400),

@@ -20,7 +20,7 @@ def select_model_text(reference_text, target_text, mode):
 
 def build_source():
     original = Path(__file__).with_name("infer_celebvdub_setting2.py")
-    expected = "895e471d00fcbba631f5527058dcd0c38dbf9f0ec0324331cc7bc8a91528229e"
+    expected = "87f6259096fd6c1a4819cd617e447ad1c1a77f75b5efdee28e4528d976ffb94c"
     if hashlib.sha256(original.read_bytes()).hexdigest() != expected:
         raise RuntimeError("Shared inference implementation changed; audit the dubbing adapter before use")
     source = original.read_text()
@@ -39,10 +39,10 @@ def build_source():
          'default=root / "alignDiT_idea6/my_papers_code/celebvdub_setting2/inference.jsonl"'),
         ('default=bench / "cache/lipvoicer_vsr_text"',
          'default=root / "alignDiT_idea6/my_papers_code/celebvdub_setting2/text"'),
-        ('default=bench / "results/Ours_150k"',
-         'default=bench / "results/setting2_gttext_dubbing/Ours_150k"'),
-        ('default=bench / "cache/ours_svae_campplus_setting2"',
-         'default=bench / "cache/ours_svae_campplus_setting2_gttext_dubbing"'),
+        ('default=bench / "results/Foley_Fixed_Band_REPA_150k"',
+         'default=bench / "results/setting2_gttext_dubbing/Foley_Fixed_Band_REPA_150k"'),
+        ('default=bench / "cache/foley_fixed_band_repa_svae_campplus_setting2"',
+         'default=bench / "cache/foley_fixed_band_repa_svae_campplus_setting2_gttext_dubbing"'),
         ('parser.add_argument("--vsr-text-dir",',
          'parser.add_argument("--text-input-mode", choices=["reference-target", "target-only"], default="reference-target", help="Text passed to model.sample; audio prompt and speaker conditioning are unchanged")\n    parser.add_argument("--vsr-text-dir",'),
         ('text = reference_target_text(row["reference_text"], row["vsr_text"])',
@@ -60,7 +60,7 @@ def build_source():
     source = source.replace("--vsr-text-dir", "--target-text-dir")
     source = source.replace("reference or VSR transcript", "reference or supplied GT transcript")
     source = source.replace("and visual-only transcripts", "and supplied GT dialogue")
-    source = source.replace('f"Ours_{args.step // 1000}k"', 'f"Ours_GTText_Dubbing_{args.step // 1000}k"')
+    source = source.replace('f"Foley_Fixed_Band_REPA_{args.step // 1000}k"', 'f"Foley_Fixed_Band_REPA_GTText_Dubbing_{args.step // 1000}k"')
     return source
 
 

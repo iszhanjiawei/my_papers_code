@@ -15,7 +15,6 @@ from aligndit.model.modules import PrecomputedAudioRepresentation
 from aligndit.model.repa import validate_repa_cache_metadata
 from aligndit.model.semantic_vae_dataset import SemanticVaeCelebVDubDataset
 from aligndit.model.speaker_embedding import validate_speaker_cache_metadata
-from aligndit.model.trainer_semantic_vae_adaptive_band import SemanticVaeAdaptiveBandTrainer
 from aligndit.model.trainer_semantic_vae_direct_speaker import SemanticVaeDirectC2SpeakerTrainer
 from f5_tts.model.utils import get_tokenizer
 
@@ -29,18 +28,26 @@ def main(model_cfg):
     model_cls = hydra.utils.get_class(f"aligndit.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
     audio_cfg = model_cfg.model.audio_representation
-    temporal_band_enabled = bool(model_arc.get("temporal_band_enabled", False))
-    if temporal_band_enabled:
-        if int(model_arc.n_mm_layers) != 12 or int(model_arc.audio_video_ratio) != 1:
-            raise ValueError("This adaptive-band experiment retains 12 MM layers and aligned input rates")
-        if any(float(model_arc[key]) != float(audio_cfg.frame_rate) for key in (
-            "temporal_band_audio_fps", "temporal_band_video_fps"
-        )):
-            raise ValueError("Temporal-band rates must match the already-interpolated 40-Hz cache")
-        # Never allow an enabled experiment to write into an inherited baseline
-        # checkpoint directory, even when a caller selects the wrong YAML.
-        if "adaptive_band" not in str(model_cfg.ckpts.save_dir) or "adaptive_band" not in str(model_cfg.model.name):
-            raise ValueError("Adaptive-band runs require dedicated model.name and ckpts.save_dir")
+    expected = {
+        "joint_av_text_ca": True,
+        "n_mm_layers": 12,
+        "audio_video_ratio": 1,
+        "temporal_band_enabled": True,
+        "temporal_band_mode": "fixed",
+        "temporal_band_bidirectional": True,
+        "temporal_band_audio_fps": 40.0,
+        "temporal_band_video_fps": 40.0,
+        "temporal_band_fixed_offset_seconds": 0.0,
+        "temporal_band_fixed_sigma_seconds": 0.1,
+    }
+    for key, value in expected.items():
+        if model_arc.get(key) != value:
+            raise ValueError(f"Foley AV/VA training requires {key}={value!r}")
+    marker = "foley_fixed_band_av_va_repa_wavlm_base_plus"
+    if marker not in model_cfg.model.name or marker not in Path(model_cfg.ckpts.save_dir).name:
+        raise ValueError("Foley REPA runs require a dedicated model.name and ckpts.save_dir")
+    if float(audio_cfg.frame_rate) != 40 or float(model_cfg.model.repa_lambda) != 0.1:
+        raise ValueError("This Foley run requires 40-Hz latents and WavLM-Base+ REPA weight 0.1")
     if model_cfg.ckpts.log_samples:
         raise ValueError("Use the Semantic-VAE inference entry for samples; inherited mel sample logging is unsupported")
     speaker_dim = int(model_arc.speaker_dim)
@@ -106,8 +113,7 @@ def main(model_cfg):
         repa_lambda=repa_lambda,
     )
 
-    trainer_cls = SemanticVaeAdaptiveBandTrainer if temporal_band_enabled else SemanticVaeDirectC2SpeakerTrainer
-    trainer = trainer_cls(
+    trainer = SemanticVaeDirectC2SpeakerTrainer(
         model,
         epochs=model_cfg.optim.epochs,
         learning_rate=model_cfg.optim.learning_rate,
@@ -167,29 +173,25 @@ def main(model_cfg):
                 "loss": "mean 1-cosine on the flow-matching generation mask only",
                 "inference": "projector weights load strictly but the auxiliary head is not called",
             }
-        if temporal_band_enabled:
-            contract["temporal_band"] = {
-                "formula": "B[i,j] = -(t_video[j] - t_audio[i] - delta[i])**2 / (2*sigma[i]**2)",
-                "predictor_input": "branch-specific video embedding before all joint audio/video attention",
-                "sharing": "one predictor, shared over all heads and the first 12 MM blocks",
-                "scope": "audio queries to video keys only; shared joint softmax retained",
-                "initialization": (
-                    f"zero offset and sigma={model_arc.temporal_band_init_sigma_seconds} seconds; "
-                    "not function-preserving when enabled"
-                ),
-                "extra_loss": False,
-                "mass_preservation": False,
-                "parameters": {k: v for k, v in OmegaConf.to_container(model_arc, resolve=True).items()
-                               if k.startswith("temporal_band_")},
-                "parameter_count": sum(p.numel() for p in model.transformer.temporal_band.parameters()),
-            }
+        contract["temporal_band"] = {
+            "mode": "fixed Gaussian",
+            "offset_seconds": model_arc.temporal_band_fixed_offset_seconds,
+            "sigma_seconds": model_arc.temporal_band_fixed_sigma_seconds,
+            "scope": "AV and VA logit blocks with transposed bias; AA and VV unmodified",
+            "trainable_parameters": 0,
+        }
+        contract["text_cross_attention"] = "joint video and audio queries attend to shared text keys and values"
         contract_path = save_dir / "speaker_training_contract.json"
         if contract_path.exists():
             previous = json.loads(contract_path.read_text())
             if previous != contract:
                 raise RuntimeError(f"Refusing to reuse a checkpoint directory with a different contract: {save_dir}")
         else:
-            contract_path.write_text(json.dumps(contract, indent=2, ensure_ascii=False) + "\n")
+            if any(save_dir.glob("model_*.pt")):
+                raise RuntimeError(f"Existing checkpoint has no training contract: {save_dir}")
+            temporary = contract_path.with_suffix(f".{os.getpid()}.tmp")
+            temporary.write_text(json.dumps(contract, indent=2, ensure_ascii=False) + "\n")
+            temporary.replace(contract_path)
 
     train_dataset = SemanticVaeCelebVDubDataset(
         manifest_path=model_cfg.datasets.manifest_path,
@@ -219,7 +221,7 @@ def main(model_cfg):
             f"CTC zero_infinity-only={train_dataset.ctc_infeasible_count}; "
             f"ctc_lambda=0 through update {model_cfg.model.ctc_warmup_start}, "
             f"linear to {model_cfg.model.ctc_lambda} at update {model_cfg.model.ctc_warmup_end}; "
-            f"repa_lambda={repa_lambda}; temporal_band={temporal_band_enabled}",
+            f"repa_lambda={repa_lambda}; temporal_band=fixed AV/VA",
             flush=True,
         )
     trainer.finetune(

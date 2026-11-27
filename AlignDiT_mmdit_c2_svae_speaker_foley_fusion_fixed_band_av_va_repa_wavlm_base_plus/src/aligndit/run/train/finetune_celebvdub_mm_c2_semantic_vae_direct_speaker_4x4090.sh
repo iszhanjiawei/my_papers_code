@@ -43,7 +43,7 @@ while IFS=',' read -r gpu_index memory_used; do
     fi
 done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
 
-train_config="${TRAIN_CONFIG:-finetune_celebvdub_mm_c2_svae_speaker_adaptive_band_repa_wavlm_base_plus}"
+train_config="${TRAIN_CONFIG:-finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus}"
 echo "Launching isolated $project_root with config=$train_config (inherited LR/CTC schedule)" >&2
 exec env \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
@@ -59,7 +59,7 @@ exec env \
         --num_machines 1 \
         --dynamo_backend no \
         --num_processes 4 \
-        --main_process_port "${TRAIN_PORT:-29634}" \
+        --main_process_port "${TRAIN_PORT:-29674}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
         --config-name "$train_config" \
         "$@"
