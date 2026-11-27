@@ -216,31 +216,35 @@ class HunyuanDualTextCrossAttention(nn.Module):
             text = text.masked_fill(~text_mask.unsqueeze(-1), 0.0)
 
         q_a = self.audio_cross_q_norm(self._split_heads(self.audio_cross_q(audio)))
-        q_v = self.v_cond_cross_q_norm(self._split_heads(self.v_cond_cross_q(video)))
         key, value = self.text_cross_kv(text).chunk(2, dim=-1)
         key = self.text_cross_k_norm(self._split_heads(key))
         value = self._split_heads(value)
         q_a = self.apply_rope(q_a).to(value.dtype)
-        q_v = self.apply_rope(q_v).to(value.dtype)
         key = self.apply_rope(key).to(value.dtype)
 
         # Query order does not mix streams: each query independently attends
         # to the same text keys/values, then receives its own output projection.
-        query = torch.cat((q_v, q_a), dim=2)
+        query = q_a
+        if video is not None:
+            q_v = self.v_cond_cross_q_norm(self._split_heads(self.v_cond_cross_q(video)))
+            query = torch.cat((self.apply_rope(q_v).to(value.dtype), q_a), dim=2)
         attn_mask = text_mask[:, None, None, :] if text_mask is not None else None
         output = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False
         )
         output = output.transpose(1, 2).reshape(audio.shape[0], -1, self.heads * self.head_dim)
-        video_output, audio_output = torch.split(output, (video.shape[1], audio.shape[1]), dim=1)
-        video_output = self.v_cond_cross_proj(video_output)
+        audio_output, video_output = output, None
+        if video is not None:
+            video_output, audio_output = output.split((video.shape[1], audio.shape[1]), dim=1)
+            video_output = self.v_cond_cross_proj(video_output)
         audio_output = self.audio_cross_proj(audio_output)
         if text_mask is not None:
             # SDPA returns zero for an all-masked row; also suppress the output
             # projection bias, so an empty condition supplies no CA residual.
             empty_text = ~text_mask.any(dim=-1)
             audio_output = audio_output.masked_fill(empty_text[:, None, None], 0.0)
-            video_output = video_output.masked_fill(empty_text[:, None, None], 0.0)
+            if video_output is not None:
+                video_output = video_output.masked_fill(empty_text[:, None, None], 0.0)
         return audio_output, video_output
 
 
@@ -314,6 +318,17 @@ class MMDiTBlock_VT(DiTCrossBlock):
             self.cross_attn = HunyuanDualTextCrossAttention(dim, heads, text_dim)
             self.v_cross_attn_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
             self.v_cross_attn_ada = nn.Linear(dim, dim * 3)
+
+    def forward_text_audio(self, x, text, t, mask, text_mask, rope):
+        """Pretrain the same audio/text projections used during video dubbing."""
+        norm, gate, shift_ff, scale_ff, gate_ff = self.attn_norm(x, emb=t)
+        x = x + gate[:, None] * self.attn(x=norm, mask=mask, rope=rope)
+        shift, scale, ca_gate = self.cross_attn_ada(F.silu(t)).chunk(3, dim=-1)
+        query = self.cross_attn_norm(x) * (1 + scale[:, None]) + shift[:, None]
+        update, _ = self.cross_attn(query, None, text, text_mask=text_mask)
+        x = x + ca_gate[:, None] * update
+        norm = self.ff_norm(x) * (1 + scale_ff[:, None]) + shift_ff[:, None]
+        return (x + gate_ff[:, None] * self.ff(norm)).masked_fill(~mask[..., None], 0.0)
 
     def _qkv(self, attn, x):
         batch_size = x.shape[0]
@@ -534,7 +549,14 @@ class DiT_VT_MMDiT(DiT):
         temporal_band_fixed_offset_seconds=0.0,
         temporal_band_fixed_sigma_seconds=0.100,
         temporal_band_bidirectional=False,
+        text_audio_only=False,
     ):
+        if text_audio_only and (
+            not joint_av_text_ca or temporal_band_enabled or repa_layer is not None or prompt_isolated_ca
+            or n_text_layers not in (None, n_mm_layers) or not text_mask_padding
+        ):
+            raise ValueError("LibriTTS requires audio self-attention, Foley text CA and masked text padding")
+        self.text_audio_only = text_audio_only
         if type(temporal_band_bidirectional) is not bool or type(joint_av_text_ca) is not bool:
             raise TypeError("temporal_band_bidirectional and joint_av_text_ca must be boolean")
         if temporal_band_bidirectional and (not temporal_band_enabled or temporal_band_mode != "fixed"):
@@ -762,6 +784,86 @@ class DiT_VT_MMDiT(DiT):
             else None
         )
 
+        if self.text_audio_only:
+            self.video_embed.requires_grad_(False)
+            for block in self.transformer_blocks[:self.n_mm_layers]:
+                for name, param in block.named_parameters():
+                    if name.startswith(("v_", "cross_attn.v_cond_")):
+                        param.requires_grad_(False)
+
+    def _forward_text_audio(
+        self, x, cond, text, time, *, mask, text_mask, generation_mask,
+        drop_audio_cond, drop_text, speaker_embedding, drop_speaker, cache, compute_ctc,
+    ):
+        _validate_generation_mask(x, generation_mask)
+        if generation_mask.device != x.device:
+            raise ValueError("generation_mask must be on the latent device")
+        batch, length = x.shape[:2]
+        if cond.shape != x.shape:
+            raise ValueError("Text/audio conditioning must match the noisy latent shape")
+        if mask is None:
+            mask = torch.ones((batch, length), device=x.device, dtype=torch.bool)
+        if mask.dtype != torch.bool or mask.shape != (batch, length) or mask.device != x.device:
+            raise ValueError("Audio mask must be bool [batch, audio frames] on the latent device")
+        if not mask.any(dim=1).all():
+            raise ValueError("Every sample must contain valid audio frames")
+        if text_mask is None:
+            text_mask = text != -1
+        if text.ndim != 2 or text.shape[0] != batch or text_mask.shape != text.shape:
+            raise ValueError("Text and text_mask must have matching [batch, tokens] shapes")
+        if text_mask.dtype != torch.bool or text_mask.device != x.device or not text_mask.any(dim=1).all():
+            raise ValueError("Every sample requires a nonempty boolean text mask on the latent device")
+        if time.ndim == 0:
+            time = time.repeat(batch)
+        t = self.time_embed(time)
+        speaker_delta = self.get_speaker_delta(
+            speaker_embedding, t,
+            drop_speaker=drop_audio_cond if drop_speaker is None else drop_speaker,
+        )
+        text = text.masked_fill(~text_mask, -1)
+        text_embed = self.text_embed(text, text.shape[1], drop_text=drop_text, audio_mask=mask)
+        if self.normalize_text_context:
+            text_embed, text_mask = self._stabilize_text_context(text_embed, text_mask)
+
+        # Mask before and between input convolutions: padded latent values must
+        # never leak into a real frame through convolution or attention.
+        x = x.masked_fill(~mask[..., None], 0.0)
+        cond = torch.zeros_like(cond) if drop_audio_cond else cond.masked_fill(~mask[..., None], 0.0)
+        x = self.input_embed.proj(torch.cat((x, cond), dim=-1)).masked_fill(~mask[..., None], 0.0)
+        positional = x.transpose(1, 2)
+        for layer in self.input_embed.conv_pos_embed.conv1d:
+            positional = layer(positional).masked_fill(~mask[:, None], 0.0)
+        x = (x + positional.transpose(1, 2)).masked_fill(~mask[..., None], 0.0)
+        residual = x if self.long_skip_connection is not None else None
+        rope = self.rotary_embed.forward_from_seq_len(length)
+        lens = mask.sum(dim=1)
+        intermediates_ctc = {}
+        for index, block in enumerate(self.transformer_blocks):
+            block_t = t + speaker_delta if (
+                speaker_delta is not None and index >= self.speaker_condition_start_layer
+            ) else t
+            if index < self.n_mm_layers:
+                args = (x, text_embed, block_t, mask, text_mask, rope)
+                if self.checkpoint_activations and self.training:
+                    x = torch.utils.checkpoint.checkpoint(
+                        block.forward_text_audio, *args, use_reentrant=False,
+                    )
+                else:
+                    x = block.forward_text_audio(*args)
+            else:
+                if self.checkpoint_activations and self.training:
+                    x = torch.utils.checkpoint.checkpoint(block, x, block_t, mask, rope, use_reentrant=False)
+                else:
+                    x = block(x, block_t, mask=mask, rope=rope)
+                x = x.masked_fill(~mask[..., None], 0.0)
+            if compute_ctc and not cache and index in self.layer_map_ctc:
+                z_tilde, z_lens = self.projectors_ctc[self.layer_map_ctc[index]](x, lens)
+                intermediates_ctc[index] = {"z_tilde": z_tilde, "z_lens": z_lens}
+        if residual is not None:
+            x = self.long_skip_connection(torch.cat((x, residual), dim=-1))
+        output = self.proj_out(self.norm_out(x, t)).masked_fill(~mask[..., None], 0.0)
+        return output, intermediates_ctc
+
     def get_speaker_delta(self, speaker_embedding, t, *, drop_speaker=False):
         if self.speaker_proj is None:
             if speaker_embedding is not None:
@@ -888,7 +990,16 @@ class DiT_VT_MMDiT(DiT):
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
         return_repa: bool = False,
+        compute_ctc: bool = True,
     ):
+        if self.text_audio_only:
+            if video is not None or cfg_infer or return_repa:
+                raise ValueError("Use CFMTextAudio with video=None for LibriTTS text/audio training or sampling")
+            return self._forward_text_audio(
+                x, cond, text, time, mask=mask, text_mask=text_mask, generation_mask=generation_mask,
+                drop_audio_cond=drop_audio_cond, drop_text=drop_text, drop_speaker=drop_speaker,
+                speaker_embedding=speaker_embedding, cache=cache, compute_ctc=compute_ctc,
+            )
         batch, seq_len = x.shape[0], x.shape[1]
         video_len = video.shape[1]
         if generation_mask is None:

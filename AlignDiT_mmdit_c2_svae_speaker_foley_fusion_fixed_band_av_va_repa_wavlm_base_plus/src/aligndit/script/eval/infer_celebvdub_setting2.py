@@ -217,7 +217,7 @@ def run(args):
     print(f"Strict initialized EMA model load passed, update={args.step}", flush=True)
     time_grid = get_epss_timesteps(args.nfe, device=device, dtype=torch.float32)
     time_grid = time_grid + args.sway * (torch.cos(torch.pi / 2 * time_grid) - 1 + time_grid)
-    config = {"method": f"Foley_Fixed_Band_REPA_{args.step // 1000}k", "checkpoint": str(args.checkpoint),
+    config = {"method": f"Foley_Fixed_Band_REPA_LibriTTS_{args.step // 1000}k", "checkpoint": str(args.checkpoint),
               "checkpoint_sha256": sha256_file(args.checkpoint), "checkpoint_update": args.step,
               "use_ema": True, "config": str(args.config), "config_sha256": sha256_file(args.config),
               "resolved_config": OmegaConf.to_container(cfg, resolve=True),
@@ -300,9 +300,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=bench / "setting2/inference.jsonl")
     parser.add_argument("--vsr-text-dir", type=Path, default=bench / "cache/lipvoicer_vsr_text")
-    parser.add_argument("--output-dir", type=Path, default=bench / "results/Foley_Fixed_Band_REPA_150k")
+    parser.add_argument("--output-dir", type=Path, default=bench / "results/Foley_Fixed_Band_REPA_LibriTTS_150k")
     parser.add_argument("--reference-cache", type=Path, default=bench / "cache/foley_fixed_band_repa_svae_campplus_setting2")
-    parser.add_argument("--config", type=Path, default=project / "src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.yaml")
+    parser.add_argument("--config", type=Path, default=project / "src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts.yaml")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--step", type=int, default=150000)
     parser.add_argument("--semantic-vae-repo", type=Path, default=root / "alignDiT_idea6/papers_codes/Semantic-VAE")

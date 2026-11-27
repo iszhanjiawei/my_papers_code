@@ -113,6 +113,7 @@ def main(model_cfg):
         repa_lambda=repa_lambda,
     )
 
+    initialization_mode = model_cfg.ckpts.get("initialization_mode", "s2c")
     trainer = SemanticVaeDirectC2SpeakerTrainer(
         model,
         epochs=model_cfg.optim.epochs,
@@ -138,6 +139,7 @@ def main(model_cfg):
         local_vocoder_path="",
         model_cfg_dict=OmegaConf.to_container(model_cfg, resolve=True),
         ema_kwargs=model_cfg.ema,
+        initialization_mode=initialization_mode,
         parent_contract_path=model_cfg.ckpts.parent_contract_path,
         expected_parent_sha256=model_cfg.ckpts.expected_parent_sha256,
         expected_parent_size=model_cfg.ckpts.expected_parent_size,
@@ -158,8 +160,16 @@ def main(model_cfg):
             "config": OmegaConf.to_container(model_cfg, resolve=True),
             "speaker_cache_metadata": speaker_metadata,
             "repa_cache_metadata": repa_metadata,
-            "initialization": "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter",
-            "speaker_condition": "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17",
+            "initialization": (
+                "LibriTTS Foley text/audio EMA, new optimizer/update counter"
+                if initialization_mode == "libritts_text_audio"
+                else "same S2c 70k EMA parent as Direct-C2, new optimizer/update counter"
+            ),
+            "speaker_condition": (
+                "L2 CAM++ -> LibriTTS-pretrained bias-free Linear(192,768), blocks 12..17"
+                if initialization_mode == "libritts_text_audio"
+                else "L2 CAM++ -> zero-initialized bias-free Linear(192,768), blocks 12..17"
+            ),
             "seed": int(model_cfg.seed),
             "tensorboard_logdir": str(Path("runs", exp_name).resolve()),
         }

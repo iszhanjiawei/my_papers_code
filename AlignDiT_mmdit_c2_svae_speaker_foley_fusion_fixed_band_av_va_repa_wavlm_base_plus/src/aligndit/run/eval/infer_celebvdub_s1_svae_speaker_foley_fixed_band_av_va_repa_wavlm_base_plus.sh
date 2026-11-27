@@ -15,7 +15,7 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char"
+checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts_ctc003_warmup10k30k_40hz_CelebVDub_char"
 step="${CKPT_STEP:-200000}"
 checkpoint="$checkpoint_dir/model_${step}.pt"
 cfg_video="${CFG_VIDEO:-2.0}"
@@ -33,7 +33,7 @@ CUDA_VISIBLE_DEVICES="${EVAL_GPU:-0}" OMP_NUM_THREADS=1 PYTHONPATH="$project_roo
 "$python_bin" -u src/aligndit/script/eval/infer_celebvdub_semantic_vae_s1.py \
     --checkpoint "$checkpoint" \
     --step "$step" \
-    --config src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.yaml \
+    --config src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts.yaml \
     --output-dir "$output_dir" \
     --cfg-video "$cfg_video" \
     --cfg-text "${CFG_TEXT:-5.0}" \

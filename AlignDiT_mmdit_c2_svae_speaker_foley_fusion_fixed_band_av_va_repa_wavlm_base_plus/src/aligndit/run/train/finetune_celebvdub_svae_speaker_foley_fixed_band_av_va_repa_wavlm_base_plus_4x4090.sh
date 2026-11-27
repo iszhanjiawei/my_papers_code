@@ -15,14 +15,13 @@ source "$project_root/env.sh"
 cd "$project_root"
 
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
-parent_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_SemanticVAE_mel_warmstart_s2c_40hz_LibriSpeech"
+config_name="${FOLEY_FINETUNE_CONFIG:-finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts}"
 repa_cache="${ROOT_PREFIX}/zjw524/projects/data/CelebVDub/wavlm_base_plus_repa_final_fp16"
 if [[ ! -x "$python_bin" ]]; then
     echo "Missing AlignDiT Python interpreter: $python_bin" >&2
     exit 1
 fi
-for path in "$parent_dir/model_70000.pt" "$parent_dir/training_contract.json" \
-    "$repa_cache/metadata.json" "$repa_cache/coverage_report.json"; do
+for path in "$repa_cache/metadata.json" "$repa_cache/coverage_report.json"; do
     if [[ ! -f "$path" || -L "$path" ]]; then
         echo "Missing required regular file: $path" >&2
         exit 1
@@ -58,5 +57,5 @@ exec env \
         --num_processes 4 \
         --main_process_port "${TRAIN_PORT:-29674}" \
         src/aligndit/script/train/finetune_semantic_vae_c2_direct_speaker.py \
-        --config-name finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus \
+        --config-name "$config_name" \
         "$@"

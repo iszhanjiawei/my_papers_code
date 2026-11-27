@@ -5,9 +5,28 @@
 - 前 12 个 MM-DiT 块先做音视频 Joint Attention。两路更新后的特征分别投影为 Query，沿序列维拼接，共用文本 Key/Value 做一次 Cross Attention。输出按视频、音频序列长度拆分，通过各自的投影和门控写回。最后 6 个块只处理音频。
 - 在 40 Hz 音视频时间轴上，AV 跨模态 logits 加固定高斯偏置 `B[i,j] = -0.5 × ((j-i)/4)²`，VA 加其转置。中心偏移为零，σ 为 4 帧（100 ms），更远的帧按高斯尾部衰减。同模态 logits 的时间偏置为零。
 
-训练从源项目的 S2c 70k EMA 初始化。CelebV-Dub 的文本和采样流程、CAM++ 条件、第 10 个多模态块音频输出上的 WavLM-Base+ REPA（λ=0.1）和延迟 CTC 沿用源项目配置。[训练配置](src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.yaml)
+## LibriTTS 文本条件预训练
 
-从本副本根目录运行。当前服务器使用 `ROOT_PREFIX=/home`。训练和 150k EMA 的 Setting 1 评测分别使用以下入口，评测需先有本实验生成的 `model_150000.pt` 和同目录的训练契约。
+训练分为两段。第一段从 LibriSpeech 纯音频 S2c 的 `model_70000.pt` 加载 EMA，使用 LibriTTS 的音频和对应转录文本训练 50,000 次更新。前 12 个多模态块在此阶段只运行音频流，音频 Query 读取文本 Key/Value。CAM++ 提供说话人条件，训练目标是预测遮盖音频区域的流速度。第二段用这次训练得到的 EMA 初始化 CelebV-Dub 模型，启用音视频双流、双向高斯先验、CTC 和第 10 层的 WavLM-Base+ REPA（λ=0.1）。[预训练配置](src/aligndit/config/pretrain_libritts_foley.yaml) · [下游配置](src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts.yaml)
+
+数据来自 `/home/zjw524/datasets/LibriTTS_460h` 下的 train-clean-100 和 train-clean-360。训练入口读取已提取的 40 Hz Semantic-VAE latent、转录文本和 CAM++ 缓存，路径为 `${ROOT_PREFIX}/zjw524/projects/data/LibriTTS_text_audio_svae1000k_seed666_fp32`。缓存包含 147,154 条训练样本和 2,582 条验证样本。预训练使用 8 卡 BF16，每卡预算 2,400 帧、最多 16 条，峰值学习率 5e-5，预热 5,000 步。
+
+在本项目根目录执行以下命令可启动新的 LibriTTS 训练。
+
+```bash
+export ROOT_PREFIX=/home
+mkdir -p logs
+TENSORBOARD_PORT=6075 \
+  TENSORBOARD_LOGDIR="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_LibriTTS_foley_text_audio_12CA6A_50k/tensorboard" \
+  bash scripts/start_foley_fixed_band_av_va_repa_tensorboard.sh
+setsid bash src/aligndit/run/train/pretrain_libritts_foley_8xa40.sh > logs/pretrain_libritts_foley.log 2>&1 < /dev/null &
+```
+
+权重保存在 `${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_LibriTTS_foley_text_audio_12CA6A_50k/`，TensorBoard 日志位于该目录的 `tensorboard/`。默认每 1,000 步验证并保存。续训时向同一脚本传入 `ckpts.resume=/absolute/path/to/model_XXXXXXXX.pt`，恢复同一轮八卡训练。
+
+## CelebV-Dub 下游训练
+
+LibriTTS 达到 50k 后，以下入口从 `model_00050000.pt` 初始化音频与文本模块，单独开始 CelebV-Dub 更新计数。新配置使用独立的下游权重目录。[下游训练入口](src/aligndit/run/train/finetune_celebvdub_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_4x4090.sh)
 
 ```bash
 export ROOT_PREFIX=/home
@@ -15,18 +34,20 @@ bash scripts/start_foley_fixed_band_av_va_repa_tensorboard.sh
 bash src/aligndit/run/train/finetune_celebvdub_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_4x4090.sh
 ```
 
+下游训练生成 150k 权重后，使用该权重的 EMA 运行 Setting 1 评测。
+
 ```bash
 export ROOT_PREFIX=/home
 CKPT_STEP=150000 bash src/aligndit/run/eval/eval_celebvdub_s1_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.sh
 ```
 
-在本项目根目录运行架构回归测试。
+在本项目根目录运行回归测试，覆盖文本条件反向传播、LibriTTS 权重迁移和下游推理入口。
 
 ```bash
-PYTHONPATH=src "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python" -m unittest discover -s tests -p test_foley_fixed_band_repa.py
+PYTHONPATH=src "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python" -m unittest discover -s tests -p 'test_*.py'
 ```
 
-已用真实 S2c 70k EMA 验证迁移。原权重的 313 个状态张量中有 303 个按值加载，10 个属于父模型的辅助投影。新模型共 818 个状态张量，其余 515 个使用新模型的初始化值。在 A40 上，完整规模模型使用合成输入通过了 BF16 前向和反向检查，覆盖 CTC 权重 0 和 0.03。
+原始 S2c 直接初始化对照已用真实 70k EMA 验证迁移。原权重的 313 个状态张量中有 303 个按值加载，10 个属于父模型的辅助投影。新模型共 818 个状态张量，其余 515 个使用新模型的初始化值。在 A40 上，完整规模模型使用合成输入通过了 BF16 前向和反向检查，覆盖 CTC 权重 0 和 0.03。
 
 随副本保留的 Adaptive Band、GRID 外部参考及 Setting 2 历史评测文档记录的是源实验的设置和数值。
 

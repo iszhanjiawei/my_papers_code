@@ -11,8 +11,8 @@ cd "$project_root"
 export PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1
 step="${DUBBING_STEP:-200000}"
 benchmark="${ROOT_PREFIX}/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark"
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char"
-output="$benchmark/results/setting2_gttext_dubbing/Foley_Fixed_Band_REPA_$((step / 1000))k"
+checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts_ctc003_warmup10k30k_40hz_CelebVDub_char"
+output="$benchmark/results/setting2_gttext_dubbing/Foley_Fixed_Band_REPA_LibriTTS_$((step / 1000))k"
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
 PYTHONPATH="$project_root/src" "$python_bin" -u \
     -m aligndit.script.eval.infer_celebvdub_setting2_dubbing \

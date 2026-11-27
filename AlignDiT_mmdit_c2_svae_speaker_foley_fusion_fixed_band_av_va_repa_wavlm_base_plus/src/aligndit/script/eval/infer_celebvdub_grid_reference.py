@@ -245,7 +245,7 @@ def parse_args():
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--step", type=int, default=150000)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--config", type=Path, default=Path(__file__).parents[2] / "config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.yaml")
+    parser.add_argument("--config", type=Path, default=Path(__file__).parents[2] / "config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts.yaml")
     parser.add_argument("--cache-root", type=Path, default=root / "data/CelebVDub_svae1000k_sample_seed666_fp32")
     parser.add_argument("--normalization", type=Path, default=root / "data/LibriSpeech_svae1000k_sample_seed666_fp32/state/latents/train_normalization.json")
     parser.add_argument("--test-list", type=Path, default=root / "data/celebvdub_test_s1.lst")

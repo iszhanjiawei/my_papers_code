@@ -1,0 +1,19 @@
+defaults:
+  - finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus
+  - _self_
+
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts_ctc003_warmup10k30k
+
+ckpts:
+  initialization_mode: libritts_text_audio
+  libritts_run_name: AlignDiT_LibriTTS_foley_text_audio_12CA6A_50k
+  pretrained_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${ckpts.libritts_run_name}/model_00050000.pt
+  expected_parent_update: 50000
+  parent_contract_path: null
+  expected_parent_size: null
+  expected_parent_sha256: null
+  expected_parent_contract_sha256: null
+  s2c_sha256: 02e35cf3e0de2a10573fb6efd8e5b7cdf0c59a18ea07807f34e5c7bf9c1395c4
+  libritts_vocab_path: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/LibriTTS_text_audio_svae1000k_seed666_fp32/vocab.txt
+  save_dir: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/ckpts/${model.name}_40hz_CelebVDub_char

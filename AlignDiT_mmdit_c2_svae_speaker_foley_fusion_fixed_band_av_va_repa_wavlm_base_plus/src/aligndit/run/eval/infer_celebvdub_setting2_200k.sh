@@ -12,8 +12,8 @@ export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
 python_bin="${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python"
 benchmark="${ROOT_PREFIX}/zjw524/projects/alignDiT_idea6/Video-to-Speech-benchmark"
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char"
-output="$benchmark/results/Foley_Fixed_Band_REPA_200k"
+checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts_ctc003_warmup10k30k_40hz_CelebVDub_char"
+output="$benchmark/results/Foley_Fixed_Band_REPA_LibriTTS_200k"
 PYTHONPATH="$project_root/src" "$python_bin" -u \
     -m aligndit.script.eval.infer_celebvdub_setting2 \
     --checkpoint "$checkpoint_dir/model_200000.pt" --step 200000 \

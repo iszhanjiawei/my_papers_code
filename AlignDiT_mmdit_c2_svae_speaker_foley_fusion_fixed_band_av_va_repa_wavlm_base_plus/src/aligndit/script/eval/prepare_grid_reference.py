@@ -454,7 +454,7 @@ def parse_args() -> argparse.Namespace:
     project = Path(__file__).resolve().parents[4]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--config", type=Path, default=project / "src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus.yaml")
+    parser.add_argument("--config", type=Path, default=project / "src/aligndit/config/finetune_celebvdub_mm_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts.yaml")
     parser.add_argument("--grid-root", type=Path, default=Path(f"{prefix}/zjw524/datasets/Grid_Dataset"))
     parser.add_argument("--grid-audio-root", type=Path)
     parser.add_argument("--grid-transcript-root", type=Path)

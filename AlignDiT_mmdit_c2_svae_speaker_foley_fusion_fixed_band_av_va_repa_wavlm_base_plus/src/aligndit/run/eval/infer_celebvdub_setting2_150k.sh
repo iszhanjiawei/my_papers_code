@@ -11,5 +11,5 @@ cd "$project_root"
 export PYTHONPATH="$project_root/src"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
-checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_ctc003_warmup10k30k_40hz_CelebVDub_char"
+checkpoint_dir="${ROOT_PREFIX}/zjw524/projects/data/ckpts/AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts_ctc003_warmup10k30k_40hz_CelebVDub_char"
 exec "${ROOT_PREFIX}/zjw524/ENTER/envs/aligndit/bin/python" -u     -m aligndit.script.eval.infer_celebvdub_setting2     --checkpoint "$checkpoint_dir/model_150000.pt" --step 150000     --gpu "${EVAL_GPU:-0}" --seed 0 --nfe 32 --cfg-text 5 --cfg-video 2 --sway -1 "$@"
