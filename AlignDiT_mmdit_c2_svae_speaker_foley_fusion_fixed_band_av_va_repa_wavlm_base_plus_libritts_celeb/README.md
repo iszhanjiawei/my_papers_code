@@ -1,4 +1,4 @@
-# CelebV-Dub Foley 双流文本交叉注意力与双向固定时间带
+# LibriTTS 50k 初始化的 CelebV-Dub Foley MM-DiT
 
 本实验基于 `AlignDiT_mmdit_c2_semantic_vae_direct_speaker_embedding_adaptive_band_repa_wavlm_base_plus`，采用 Foley `celeb_concat_text` 参考项目中的两项设计。
 
@@ -26,7 +26,7 @@ setsid bash src/aligndit/run/train/pretrain_libritts_foley_8xa40.sh > logs/pretr
 
 ## CelebV-Dub 下游训练
 
-LibriTTS 达到 50k 后，以下入口从 `model_00050000.pt` 初始化音频与文本模块，单独开始 CelebV-Dub 更新计数。新配置使用独立的下游权重目录。[下游训练入口](src/aligndit/run/train/finetune_celebvdub_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_4x4090.sh)
+LibriTTS 已于 2026-11-28 03:28（北京时间）完成 50,000 步预训练。以下入口默认从 `model_00050000.pt` 的 EMA 初始化模型，CelebV-Dub 使用独立的优化器、更新计数和权重目录。[下游训练入口](src/aligndit/run/train/finetune_celebvdub_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_4x4090.sh)
 
 ```bash
 export ROOT_PREFIX=/home
