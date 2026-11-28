@@ -1,0 +1,13 @@
+defaults:
+  - finetune_grid
+  - _self_
+
+# Local GRID features use the prepared cache's own video timeline and splits.
+datasets:
+  cache_format: grid_mmdit_svae
+  cache_root: ${oc.env:ROOT_PREFIX,''}/zjw524/projects/data/GRID_mmdit_svae
+  speaker_embedding_cache_dir: ${datasets.cache_root}/speaker_embeddings
+  expected_video_checkpoint_sha256: null
+
+model:
+  name: AlignDiT_MMDiT_c2_svae_speaker_foley_fixed_band_av_va_repa_wavlm_base_plus_libritts_GRID_local_ctc003_warmup10k30k
