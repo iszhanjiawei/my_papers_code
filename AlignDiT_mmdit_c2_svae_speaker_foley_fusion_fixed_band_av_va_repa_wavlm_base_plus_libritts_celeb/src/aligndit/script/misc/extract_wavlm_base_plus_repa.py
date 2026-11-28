@@ -266,6 +266,38 @@ def verify_cache(items: list[ExtractionItem], cache_dir: Path) -> dict:
     }
 
 
+def verify_and_publish_cache(inventory, args) -> None:
+    coverage = verify_cache(inventory, args.cache_dir)
+    atomic_save_json(args.cache_dir / "coverage_report.json", coverage)
+    if not coverage["complete"]:
+        raise RuntimeError("WavLM cache coverage verification failed; inspect coverage_report.json")
+    metadata = {
+        "schema_version": 1,
+        "status": "complete",
+        "feature": "wavlm_hidden_state",
+        "model_id": WAVLM_BASE_PLUS_MODEL_ID,
+        "model_revision": WAVLM_BASE_PLUS_REVISION,
+        "checkpoint_sha256": WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
+        "teacher_layer": WAVLM_BASE_PLUS_LAYER,
+        "sample_rate": SAMPLE_RATE,
+        "frame_stride_samples": WAVLM_FRAME_STRIDE_SAMPLES,
+        "frame_rate_hz": SAMPLE_RATE / WAVLM_FRAME_STRIDE_SAMPLES,
+        "output_dim": WAVLM_BASE_PLUS_DIM,
+        "output_dtype": "float16",
+        "source_audio": "complete_unmasked_waveform",
+        "manifest_sha256": args.expected_manifest_sha256,
+        "expected_count": args.expected_count,
+        "coverage_report": "coverage_report.json",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    atomic_save_json(args.cache_dir / "metadata.json", metadata)
+    print(
+        f"Complete WavLM-Base+ cache: files={coverage['valid']}, frames={coverage['total_frames']}, "
+        f"root={args.cache_dir}",
+        flush=True,
+    )
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -335,46 +367,18 @@ def main():
         args.cache_dir / "manifests" / f"rank_{rank:03d}.json",
         {"rank": rank, "world_size": world_size, "processed": processed, "failures": failures},
     )
-    failure_count = torch.tensor([len(failures)], device=device, dtype=torch.long)
+    total_failures = len(failures)
     if world_size > 1:
+        failure_count = torch.tensor([total_failures], device=device, dtype=torch.long)
         dist.all_reduce(failure_count)
-        dist.barrier()
-    if failure_count.item():
-        raise RuntimeError(f"WavLM extraction failed for {failure_count.item()} utterances; inspect rank manifests")
+        total_failures = int(failure_count.item())
+        # Full cache verification on rank zero can outlast the NCCL timeout.
+        dist.destroy_process_group()
+    if total_failures:
+        raise RuntimeError(f"WavLM extraction failed for {total_failures} utterances; inspect rank manifests")
 
     if rank == 0:
-        coverage = verify_cache(inventory, args.cache_dir)
-        atomic_save_json(args.cache_dir / "coverage_report.json", coverage)
-        if not coverage["complete"]:
-            raise RuntimeError("WavLM cache coverage verification failed; inspect coverage_report.json")
-        metadata = {
-            "schema_version": 1,
-            "status": "complete",
-            "feature": "wavlm_hidden_state",
-            "model_id": WAVLM_BASE_PLUS_MODEL_ID,
-            "model_revision": WAVLM_BASE_PLUS_REVISION,
-            "checkpoint_sha256": WAVLM_BASE_PLUS_CHECKPOINT_SHA256,
-            "teacher_layer": WAVLM_BASE_PLUS_LAYER,
-            "sample_rate": SAMPLE_RATE,
-            "frame_stride_samples": WAVLM_FRAME_STRIDE_SAMPLES,
-            "frame_rate_hz": SAMPLE_RATE / WAVLM_FRAME_STRIDE_SAMPLES,
-            "output_dim": WAVLM_BASE_PLUS_DIM,
-            "output_dtype": "float16",
-            "source_audio": "complete_unmasked_waveform",
-            "manifest_sha256": args.expected_manifest_sha256,
-            "expected_count": args.expected_count,
-            "coverage_report": "coverage_report.json",
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        }
-        atomic_save_json(args.cache_dir / "metadata.json", metadata)
-        print(
-            f"Complete WavLM-Base+ cache: files={coverage['valid']}, frames={coverage['total_frames']}, "
-            f"root={args.cache_dir}",
-            flush=True,
-        )
-    if world_size > 1:
-        dist.barrier()
-        dist.destroy_process_group()
+        verify_and_publish_cache(inventory, args)
 
 
 if __name__ == "__main__":
